@@ -10,6 +10,9 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as TasksRouteImport } from './routes/tasks'
+import { Route as SitemapDotxmlRouteImport } from './routes/sitemap[.]xml'
+import { Route as ServicesRouteImport } from './routes/services'
+import { Route as ProfileRouteImport } from './routes/profile'
 import { Route as MedicationsRouteImport } from './routes/medications'
 import { Route as DocumentsRouteImport } from './routes/documents'
 import { Route as BillsRouteImport } from './routes/bills'
@@ -19,6 +22,21 @@ import { Route as IndexRouteImport } from './routes/index'
 const TasksRoute = TasksRouteImport.update({
   id: '/tasks',
   path: '/tasks',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SitemapDotxmlRoute = SitemapDotxmlRouteImport.update({
+  id: '/sitemap.xml',
+  path: '/sitemap.xml',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ServicesRoute = ServicesRouteImport.update({
+  id: '/services',
+  path: '/services',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ProfileRoute = ProfileRouteImport.update({
+  id: '/profile',
+  path: '/profile',
   getParentRoute: () => rootRouteImport,
 } as any)
 const MedicationsRoute = MedicationsRouteImport.update({
@@ -53,6 +71,9 @@ export interface FileRoutesByFullPath {
   '/bills': typeof BillsRoute
   '/documents': typeof DocumentsRoute
   '/medications': typeof MedicationsRoute
+  '/profile': typeof ProfileRoute
+  '/services': typeof ServicesRoute
+  '/sitemap.xml': typeof SitemapDotxmlRoute
   '/tasks': typeof TasksRoute
 }
 export interface FileRoutesByTo {
@@ -61,6 +82,9 @@ export interface FileRoutesByTo {
   '/bills': typeof BillsRoute
   '/documents': typeof DocumentsRoute
   '/medications': typeof MedicationsRoute
+  '/profile': typeof ProfileRoute
+  '/services': typeof ServicesRoute
+  '/sitemap.xml': typeof SitemapDotxmlRoute
   '/tasks': typeof TasksRoute
 }
 export interface FileRoutesById {
@@ -70,6 +94,9 @@ export interface FileRoutesById {
   '/bills': typeof BillsRoute
   '/documents': typeof DocumentsRoute
   '/medications': typeof MedicationsRoute
+  '/profile': typeof ProfileRoute
+  '/services': typeof ServicesRoute
+  '/sitemap.xml': typeof SitemapDotxmlRoute
   '/tasks': typeof TasksRoute
 }
 export interface FileRouteTypes {
@@ -80,6 +107,9 @@ export interface FileRouteTypes {
     | '/bills'
     | '/documents'
     | '/medications'
+    | '/profile'
+    | '/services'
+    | '/sitemap.xml'
     | '/tasks'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -88,6 +118,9 @@ export interface FileRouteTypes {
     | '/bills'
     | '/documents'
     | '/medications'
+    | '/profile'
+    | '/services'
+    | '/sitemap.xml'
     | '/tasks'
   id:
     | '__root__'
@@ -96,6 +129,9 @@ export interface FileRouteTypes {
     | '/bills'
     | '/documents'
     | '/medications'
+    | '/profile'
+    | '/services'
+    | '/sitemap.xml'
     | '/tasks'
   fileRoutesById: FileRoutesById
 }
@@ -105,6 +141,9 @@ export interface RootRouteChildren {
   BillsRoute: typeof BillsRoute
   DocumentsRoute: typeof DocumentsRoute
   MedicationsRoute: typeof MedicationsRoute
+  ProfileRoute: typeof ProfileRoute
+  ServicesRoute: typeof ServicesRoute
+  SitemapDotxmlRoute: typeof SitemapDotxmlRoute
   TasksRoute: typeof TasksRoute
 }
 
@@ -115,6 +154,27 @@ declare module '@tanstack/react-router' {
       path: '/tasks'
       fullPath: '/tasks'
       preLoaderRoute: typeof TasksRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/sitemap.xml': {
+      id: '/sitemap.xml'
+      path: '/sitemap.xml'
+      fullPath: '/sitemap.xml'
+      preLoaderRoute: typeof SitemapDotxmlRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/services': {
+      id: '/services'
+      path: '/services'
+      fullPath: '/services'
+      preLoaderRoute: typeof ServicesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/profile': {
+      id: '/profile'
+      path: '/profile'
+      fullPath: '/profile'
+      preLoaderRoute: typeof ProfileRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/medications': {
@@ -161,6 +221,9 @@ const rootRouteChildren: RootRouteChildren = {
   BillsRoute: BillsRoute,
   DocumentsRoute: DocumentsRoute,
   MedicationsRoute: MedicationsRoute,
+  ProfileRoute: ProfileRoute,
+  ServicesRoute: ServicesRoute,
+  SitemapDotxmlRoute: SitemapDotxmlRoute,
   TasksRoute: TasksRoute,
 }
 export const routeTree = rootRouteImport
