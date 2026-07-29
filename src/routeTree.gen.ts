@@ -9,10 +9,28 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
+import { Route as TasksRouteImport } from './routes/tasks'
+import { Route as MedicationsRouteImport } from './routes/medications'
+import { Route as DocumentsRouteImport } from './routes/documents'
 import { Route as BillsRouteImport } from './routes/bills'
 import { Route as AppointmentsRouteImport } from './routes/appointments'
 import { Route as IndexRouteImport } from './routes/index'
 
+const TasksRoute = TasksRouteImport.update({
+  id: '/tasks',
+  path: '/tasks',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const MedicationsRoute = MedicationsRouteImport.update({
+  id: '/medications',
+  path: '/medications',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const DocumentsRoute = DocumentsRouteImport.update({
+  id: '/documents',
+  path: '/documents',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const BillsRoute = BillsRouteImport.update({
   id: '/bills',
   path: '/bills',
@@ -33,34 +51,86 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/appointments': typeof AppointmentsRoute
   '/bills': typeof BillsRoute
+  '/documents': typeof DocumentsRoute
+  '/medications': typeof MedicationsRoute
+  '/tasks': typeof TasksRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/appointments': typeof AppointmentsRoute
   '/bills': typeof BillsRoute
+  '/documents': typeof DocumentsRoute
+  '/medications': typeof MedicationsRoute
+  '/tasks': typeof TasksRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/appointments': typeof AppointmentsRoute
   '/bills': typeof BillsRoute
+  '/documents': typeof DocumentsRoute
+  '/medications': typeof MedicationsRoute
+  '/tasks': typeof TasksRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/appointments' | '/bills'
+  fullPaths:
+    | '/'
+    | '/appointments'
+    | '/bills'
+    | '/documents'
+    | '/medications'
+    | '/tasks'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/appointments' | '/bills'
-  id: '__root__' | '/' | '/appointments' | '/bills'
+  to:
+    | '/'
+    | '/appointments'
+    | '/bills'
+    | '/documents'
+    | '/medications'
+    | '/tasks'
+  id:
+    | '__root__'
+    | '/'
+    | '/appointments'
+    | '/bills'
+    | '/documents'
+    | '/medications'
+    | '/tasks'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AppointmentsRoute: typeof AppointmentsRoute
   BillsRoute: typeof BillsRoute
+  DocumentsRoute: typeof DocumentsRoute
+  MedicationsRoute: typeof MedicationsRoute
+  TasksRoute: typeof TasksRoute
 }
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
+    '/tasks': {
+      id: '/tasks'
+      path: '/tasks'
+      fullPath: '/tasks'
+      preLoaderRoute: typeof TasksRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/medications': {
+      id: '/medications'
+      path: '/medications'
+      fullPath: '/medications'
+      preLoaderRoute: typeof MedicationsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/documents': {
+      id: '/documents'
+      path: '/documents'
+      fullPath: '/documents'
+      preLoaderRoute: typeof DocumentsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/bills': {
       id: '/bills'
       path: '/bills'
@@ -89,6 +159,9 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AppointmentsRoute: AppointmentsRoute,
   BillsRoute: BillsRoute,
+  DocumentsRoute: DocumentsRoute,
+  MedicationsRoute: MedicationsRoute,
+  TasksRoute: TasksRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
