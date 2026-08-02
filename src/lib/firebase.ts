@@ -1,6 +1,6 @@
-import { initializeApp, getApps, getApp } from 'firebase/app';
-import { getAuth } from 'firebase/auth';
-import { getFirestore } from 'firebase/firestore';
+import { initializeApp, getApps, getApp } from "firebase/app";
+import { getAuth } from "firebase/auth";
+import { getFirestore } from "firebase/firestore";
 
 const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY || "",
@@ -11,14 +11,18 @@ const firebaseConfig = {
 };
 
 // Check if settings are still default templates or empty
-export const isFirebaseConfigured = 
-  !!firebaseConfig.apiKey && 
-  firebaseConfig.apiKey !== "YOUR_FIREBASE_API_KEY" && 
+export const isFirebaseConfigured =
+  !!firebaseConfig.apiKey &&
+  firebaseConfig.apiKey !== "YOUR_FIREBASE_API_KEY" &&
   !firebaseConfig.apiKey.startsWith("AIzaSyDemo");
 
 // Initialize Firebase App singleton only if keys are present (or fallback to dummy to prevent crash on require)
-const app = !getApps().length 
-  ? initializeApp(isFirebaseConfigured ? firebaseConfig : { ...firebaseConfig, apiKey: "AIzaSyDummyKeyPlaceholderToPreventCrash" }) 
+const app = !getApps().length
+  ? initializeApp(
+      isFirebaseConfigured
+        ? firebaseConfig
+        : { ...firebaseConfig, apiKey: "AIzaSyDummyKeyPlaceholderToPreventCrash" },
+    )
   : getApp();
 
 // Initialize Firebase Authentication

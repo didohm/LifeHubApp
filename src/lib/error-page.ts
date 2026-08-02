@@ -38,4 +38,3 @@ export function renderErrorPage(status = 500, message = "An error occurred"): st
   </body>
 </html>`;
 }
-

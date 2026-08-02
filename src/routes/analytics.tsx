@@ -167,7 +167,7 @@ function AnalyticsPage() {
   }, [user, authLoading, navigate]);
 
   // Show the skeleton only until the first realtime snapshot arrives.
-  const [initialized, setInitialized] = useState(true);
+  const [initialized, setInitialized] = useState(false);
   const anyLoading =
     medLoading ||
     billLoading ||
@@ -360,7 +360,6 @@ function AnalyticsPage() {
       elapsedDays,
     };
   }, [
-    activityLogs,
     medicationLogs,
     payments,
     appointments,
@@ -877,9 +876,8 @@ function AnalyticsPage() {
           </span>
           <p className="mt-1 text-xl font-extrabold">{chartTotals.total} recorded</p>
           <p className="text-xs text-[#12131A]/70">
-            {chartTotals.actions} actions · {chartTotals.doses} doses ·{" "}
-            {chartTotals.payments} payments · {chartTotals.fitness} fitness ·{" "}
-            {chartTotals.glasses} glasses
+            {chartTotals.actions} actions · {chartTotals.doses} doses · {chartTotals.payments}{" "}
+            payments · {chartTotals.fitness} fitness · {chartTotals.glasses} glasses
           </p>
         </div>
         <div className="flex size-12 items-center justify-center rounded-full bg-[#12131A] text-white">

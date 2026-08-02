@@ -1,7 +1,5 @@
-export function SkeletonLoader({ className = '' }: { className?: string }) {
-  return (
-    <div className={`animate-pulse rounded-xl bg-muted/60 ${className}`}></div>
-  );
+export function SkeletonLoader({ className = "" }: { className?: string }) {
+  return <div className={`animate-pulse rounded-xl bg-muted/60 ${className}`}></div>;
 }
 
 export function DashboardSkeleton() {

@@ -164,7 +164,8 @@ function MedicationsPage() {
   };
 
   const takenCount = medications.filter((m) => m.taken).length;
-  const adherenceRate = medications.length > 0 ? Math.round((takenCount / medications.length) * 100) : 0;
+  const adherenceRate =
+    medications.length > 0 ? Math.round((takenCount / medications.length) * 100) : 0;
 
   return (
     <Screen>
@@ -257,9 +258,7 @@ function MedicationsPage() {
           <span className="inline-flex items-center gap-1 rounded-full bg-white/90 px-2.5 py-0.5 text-[10px] font-extrabold text-[#12131A]">
             💊 Health Schedule
           </span>
-          <h2 className="mt-1.5 text-sm font-black text-[#12131A]">
-            Reminders & Timed Doses
-          </h2>
+          <h2 className="mt-1.5 text-sm font-black text-[#12131A]">Reminders & Timed Doses</h2>
           <p className="mt-0.5 text-[11px] font-medium text-[#6B7280]">
             Never miss a dose or hydration milestone.
           </p>
@@ -317,7 +316,9 @@ function MedicationsPage() {
                 <button
                   onClick={() => handleToggle(med.id, med.taken)}
                   className={`tap flex size-10 items-center justify-center rounded-full transition-colors ${
-                    med.taken ? "bg-[#12131A] text-white shadow-sm" : "bg-black/5 text-[#12131A] hover:bg-black/10"
+                    med.taken
+                      ? "bg-[#12131A] text-white shadow-sm"
+                      : "bg-black/5 text-[#12131A] hover:bg-black/10"
                   }`}
                 >
                   <CheckCircle2 className="size-5" />
@@ -348,7 +349,10 @@ function MedicationsPage() {
               <h3 className="text-base font-extrabold text-[#12131A]">
                 {editingMed ? "Edit Medication" : "Add Medication Routine"}
               </h3>
-              <button onClick={() => setModalOpen(false)} className="size-7 flex items-center justify-center rounded-full bg-black/5">
+              <button
+                onClick={() => setModalOpen(false)}
+                className="size-7 flex items-center justify-center rounded-full bg-black/5"
+              >
                 <X className="size-4" />
               </button>
             </div>
@@ -414,19 +418,30 @@ function MedicationsPage() {
           <div className="w-full max-w-md rounded-3xl bg-white p-5 shadow-2xl">
             <div className="flex items-center justify-between border-b border-black/5 pb-3">
               <h3 className="text-base font-extrabold text-[#12131A]">Health History Logs</h3>
-              <button onClick={() => setLogsModalOpen(false)} className="size-7 flex items-center justify-center rounded-full bg-black/5">
+              <button
+                onClick={() => setLogsModalOpen(false)}
+                className="size-7 flex items-center justify-center rounded-full bg-black/5"
+              >
                 <X className="size-4" />
               </button>
             </div>
             <div className="mt-3 max-h-72 overflow-y-auto space-y-2">
               {medicationLogs.length === 0 ? (
-                <p className="p-6 text-center text-xs text-[#6B7280]">No history logs recorded yet.</p>
+                <p className="p-6 text-center text-xs text-[#6B7280]">
+                  No history logs recorded yet.
+                </p>
               ) : (
                 medicationLogs.map((l) => (
-                  <div key={l.id} className="flex items-center justify-between rounded-xl bg-[#F9F9FD] p-3 text-xs">
+                  <div
+                    key={l.id}
+                    className="flex items-center justify-between rounded-xl bg-[#F9F9FD] p-3 text-xs"
+                  >
                     <span className="font-bold text-[#12131A]">Dose marked taken</span>
                     <span className="text-[10px] text-[#6B7280]">
-                      {new Date(l.taken_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                      {new Date(l.taken_at).toLocaleTimeString([], {
+                        hour: "2-digit",
+                        minute: "2-digit",
+                      })}
                     </span>
                   </div>
                 ))

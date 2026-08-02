@@ -9,12 +9,7 @@ import {
 import { WalkSession } from "@/lib/types";
 
 // Helper: Calculate distance between 2 coordinates in meters (Haversine Formula)
-function haversineDistance(
-  lat1: number,
-  lon1: number,
-  lat2: number,
-  lon2: number
-): number {
+function haversineDistance(lat1: number, lon1: number, lat2: number, lon2: number): number {
   const R = 6371000; // Earth radius in meters
   const dLat = ((lat2 - lat1) * Math.PI) / 180;
   const dLon = ((lon2 - lon1) * Math.PI) / 180;
@@ -88,7 +83,7 @@ export function useWalk(userId: string | null | undefined) {
               lastCoordsRef.current.lat,
               lastCoordsRef.current.lng,
               lat,
-              lng
+              lng,
             );
             // Only add reasonable GPS step delta (ignore huge jumps or static jitter < 1.5m)
             if (distDelta >= 1.5 && distDelta <= 20) {
@@ -106,16 +101,24 @@ export function useWalk(userId: string | null | undefined) {
           console.warn("Geolocation warning/unavailable:", err.message);
           setGpsAvailable(false);
         },
-        { enableHighAccuracy: true, timeout: 10000, maximumAge: 2000 }
+        { enableHighAccuracy: true, timeout: 10000, maximumAge: 2000 },
       );
     } else {
-      if (watchIdRef.current !== null && typeof window !== "undefined" && "geolocation" in navigator) {
+      if (
+        watchIdRef.current !== null &&
+        typeof window !== "undefined" &&
+        "geolocation" in navigator
+      ) {
         navigator.geolocation.clearWatch(watchIdRef.current);
         watchIdRef.current = null;
       }
     }
     return () => {
-      if (watchIdRef.current !== null && typeof window !== "undefined" && "geolocation" in navigator) {
+      if (
+        watchIdRef.current !== null &&
+        typeof window !== "undefined" &&
+        "geolocation" in navigator
+      ) {
         navigator.geolocation.clearWatch(watchIdRef.current);
       }
     };

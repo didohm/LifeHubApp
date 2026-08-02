@@ -111,11 +111,11 @@ function Index() {
 
   const upcomingApp = useMemo(
     () => appointments.find((a) => a.status !== "completed") || appointments[0],
-    [appointments]
+    [appointments],
   );
   const upcomingMed = useMemo(
     () => medications.find((m) => !m.taken) || medications[0],
-    [medications]
+    [medications],
   );
 
   // 7-day strip based on current date
@@ -149,7 +149,11 @@ function Index() {
               Hello, {user?.full_name?.split(" ")[0] || "Friend"}
             </h2>
             <p className="text-xs font-semibold text-[#6B7280]">
-              {new Date().toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" })}
+              {new Date().toLocaleDateString("en-US", {
+                weekday: "short",
+                month: "short",
+                day: "numeric",
+              })}
             </p>
           </div>
         </Link>
@@ -244,11 +248,14 @@ function Index() {
                   {upcomingApp.priority}
                 </span>
               </div>
-              <h3 className="mt-3 text-lg font-extrabold leading-snug line-clamp-1">{upcomingApp.title}</h3>
+              <h3 className="mt-3 text-lg font-extrabold leading-snug line-clamp-1">
+                {upcomingApp.title}
+              </h3>
               <p className="mt-1 text-[11px] font-medium text-[#12131A]/80">
                 {upcomingApp.appointment_date}
                 <br />
-                {upcomingApp.start_time || "10:00"} {upcomingApp.location ? `· ${upcomingApp.location}` : ""}
+                {upcomingApp.start_time || "10:00"}{" "}
+                {upcomingApp.location ? `· ${upcomingApp.location}` : ""}
               </p>
             </div>
 
@@ -256,7 +263,9 @@ function Index() {
               <span className="flex size-6 items-center justify-center rounded-full bg-white/70 text-[#12131A]">
                 <Stethoscope className="size-3.5" />
               </span>
-              <span className="text-[11px] font-bold truncate">{upcomingApp.doctor_name || "Personal Plan"}</span>
+              <span className="text-[11px] font-bold truncate">
+                {upcomingApp.doctor_name || "Personal Plan"}
+              </span>
             </div>
           </Link>
         ) : (
@@ -266,7 +275,9 @@ function Index() {
           >
             <CalendarIcon className="size-7 text-[#7C5CFC]/50" />
             <span className="mt-2 text-xs font-extrabold text-[#12131A]">No sessions</span>
-            <span className="text-[10px] text-[#6B7280] font-medium mt-0.5">Tap to add appointment</span>
+            <span className="text-[10px] text-[#6B7280] font-medium mt-0.5">
+              Tap to add appointment
+            </span>
           </Link>
         )}
 
@@ -282,7 +293,9 @@ function Index() {
                   {upcomingMed.scheduled_time}
                 </span>
               </div>
-              <h3 className="mt-3 text-lg font-extrabold leading-snug line-clamp-1">{upcomingMed.name}</h3>
+              <h3 className="mt-3 text-lg font-extrabold leading-snug line-clamp-1">
+                {upcomingMed.name}
+              </h3>
               <p className="mt-1 text-[11px] font-medium text-[#12131A]/80">
                 {upcomingMed.dosage}
                 <br />
@@ -292,9 +305,11 @@ function Index() {
 
             <div className="mt-4 flex items-center justify-between border-t border-black/10 pt-2.5">
               <span className="text-[11px] font-bold">Dose Status</span>
-              <span className={`flex size-6 items-center justify-center rounded-full text-xs font-bold ${
-                upcomingMed.taken ? "bg-[#12131A] text-white" : "bg-white text-[#12131A]"
-              }`}>
+              <span
+                className={`flex size-6 items-center justify-center rounded-full text-xs font-bold ${
+                  upcomingMed.taken ? "bg-[#12131A] text-white" : "bg-white text-[#12131A]"
+                }`}
+              >
                 {upcomingMed.taken ? "✓" : "!"}
               </span>
             </div>
@@ -372,7 +387,9 @@ function Index() {
               <span className="text-3xl font-black leading-none tracking-tight text-[#12131A]">
                 {waterGlasses}
               </span>
-              <span className="mt-1 text-[10px] font-bold text-[#6B7280]">of {waterGoal} glasses</span>
+              <span className="mt-1 text-[10px] font-bold text-[#6B7280]">
+                of {waterGoal} glasses
+              </span>
             </div>
           </div>
 
@@ -383,7 +400,8 @@ function Index() {
             </p>
           ) : (
             <p className="mt-3 text-center text-[11px] font-semibold text-[#6B7280]">
-              {Math.max(0, waterGoal - waterGlasses)} glass{waterGoal - waterGlasses === 1 ? "" : "es"} to go
+              {Math.max(0, waterGoal - waterGlasses)} glass
+              {waterGoal - waterGlasses === 1 ? "" : "es"} to go
             </p>
           )}
 
@@ -399,7 +417,9 @@ function Index() {
             >
               <Minus className="size-4" />
             </button>
-            <span className="text-[10px] font-extrabold uppercase tracking-wider text-[#6B7280]">Add glass</span>
+            <span className="text-[10px] font-extrabold uppercase tracking-wider text-[#6B7280]">
+              Add glass
+            </span>
             <button
               type="button"
               onClick={() => addWater()}
@@ -413,7 +433,10 @@ function Index() {
           </div>
         </div>
 
-        <Link to="/analytics" className="card-soft bg-white p-4 border border-black/5 hover:shadow-md transition-all">
+        <Link
+          to="/analytics"
+          className="card-soft bg-white p-4 border border-black/5 hover:shadow-md transition-all"
+        >
           <div className="flex items-center justify-between">
             <span className="text-xs font-bold text-[#6B7280]">Dose Rate</span>
             <Moon className="size-4 text-[#7C5CFC]" />
@@ -425,7 +448,10 @@ function Index() {
             {takenMeds} of {medications.length} doses taken
           </p>
           <div className="mt-2 h-1.5 w-full rounded-full bg-black/5 overflow-hidden">
-            <div className="h-full bg-[#7C5CFC] rounded-full" style={{ width: `${compliancePct}%` }} />
+            <div
+              className="h-full bg-[#7C5CFC] rounded-full"
+              style={{ width: `${compliancePct}%` }}
+            />
           </div>
         </Link>
       </section>
@@ -433,7 +459,9 @@ function Index() {
       {/* Quick Services Grid Bar */}
       <section className="mt-4 card-soft bg-gradient-to-br from-[#FFF0F5] to-[#FFE4EC] p-4 text-[#12131A]">
         <div className="flex items-center justify-between mb-3">
-          <span className="text-xs font-extrabold uppercase tracking-wide opacity-80">Quick Services</span>
+          <span className="text-xs font-extrabold uppercase tracking-wide opacity-80">
+            Quick Services
+          </span>
           <span className="text-[11px] font-bold opacity-70">5 Tools</span>
         </div>
         <div className="flex items-center justify-between">
@@ -517,9 +545,14 @@ function Index() {
             }
 
             return (
-              <div key={log.id} className="card-soft bg-white p-3.5 flex items-center justify-between border border-black/5 shadow-xs">
+              <div
+                key={log.id}
+                className="card-soft bg-white p-3.5 flex items-center justify-between border border-black/5 shadow-xs"
+              >
                 <div className="flex items-center gap-3">
-                  <span className={`flex size-8 items-center justify-center rounded-full text-xs font-bold ${bg}`}>
+                  <span
+                    className={`flex size-8 items-center justify-center rounded-full text-xs font-bold ${bg}`}
+                  >
                     {icon}
                   </span>
                   <div>
@@ -528,7 +561,10 @@ function Index() {
                   </div>
                 </div>
                 <span className="text-[10px] font-semibold text-[#6B7280] shrink-0 ml-2">
-                  {new Date(log.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                  {new Date(log.created_at).toLocaleTimeString([], {
+                    hour: "2-digit",
+                    minute: "2-digit",
+                  })}
                 </span>
               </div>
             );
@@ -538,7 +574,11 @@ function Index() {
 
       {/* Global Search Modal */}
       {user && (
-        <GlobalSearchModal isOpen={searchOpen} onClose={() => setSearchOpen(false)} userId={user.id} />
+        <GlobalSearchModal
+          isOpen={searchOpen}
+          onClose={() => setSearchOpen(false)}
+          userId={user.id}
+        />
       )}
     </Screen>
   );

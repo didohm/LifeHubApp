@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import {
   Plus,
@@ -51,7 +51,7 @@ function TasksPage() {
     }
   }, [user, authLoading, navigate]);
 
-  const loadTasks = async () => {
+  const loadTasks = useCallback(async () => {
     if (!user) return;
     setLoading(true);
     try {
@@ -63,11 +63,11 @@ function TasksPage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [user]);
 
   useEffect(() => {
     if (user) loadTasks();
-  }, [user]);
+  }, [user, loadTasks]);
 
   const openAddModal = () => {
     setEditingTask(null);
@@ -118,8 +118,8 @@ function TasksPage() {
                   progress,
                   completed: isComp,
                 }
-              : t
-          )
+              : t,
+          ),
         );
         toast.success("Task updated!");
       } else {
@@ -149,7 +149,9 @@ function TasksPage() {
     try {
       await updateTodo(id, user.id, { completed: newStatus, progress: newStatus ? 100 : 0 });
       setTodos((prev) =>
-        prev.map((t) => (t.id === id ? { ...t, completed: newStatus, progress: newStatus ? 100 : 0 } : t))
+        prev.map((t) =>
+          t.id === id ? { ...t, completed: newStatus, progress: newStatus ? 100 : 0 } : t,
+        ),
       );
       toast.success(newStatus ? "Task completed! 🎉" : "Task marked active");
     } catch (err) {
@@ -163,7 +165,7 @@ function TasksPage() {
     try {
       await updateTodo(id, user.id, { progress: newProgress, completed: isComp });
       setTodos((prev) =>
-        prev.map((t) => (t.id === id ? { ...t, progress: newProgress, completed: isComp } : t))
+        prev.map((t) => (t.id === id ? { ...t, progress: newProgress, completed: isComp } : t)),
       );
     } catch (e) {
       console.error(e);
@@ -238,7 +240,9 @@ function TasksPage() {
               key={cat}
               onClick={() => setCategoryFilter(cat)}
               className={`rounded-full px-3.5 py-1 text-xs font-bold capitalize whitespace-nowrap ${
-                categoryFilter === cat ? "bg-slate-900 text-white shadow-sm" : "bg-muted text-muted-foreground"
+                categoryFilter === cat
+                  ? "bg-slate-900 text-white shadow-sm"
+                  : "bg-muted text-muted-foreground"
               }`}
             >
               {cat}
@@ -268,9 +272,18 @@ function TasksPage() {
                 <div className="flex items-start gap-3">
                   <button
                     onClick={() => handleToggleComplete(t.id, t.completed)}
+                    aria-label={
+                      t.completed
+                        ? `Mark task ${t.title} as active`
+                        : `Mark task ${t.title} as complete`
+                    }
                     className="mt-0.5 text-primary hover:scale-110 transition-transform"
                   >
-                    {t.completed ? <CheckSquare className="size-5" /> : <Square className="size-5" />}
+                    {t.completed ? (
+                      <CheckSquare className="size-5" />
+                    ) : (
+                      <Square className="size-5" />
+                    )}
                   </button>
                   <div>
                     <span className="inline-block rounded-full bg-muted px-2 py-0.5 text-[10px] font-bold text-muted-foreground">
@@ -283,13 +296,16 @@ function TasksPage() {
                     >
                       {t.title}
                     </h3>
-                    <p className="text-[11px] text-muted-foreground mt-0.5">Due: {t.due_date || "Today"}</p>
+                    <p className="text-[11px] text-muted-foreground mt-0.5">
+                      Due: {t.due_date || "Today"}
+                    </p>
                   </div>
                 </div>
 
                 <div className="flex items-center gap-1">
                   <button
                     onClick={() => openEditModal(t)}
+                    aria-label={`Edit task ${t.title}`}
                     title="Edit Task"
                     className="size-8 flex items-center justify-center rounded-full text-muted-foreground hover:bg-accent hover:text-foreground"
                   >
@@ -297,6 +313,7 @@ function TasksPage() {
                   </button>
                   <button
                     onClick={() => handleDelete(t.id)}
+                    aria-label={`Delete task ${t.title}`}
                     title="Delete Task"
                     className="size-8 flex items-center justify-center rounded-full text-muted-foreground hover:text-destructive hover:bg-destructive/10"
                   >

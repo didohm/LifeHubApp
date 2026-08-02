@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useCallback } from "react";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import {
   Plus,
@@ -47,7 +47,8 @@ function getNextBirthday(birthdayDate: string): Date {
 function daysUntil(birthdayDate: string): number {
   const today = new Date();
   const next = getNextBirthday(birthdayDate);
-  const diff = next.getTime() - new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime();
+  const diff =
+    next.getTime() - new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime();
   return Math.ceil(diff / (1000 * 60 * 60 * 24));
 }
 
@@ -108,7 +109,7 @@ function BirthdaysPage() {
   }, [user, authLoading, navigate]);
 
   // Load birthdays
-  const loadBirthdays = async () => {
+  const loadBirthdays = useCallback(async () => {
     if (!user) return;
     setLoading(true);
     setError(null);
@@ -120,11 +121,11 @@ function BirthdaysPage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [user]);
 
   useEffect(() => {
     loadBirthdays();
-  }, [user]);
+  }, [loadBirthdays]);
 
   // Sorted birthdays by upcoming
   const sortedBirthdays = useMemo(() => sortByUpcoming(birthdays), [birthdays]);
@@ -182,9 +183,7 @@ function BirthdaysPage() {
           phone_number: phoneNumber.trim() || "",
           birthday_date: birthdayDate,
         });
-        setBirthdays((prev) =>
-          prev.map((b) => (b.id === editingBirthday.id ? updated : b)),
-        );
+        setBirthdays((prev) => prev.map((b) => (b.id === editingBirthday.id ? updated : b)));
         toast.success("Birthday updated! 🎂");
       } else {
         const created = await createBirthday(user.id, {
@@ -275,7 +274,8 @@ function BirthdaysPage() {
       >
         <div className="max-w-[70%]">
           <span className="inline-flex items-center gap-1 rounded-full bg-white/70 px-2.5 py-0.5 text-[11px] font-extrabold text-ink">
-            <PartyPopper className="size-3" /> {upcomingCount > 0 ? `${upcomingCount} upcoming` : "All set"}
+            <PartyPopper className="size-3" />{" "}
+            {upcomingCount > 0 ? `${upcomingCount} upcoming` : "All set"}
           </span>
           <h1 className="mt-2 text-[26px] leading-7 font-extrabold text-ink">
             {sortedBirthdays.length > 0 ? (
@@ -284,10 +284,7 @@ function BirthdaysPage() {
                   <>Today is Special 🎂</>
                 ) : (
                   <>
-                    Next{" "}
-                    <span className="text-ink">
-                      Birthday
-                    </span>
+                    Next <span className="text-ink">Birthday</span>
                   </>
                 )}
               </>
@@ -303,7 +300,9 @@ function BirthdaysPage() {
                 <>
                   <span className="font-bold">{sortedBirthdays[0].full_name}</span> &middot;{" "}
                   {formatBirthdayDisplay(sortedBirthdays[0].birthday_date)} &middot;{" "}
-                  <span className="font-semibold">{daysUntil(sortedBirthdays[0].birthday_date)} days away</span>
+                  <span className="font-semibold">
+                    {daysUntil(sortedBirthdays[0].birthday_date)} days away
+                  </span>
                 </>
               )}
             </p>
@@ -357,7 +356,9 @@ function BirthdaysPage() {
             ) : (
               <>
                 <p className="mt-2 text-lg font-black text-foreground">—</p>
-                <p className="mt-0.5 text-[11px] text-muted-foreground font-semibold">No birthdays yet</p>
+                <p className="mt-0.5 text-[11px] text-muted-foreground font-semibold">
+                  No birthdays yet
+                </p>
               </>
             )}
           </div>
@@ -427,7 +428,8 @@ function BirthdaysPage() {
                         )}
                         {upcomingSoon && days <= 7 && (
                           <span className="inline-flex items-center gap-0.5 rounded-full bg-card/70 px-2 py-0.5 text-[10px] font-bold text-ink">
-                            <PartyPopper className="size-2.5" /> {days === 0 ? "Today!" : `${days}d`}
+                            <PartyPopper className="size-2.5" />{" "}
+                            {days === 0 ? "Today!" : `${days}d`}
                           </span>
                         )}
                       </div>
@@ -453,11 +455,7 @@ function BirthdaysPage() {
                   <div className="flex items-center gap-1 shrink-0 ml-2">
                     {!today && (
                       <span className="hidden sm:inline text-[11px] font-bold text-muted-foreground mr-1">
-                        {days === 0
-                          ? "Today!"
-                          : days === 1
-                            ? "Tomorrow"
-                            : `${days}d`}
+                        {days === 0 ? "Today!" : days === 1 ? "Tomorrow" : `${days}d`}
                       </span>
                     )}
                     <button
@@ -560,7 +558,11 @@ function BirthdaysPage() {
                   disabled={submitting}
                   className="w-1/2 flex items-center justify-center gap-1.5 rounded-xl bg-ink py-2.5 text-xs font-bold text-card shadow-md disabled:opacity-50 hover:opacity-90 transition-opacity"
                 >
-                  {submitting ? <Loader2 className="size-4 animate-spin" /> : <Gift className="size-4" />}
+                  {submitting ? (
+                    <Loader2 className="size-4 animate-spin" />
+                  ) : (
+                    <Gift className="size-4" />
+                  )}
                   {submitting ? "Saving..." : editingBirthday ? "Update Birthday" : "Save Birthday"}
                 </button>
               </div>

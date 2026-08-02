@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import {
   FolderClosed,
@@ -15,10 +15,13 @@ import {
 import { toast } from "sonner";
 import { Screen } from "@/components/lifehub/Screen";
 import { useAuth } from "@/hooks/use-auth";
-import { getDocuments, createDocument, deleteDocument } from "@/lib/api";
+import { getDocuments, createDocument, updateDocument, deleteDocument } from "@/lib/api";
 import { DocumentItem } from "@/lib/types";
 import { generateAssistantReply } from "@/lib/ai-provider";
 import { ListSkeleton } from "@/components/lifehub/SkeletonLoader";
+
+const MAX_UPLOAD_BYTES = 600 * 1024;
+const ALLOWED_UPLOAD_MIME_PREFIXES = ["image/", "application/pdf", "text/"];
 
 function formatFileSize(bytes: number): string {
   if (bytes === 0) return "0 B";
@@ -28,7 +31,18 @@ function formatFileSize(bytes: number): string {
   return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + " " + sizes[i];
 }
 
-async function processFileUpload(file: File): Promise<{ file_url: string; file_size: string; file_type: string }> {
+async function processFileUpload(
+  file: File,
+): Promise<{ file_url: string; file_size: string; file_type: string }> {
+  const isAllowedType = ALLOWED_UPLOAD_MIME_PREFIXES.some((prefix) => file.type.startsWith(prefix));
+  if (!isAllowedType) {
+    throw new Error("Unsupported file type. Please upload a PDF, image, or text file.");
+  }
+
+  if (file.size > MAX_UPLOAD_BYTES) {
+    throw new Error("File is too large. Please upload a file smaller than 600KB.");
+  }
+
   const fileSize = formatFileSize(file.size);
   const fileType = file.type || "application/octet-stream";
 
@@ -80,7 +94,7 @@ function DocumentsPage() {
     }
   }, [user, authLoading, navigate]);
 
-  const loadDocs = async () => {
+  const loadDocs = useCallback(async () => {
     if (!user) return;
     setLoading(true);
     try {
@@ -92,11 +106,11 @@ function DocumentsPage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [user]);
 
   useEffect(() => {
     if (user) loadDocs();
-  }, [user]);
+  }, [user, loadDocs]);
 
   const openUploadModal = () => {
     setEditingDoc(null);
@@ -120,8 +134,7 @@ function DocumentsPage() {
 
     try {
       if (editingDoc) {
-        // Edit document metadata
-        const updatedDoc = await createDocument(user.id, {
+        const updatedDoc = await updateDocument(editingDoc.id, user.id, {
           name: docName,
           category,
           file_url: editingDoc.file_url,
@@ -129,13 +142,12 @@ function DocumentsPage() {
           file_type: editingDoc.file_type,
           summary: editingDoc.summary,
         });
-        await deleteDocument(editingDoc.id, user.id);
         setDocuments((prev) => prev.map((d) => (d.id === editingDoc.id ? updatedDoc : d)));
         toast.success("Document metadata updated!");
       } else {
-        let fileUrl = '';
-        let fileSize = '';
-        let fileType = '';
+        let fileUrl = "";
+        let fileSize = "";
+        let fileType = "";
 
         if (selectedFile) {
           const res = await processFileUpload(selectedFile);
@@ -150,7 +162,7 @@ function DocumentsPage() {
           file_url: fileUrl,
           file_size: fileSize,
           file_type: fileType,
-          summary: '',
+          summary: "",
         });
 
         setDocuments((prev) => [newDoc, ...prev]);
@@ -237,7 +249,9 @@ function DocumentsPage() {
               key={cat}
               onClick={() => setCategoryFilter(cat)}
               className={`rounded-full px-3.5 py-1 text-xs font-bold capitalize whitespace-nowrap ${
-                categoryFilter === cat ? "bg-slate-900 text-white shadow-sm" : "bg-muted text-muted-foreground"
+                categoryFilter === cat
+                  ? "bg-slate-900 text-white shadow-sm"
+                  : "bg-muted text-muted-foreground"
               }`}
             >
               {cat}
@@ -270,13 +284,16 @@ function DocumentsPage() {
                     {docItem.category}
                   </span>
                   <h3 className="mt-0.5 text-sm font-extrabold text-foreground">{docItem.name}</h3>
-                  <p className="text-[11px] text-muted-foreground">{docItem.file_size || "Unknown size"}</p>
+                  <p className="text-[11px] text-muted-foreground">
+                    {docItem.file_size || "Unknown size"}
+                  </p>
                 </div>
               </div>
 
               <div className="flex items-center gap-1">
                 <button
                   onClick={() => setPreviewDoc(docItem)}
+                  aria-label={`Preview document ${docItem.name}`}
                   title="Preview Document"
                   className="size-8 flex items-center justify-center rounded-full text-muted-foreground hover:bg-accent hover:text-foreground"
                 >
@@ -284,6 +301,7 @@ function DocumentsPage() {
                 </button>
                 <button
                   onClick={() => handleAiSummarize(docItem)}
+                  aria-label={`Summarize document ${docItem.name}`}
                   title="AI Summarize Document"
                   className="size-8 flex items-center justify-center rounded-full text-purple-600 hover:bg-purple-500/10"
                 >
@@ -291,6 +309,7 @@ function DocumentsPage() {
                 </button>
                 <button
                   onClick={() => openEditModal(docItem)}
+                  aria-label={`Edit metadata for ${docItem.name}`}
                   title="Edit Metadata"
                   className="size-8 flex items-center justify-center rounded-full text-muted-foreground hover:bg-accent"
                 >
@@ -298,6 +317,7 @@ function DocumentsPage() {
                 </button>
                 <button
                   onClick={() => handleDelete(docItem.id)}
+                  aria-label={`Delete document ${docItem.name}`}
                   title="Delete"
                   className="size-8 flex items-center justify-center rounded-full text-muted-foreground hover:text-destructive hover:bg-destructive/10"
                 >

@@ -36,8 +36,10 @@ export function UserAvatar({ name, src, alt, className, initialsClassName }: Use
         alt={alt || name || "User"}
         className={cn(
           "rounded-full",
-          isDefault ? "object-contain bg-gradient-to-br from-[#E8E2FF] to-[#D5C9FF] p-0.5" : "object-cover",
-          className
+          isDefault
+            ? "object-contain bg-gradient-to-br from-[#E8E2FF] to-[#D5C9FF] p-0.5"
+            : "object-cover",
+          className,
         )}
         onError={() => setImageFailed(true)}
       />

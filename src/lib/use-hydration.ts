@@ -1,12 +1,12 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import {
   getTodayWaterLog,
   addWaterGlass,
   removeWaterGlass,
   setWaterGoal,
   DEFAULT_WATER_GOAL,
-} from './api';
-import { WaterLog } from './types';
+} from "./api";
+import { WaterLog } from "./types";
 
 /**
  * Hydration hook backed by Firestore.
@@ -23,7 +23,7 @@ export function useHydration(userId: string | null | undefined) {
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState(false);
 
-  const todayKeyRef = useRef<string>('');
+  const todayKeyRef = useRef<string>("");
   const userIdRef = useRef<string | null | undefined>(userId);
   userIdRef.current = userId;
 
@@ -38,7 +38,7 @@ export function useHydration(userId: string | null | undefined) {
       const todayLog = await getTodayWaterLog(uid);
       setLog(todayLog);
     } catch (err) {
-      console.error('Failed to load today water log:', err);
+      console.error("Failed to load today water log:", err);
     } finally {
       if (!silent) setLoading(false);
     }
@@ -62,44 +62,38 @@ export function useHydration(userId: string | null | undefined) {
     todayKeyRef.current = localDayKey(new Date());
     const interval = window.setInterval(checkRollover, 30_000);
     const onVisibility = () => {
-      if (document.visibilityState === 'visible') checkRollover();
+      if (document.visibilityState === "visible") checkRollover();
     };
-    document.addEventListener('visibilitychange', onVisibility);
+    document.addEventListener("visibilitychange", onVisibility);
     return () => {
       window.clearInterval(interval);
-      document.removeEventListener('visibilitychange', onVisibility);
+      document.removeEventListener("visibilitychange", onVisibility);
     };
   }, [fetchToday]);
 
-  const add = useCallback(
-    async (amount = 1) => {
-      const uid = userIdRef.current;
-      if (!uid) return;
-      setBusy(true);
-      try {
-        const updated = await addWaterGlass(uid, amount);
-        setLog(updated);
-      } finally {
-        setBusy(false);
-      }
-    },
-    []
-  );
+  const add = useCallback(async (amount = 1) => {
+    const uid = userIdRef.current;
+    if (!uid) return;
+    setBusy(true);
+    try {
+      const updated = await addWaterGlass(uid, amount);
+      setLog(updated);
+    } finally {
+      setBusy(false);
+    }
+  }, []);
 
-  const remove = useCallback(
-    async (amount = 1) => {
-      const uid = userIdRef.current;
-      if (!uid) return;
-      setBusy(true);
-      try {
-        const updated = await removeWaterGlass(uid, amount);
-        setLog(updated);
-      } finally {
-        setBusy(false);
-      }
-    },
-    []
-  );
+  const remove = useCallback(async (amount = 1) => {
+    const uid = userIdRef.current;
+    if (!uid) return;
+    setBusy(true);
+    try {
+      const updated = await removeWaterGlass(uid, amount);
+      setLog(updated);
+    } finally {
+      setBusy(false);
+    }
+  }, []);
 
   const updateGoal = useCallback(
     async (goal: number) => {
@@ -113,7 +107,7 @@ export function useHydration(userId: string | null | undefined) {
         setBusy(false);
       }
     },
-    [fetchToday]
+    [fetchToday],
   );
 
   const glasses = log?.glasses ?? 0;
@@ -136,7 +130,7 @@ export function useHydration(userId: string | null | undefined) {
 
 function localDayKey(d: Date): string {
   const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
   return `${y}-${m}-${day}`;
 }

@@ -1,4 +1,12 @@
-import { createContext, useContext, useEffect, useState, useCallback, useMemo, ReactNode } from "react";
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useState,
+  useCallback,
+  useMemo,
+  ReactNode,
+} from "react";
 import {
   getMedications,
   createMedication,
@@ -512,7 +520,7 @@ export function DataProvider({ userId, children }: { userId: string | null; chil
       waterLogs,
       waterLoading,
       refreshAll,
-    ]
+    ],
   );
 
   return <DataContext.Provider value={value}>{children}</DataContext.Provider>;

@@ -103,20 +103,9 @@ export async function createAppointment(
 
 export async function updateAppointment(
   id: string,
+  userId: string,
   data: Partial<Appointment>,
 ): Promise<Appointment> {
-  // We need userId to locate the doc. The caller in appointments.tsx doesn't pass userId for update,
-  // so we accept that data might contain user_id, or we search. For safety, let's accept the
-  // appointment ID format and require user_id in data or get it from the data.
-  // Looking at the caller: updateAppointment(id, { reminder: !current })
-  // We need to find the user. Let's update the signature slightly by accepting userId optionally.
-  // Actually the existing signature doesn't have userId. Let's keep compatibility.
-  // The route files call this without userId. We'll need to handle this.
-  // For now, let's make this work by requiring user_id in data or throwing.
-  const userId = data.user_id;
-  if (!userId) {
-    throw new Error("user_id is required for updateAppointment");
-  }
   const docRef = doc(db, "users", userId, "appointments", id);
   const updates: any = { updated_at: now() };
   if (data.title !== undefined) updates.title = data.title;
@@ -340,6 +329,25 @@ export async function createDocument(
   const docRef = await addDoc(ref, newDoc);
   await addActivityLog(userId, "Uploaded Document", `Added document ${data.name}`);
   return { id: docRef.id, ...newDoc } as DocumentItem;
+}
+
+export async function updateDocument(
+  id: string,
+  userId: string,
+  data: Partial<DocumentItem>,
+): Promise<DocumentItem> {
+  const docRef = doc(db, "users", userId, "documents", id);
+  const updates: any = { updated_at: now() };
+  if (data.name !== undefined) updates.name = data.name;
+  if (data.category !== undefined) updates.category = data.category;
+  if (data.file_url !== undefined) updates.file_url = data.file_url;
+  if (data.file_size !== undefined) updates.file_size = data.file_size;
+  if (data.file_type !== undefined) updates.file_type = data.file_type;
+  if (data.summary !== undefined) updates.summary = data.summary;
+
+  await updateDoc(docRef, updates);
+  const updated = await getDoc(docRef);
+  return docToObj<DocumentItem>(updated);
 }
 
 export async function deleteDocument(id: string, userId: string): Promise<void> {
@@ -984,7 +992,7 @@ export async function getWaterGoalStreak(userId: string): Promise<number> {
   if (!todayLog || !todayLog.goal_reached) {
     cursor.setDate(cursor.getDate() - 1);
   }
-  // eslint-disable-next-line no-constant-condition
+
   while (true) {
     const day = todayLocalDate(cursor);
     const log = byDay.get(day);
@@ -1422,7 +1430,10 @@ export async function getProfileStats(userId: string): Promise<ProfileStats> {
 
   // Composite score drives the achievement level
   const score =
-    workoutsCompleted * 3 + walksFinished.length * 2 + waterStreak * 5 + Math.min(50, tasksCompleted);
+    workoutsCompleted * 3 +
+    walksFinished.length * 2 +
+    waterStreak * 5 +
+    Math.min(50, tasksCompleted);
 
   return {
     totalWorkoutsCompleted: workoutsCompleted,

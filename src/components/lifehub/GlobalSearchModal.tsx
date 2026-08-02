@@ -1,8 +1,19 @@
-import { useState, useEffect } from 'react';
-import { Search, X, Calendar, Wallet, Pill, FileText, CheckSquare, FileSearch, ArrowRight, Cake } from 'lucide-react';
-import { performGlobalSearch } from '../../lib/api';
-import { GlobalSearchResult } from '../../lib/types';
-import { useNavigate } from '@tanstack/react-router';
+import { useState, useEffect } from "react";
+import {
+  Search,
+  X,
+  Calendar,
+  Wallet,
+  Pill,
+  FileText,
+  CheckSquare,
+  FileSearch,
+  ArrowRight,
+  Cake,
+} from "lucide-react";
+import { performGlobalSearch } from "../../lib/api";
+import { GlobalSearchResult } from "../../lib/types";
+import { useNavigate } from "@tanstack/react-router";
 
 interface GlobalSearchModalProps {
   isOpen: boolean;
@@ -11,7 +22,7 @@ interface GlobalSearchModalProps {
 }
 
 export function GlobalSearchModal({ isOpen, onClose, userId }: GlobalSearchModalProps) {
-  const [query, setQuery] = useState('');
+  const [query, setQuery] = useState("");
   const [results, setResults] = useState<GlobalSearchResult[]>([]);
   const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
@@ -28,7 +39,7 @@ export function GlobalSearchModal({ isOpen, onClose, userId }: GlobalSearchModal
         const res = await performGlobalSearch(userId, query);
         setResults(res);
       } catch (err) {
-        console.error('Search error:', err);
+        console.error("Search error:", err);
       } finally {
         setLoading(false);
       }
@@ -41,17 +52,17 @@ export function GlobalSearchModal({ isOpen, onClose, userId }: GlobalSearchModal
 
   const getIcon = (type: string) => {
     switch (type) {
-      case 'appointment':
+      case "appointment":
         return <Calendar className="size-4 text-amber-600" />;
-      case 'bill':
+      case "bill":
         return <Wallet className="size-4 text-rose-600" />;
-      case 'medication':
+      case "medication":
         return <Pill className="size-4 text-sky-600" />;
-      case 'document':
+      case "document":
         return <FileText className="size-4 text-indigo-600" />;
-      case 'todo':
+      case "todo":
         return <CheckSquare className="size-4 text-emerald-600" />;
-      case 'birthday':
+      case "birthday":
         return <Cake className="size-4 text-pink-500" />;
       default:
         return <FileSearch className="size-4 text-purple-600" />;
@@ -87,7 +98,9 @@ export function GlobalSearchModal({ isOpen, onClose, userId }: GlobalSearchModal
         <div className="mt-3 max-h-80 overflow-y-auto space-y-2">
           {loading && <p className="p-4 text-center text-sm text-muted-foreground">Searching...</p>}
           {!loading && query && results.length === 0 && (
-            <p className="p-4 text-center text-sm text-muted-foreground">No matches found for &quot;{query}&quot;</p>
+            <p className="p-4 text-center text-sm text-muted-foreground">
+              No matches found for &quot;{query}&quot;
+            </p>
           )}
 
           {results.map((res) => (
@@ -97,7 +110,9 @@ export function GlobalSearchModal({ isOpen, onClose, userId }: GlobalSearchModal
               className="flex items-center justify-between rounded-xl p-3 transition-colors hover:bg-accent/60 cursor-pointer"
             >
               <div className="flex items-center gap-3">
-                <div className="flex size-9 items-center justify-center rounded-lg bg-muted">{getIcon(res.type)}</div>
+                <div className="flex size-9 items-center justify-center rounded-lg bg-muted">
+                  {getIcon(res.type)}
+                </div>
                 <div>
                   <p className="text-sm font-semibold text-foreground">{res.title}</p>
                   <p className="text-xs text-muted-foreground">{res.subtitle}</p>

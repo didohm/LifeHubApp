@@ -20,7 +20,7 @@
  * and (optionally) sent to the model — never the whole account.
  *
  * A configurable external model endpoint can be plugged in via
- * VITE_ASSISTANT_ENDPOINT / VITE_ASSISTANT_API_KEY without changing any UI.
+ * VITE_ASSISTANT_ENDPOINT without changing any UI.
  */
 
 import {
@@ -262,10 +262,9 @@ export async function generateAssistantReply(options: AssistantOptions): Promise
 
   // 3) Optional external model — gets ONLY the fetched slice, never the whole account
   const endpoint = import.meta.env.VITE_ASSISTANT_ENDPOINT as string | undefined;
-  const apiKey = import.meta.env.VITE_ASSISTANT_API_KEY as string | undefined;
   const model = (import.meta.env.VITE_ASSISTANT_MODEL as string | undefined) || "default";
 
-  if (endpoint && apiKey) {
+  if (endpoint) {
     try {
       const dataBlock = serializeFetchedData(data);
       const userContent = [
@@ -295,7 +294,6 @@ export async function generateAssistantReply(options: AssistantOptions): Promise
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${apiKey}`,
         },
         body: JSON.stringify({ model, messages, stream: false }),
         signal,

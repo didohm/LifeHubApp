@@ -69,8 +69,8 @@ function WalkPage() {
     if (result) {
       toast.success(
         `Walk finished! 🚶 ${formatKm(result.distance)} km · ${formatDuration(
-          result.duration
-        )} · ${result.calories} kcal`
+          result.duration,
+        )} · ${result.calories} kcal`,
       );
       await refreshFitness();
     }
@@ -116,7 +116,8 @@ function WalkPage() {
   const todayHistory = useMemo(() => {
     const todayStr = new Date().toISOString().slice(0, 10);
     return walkSessions.filter(
-      (s) => s.status === "finished" && (s.day === todayStr || s.started_at?.slice(0, 10) === todayStr)
+      (s) =>
+        s.status === "finished" && (s.day === todayStr || s.started_at?.slice(0, 10) === todayStr),
     );
   }, [walkSessions]);
 
@@ -136,8 +137,8 @@ function WalkPage() {
             {status === "active"
               ? "Walk in Progress"
               : status === "paused"
-              ? "Walk Paused"
-              : "Ready to Walk"}
+                ? "Walk Paused"
+                : "Ready to Walk"}
           </span>
 
           <span className="text-[11px] font-semibold text-white/60 flex items-center gap-1">
@@ -145,8 +146,8 @@ function WalkPage() {
             {gpsAvailable === true
               ? "Real GPS Location"
               : gpsAvailable === false
-              ? "Sensor Estimate"
-              : "GPS Ready"}
+                ? "Sensor Estimate"
+                : "GPS Ready"}
           </span>
         </div>
 

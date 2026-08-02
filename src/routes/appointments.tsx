@@ -16,11 +16,7 @@ import { toast } from "sonner";
 import { Screen, ScreenHeader } from "@/components/lifehub/Screen";
 import { useAuth } from "@/hooks/use-auth";
 import { useData } from "@/lib/data-context";
-import {
-  createAppointment,
-  updateAppointment,
-  deleteAppointment,
-} from "@/lib/api";
+import { createAppointment, updateAppointment, deleteAppointment } from "@/lib/api";
 import { Appointment } from "@/lib/types";
 import { ListSkeleton } from "@/components/lifehub/SkeletonLoader";
 
@@ -46,9 +42,7 @@ function AppointmentsPage() {
   const [title, setTitle] = useState("");
   const [doctorName, setDoctorName] = useState("");
   const [location, setLocation] = useState("");
-  const [appointmentDate, setAppointmentDate] = useState(
-    new Date().toISOString().split("T")[0]
-  );
+  const [appointmentDate, setAppointmentDate] = useState(new Date().toISOString().split("T")[0]);
   const [startTime, setStartTime] = useState("10:00");
   const [priority, setPriority] = useState<"high" | "medium" | "light">("medium");
   const [notes, setNotes] = useState("");
@@ -96,8 +90,7 @@ function AppointmentsPage() {
 
     try {
       if (editingApp) {
-        await updateAppointment(editingApp.id, {
-          user_id: user.id,
+        await updateAppointment(editingApp.id, user.id, {
           title,
           doctor_name: doctorName,
           location,
@@ -124,7 +117,7 @@ function AppointmentsPage() {
       await refreshAppointments();
       setModalOpen(false);
       resetForm();
-    } catch (err: any) {
+    } catch {
       toast.error("Could not save appointment.");
     } finally {
       setSubmitting(false);
@@ -148,7 +141,7 @@ function AppointmentsPage() {
     if (!user || app.status === "completed" || joining) return;
     setJoining(true);
     try {
-      await updateAppointment(app.id, { user_id: user.id, status: "completed" });
+      await updateAppointment(app.id, user.id, { status: "completed" });
       await refreshAppointments();
       toast.success(`Session "${app.title}" completed — nice work! 🎉`);
       setSelectedPlan(null);
@@ -214,7 +207,9 @@ function AppointmentsPage() {
               />
             </div>
             <p className="mt-2 text-sm font-bold text-[#12131A]">No sessions in your plan</p>
-            <p className="text-xs text-[#6B7280] mt-1">Tap "+ Add Appointment" to schedule consultations & sessions.</p>
+            <p className="text-xs text-[#6B7280] mt-1">
+              Tap "+ Add Appointment" to schedule consultations & sessions.
+            </p>
             <button
               onClick={openAddModal}
               className="mt-4 inline-flex items-center gap-1.5 rounded-full bg-[#12131A] px-4 py-2 text-xs font-bold text-white shadow-xs"
@@ -224,7 +219,13 @@ function AppointmentsPage() {
           </div>
         ) : (
           filteredApps.map((app, idx) => {
-            const bgColors = ["bg-[#FFC593]", "bg-[#BEE3FF]", "bg-[#E8E2FF]", "bg-[#FFD2E8]", "bg-[#C2F2D0]"];
+            const bgColors = [
+              "bg-[#FFC593]",
+              "bg-[#BEE3FF]",
+              "bg-[#E8E2FF]",
+              "bg-[#FFD2E8]",
+              "bg-[#C2F2D0]",
+            ];
             const bgClass = bgColors[idx % bgColors.length];
 
             return (
@@ -239,7 +240,8 @@ function AppointmentsPage() {
                   </span>
                   <h3 className="mt-2 text-lg font-black">{app.title}</h3>
                   <p className="text-xs font-medium text-[#12131A]/80 mt-0.5">
-                    {app.appointment_date} at {app.start_time || "10:00"} {app.location ? `· ${app.location}` : ""}
+                    {app.appointment_date} at {app.start_time || "10:00"}{" "}
+                    {app.location ? `· ${app.location}` : ""}
                   </p>
                   {app.doctor_name && (
                     <p className="text-[11px] font-bold text-[#12131A]/90 mt-2 flex items-center gap-1.5 border-t border-black/10 pt-2">
@@ -253,12 +255,14 @@ function AppointmentsPage() {
                 <div className="flex flex-col items-end gap-2" onClick={(e) => e.stopPropagation()}>
                   <button
                     onClick={() => openEditModal(app)}
+                    aria-label={`Edit appointment ${app.title}`}
                     className="size-7 flex items-center justify-center rounded-full bg-white/80 text-[#12131A] hover:bg-white"
                   >
                     <Edit2 className="size-3.5" />
                   </button>
                   <button
                     onClick={() => handleDelete(app.id)}
+                    aria-label={`Delete appointment ${app.title}`}
                     className="size-7 flex items-center justify-center rounded-full bg-white/80 text-rose-600 hover:bg-rose-50"
                   >
                     <Trash2 className="size-3.5" />
@@ -277,6 +281,7 @@ function AppointmentsPage() {
             <div className="rounded-2xl bg-[#FFC593] p-5 text-[#12131A] relative">
               <button
                 onClick={() => setSelectedPlan(null)}
+                aria-label="Close appointment details"
                 className="absolute top-3 right-3 size-7 flex items-center justify-center rounded-full bg-white/70 text-[#12131A]"
               >
                 <X className="size-4" />
@@ -291,7 +296,9 @@ function AppointmentsPage() {
             <div className="mt-4 space-y-2.5 text-xs text-[#12131A]">
               <div className="flex items-center gap-2.5 font-bold">
                 <Clock className="size-4 text-[#7C5CFC]" />
-                <span>{selectedPlan.appointment_date} · {selectedPlan.start_time || "10:00"}</span>
+                <span>
+                  {selectedPlan.appointment_date} · {selectedPlan.start_time || "10:00"}
+                </span>
               </div>
               {selectedPlan.location && (
                 <div className="flex items-center gap-2.5 font-bold">
@@ -305,7 +312,9 @@ function AppointmentsPage() {
                     <User className="size-4" />
                   </span>
                   <div>
-                    <span className="block text-[10px] text-[#6B7280] font-bold">Trainer / Host</span>
+                    <span className="block text-[10px] text-[#6B7280] font-bold">
+                      Trainer / Host
+                    </span>
                     <span className="font-extrabold">{selectedPlan.doctor_name}</span>
                   </div>
                 </div>
@@ -352,7 +361,11 @@ function AppointmentsPage() {
               <h3 className="text-base font-extrabold text-[#12131A]">
                 {editingApp ? "Edit Session" : "Schedule New Session"}
               </h3>
-              <button onClick={() => setModalOpen(false)} className="size-7 flex items-center justify-center rounded-full bg-black/5">
+              <button
+                onClick={() => setModalOpen(false)}
+                aria-label="Close appointment form"
+                className="size-7 flex items-center justify-center rounded-full bg-black/5"
+              >
                 <X className="size-4" />
               </button>
             </div>

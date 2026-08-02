@@ -147,8 +147,12 @@ function BillsPage() {
     return matchesCat && matchesSearch;
   });
 
-  const totalUnpaid = bills.filter((b) => b.status === "unpaid").reduce((sum, b) => sum + Number(b.amount), 0);
-  const totalPaid = bills.filter((b) => b.status === "paid").reduce((sum, b) => sum + Number(b.amount), 0);
+  const totalUnpaid = bills
+    .filter((b) => b.status === "unpaid")
+    .reduce((sum, b) => sum + Number(b.amount), 0);
+  const totalPaid = bills
+    .filter((b) => b.status === "paid")
+    .reduce((sum, b) => sum + Number(b.amount), 0);
 
   // Error state
   if (billError) {
@@ -159,7 +163,9 @@ function BillsPage() {
             <h1 className="text-2xl font-extrabold text-foreground flex items-center gap-2">
               <Wallet className="size-6 text-emerald-600" /> Bills & Payments
             </h1>
-            <p className="text-xs text-muted-foreground">Track dues, subscriptions & financial records</p>
+            <p className="text-xs text-muted-foreground">
+              Track dues, subscriptions & financial records
+            </p>
           </div>
         </header>
         <div className="mt-6 rounded-3xl border border-dashed border-destructive/50 p-8 text-center bg-destructive/5">
@@ -184,7 +190,9 @@ function BillsPage() {
           <h1 className="text-2xl font-extrabold text-foreground flex items-center gap-2">
             <Wallet className="size-6 text-emerald-600" /> Bills & Payments
           </h1>
-          <p className="text-xs text-muted-foreground">Track dues, subscriptions & financial records</p>
+          <p className="text-xs text-muted-foreground">
+            Track dues, subscriptions & financial records
+          </p>
         </div>
         <div className="flex gap-2">
           <button
@@ -234,7 +242,9 @@ function BillsPage() {
               key={cat}
               onClick={() => setCategoryFilter(cat)}
               className={`rounded-full px-3.5 py-1 text-xs font-bold capitalize whitespace-nowrap ${
-                categoryFilter === cat ? "bg-slate-900 text-white shadow-sm" : "bg-muted text-muted-foreground"
+                categoryFilter === cat
+                  ? "bg-slate-900 text-white shadow-sm"
+                  : "bg-muted text-muted-foreground"
               }`}
             >
               {cat}
@@ -268,7 +278,9 @@ function BillsPage() {
 
               <div className="flex items-center gap-3">
                 <div className="text-right">
-                  <p className="text-base font-black text-foreground">${Number(bill.amount).toFixed(2)}</p>
+                  <p className="text-base font-black text-foreground">
+                    ${Number(bill.amount).toFixed(2)}
+                  </p>
                   <span
                     className={`text-[10px] font-bold uppercase ${
                       bill.status === "paid" ? "text-emerald-600" : "text-rose-600"
@@ -406,7 +418,9 @@ function BillsPage() {
 
             <div className="mt-4 rounded-2xl bg-muted/30 p-4 text-center">
               <p className="text-xs text-muted-foreground">Amount Due for {payModalBill.title}</p>
-              <p className="text-3xl font-black text-foreground mt-1">${Number(payModalBill.amount).toFixed(2)}</p>
+              <p className="text-3xl font-black text-foreground mt-1">
+                ${Number(payModalBill.amount).toFixed(2)}
+              </p>
             </div>
 
             <form onSubmit={handleConfirmPayment} className="mt-4 space-y-3">
@@ -435,8 +449,14 @@ function BillsPage() {
                   disabled={paying}
                   className="w-2/3 flex items-center justify-center gap-1.5 rounded-xl bg-emerald-600 py-2.5 text-xs font-bold text-white shadow-md hover:bg-emerald-700 active:scale-95 disabled:opacity-50"
                 >
-                  {paying ? <Loader2 className="size-4 animate-spin" /> : <CheckCircle2 className="size-4" />}
-                  {paying ? "Processing..." : `Confirm Pay $${Number(payModalBill.amount).toFixed(2)}`}
+                  {paying ? (
+                    <Loader2 className="size-4 animate-spin" />
+                  ) : (
+                    <CheckCircle2 className="size-4" />
+                  )}
+                  {paying
+                    ? "Processing..."
+                    : `Confirm Pay $${Number(payModalBill.amount).toFixed(2)}`}
                 </button>
               </div>
             </form>
@@ -459,16 +479,25 @@ function BillsPage() {
             </div>
             <div className="mt-3 max-h-80 overflow-y-auto space-y-2">
               {payments.length === 0 ? (
-                <p className="p-6 text-center text-sm text-muted-foreground">No payments recorded yet.</p>
+                <p className="p-6 text-center text-sm text-muted-foreground">
+                  No payments recorded yet.
+                </p>
               ) : (
                 payments.map((p) => (
-                  <div key={p.id} className="flex items-center justify-between rounded-xl bg-muted/40 p-3">
+                  <div
+                    key={p.id}
+                    className="flex items-center justify-between rounded-xl bg-muted/40 p-3"
+                  >
                     <div>
                       <p className="text-xs font-bold text-foreground">{p.payment_method}</p>
-                      <p className="text-[10px] text-muted-foreground">Ref: {p.reference || "PAY-" + p.id.slice(0, 6)}</p>
+                      <p className="text-[10px] text-muted-foreground">
+                        Ref: {p.reference || "PAY-" + p.id.slice(0, 6)}
+                      </p>
                     </div>
                     <div className="text-right">
-                      <p className="text-sm font-black text-emerald-600">+${Number(p.amount).toFixed(2)}</p>
+                      <p className="text-sm font-black text-emerald-600">
+                        +${Number(p.amount).toFixed(2)}
+                      </p>
                       <p className="text-[10px] text-muted-foreground">
                         {new Date(p.payment_date).toLocaleDateString()}
                       </p>

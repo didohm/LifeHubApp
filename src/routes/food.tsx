@@ -51,8 +51,9 @@ function FoodPage() {
           </h2>
 
           <p className="mt-3 text-xs leading-relaxed text-white/70 font-medium">
-            We are building a smart, privacy-first nutrition logging experience with calorie targets,
-            macronutrient breakdowns, and AI recipe analysis. No fake data — real tracking is coming soon!
+            We are building a smart, privacy-first nutrition logging experience with calorie
+            targets, macronutrient breakdowns, and AI recipe analysis. No fake data — real tracking
+            is coming soon!
           </p>
 
           {/* Planned Features Preview Pill List */}

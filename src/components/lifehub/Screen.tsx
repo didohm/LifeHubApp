@@ -29,11 +29,7 @@ export function Screen({
         className ?? ""
       }`}
     >
-      <div
-        className={`mx-auto w-full max-w-md px-5 pt-6 ${
-          showBottomNav ? "pb-32" : "pb-8"
-        }`}
-      >
+      <div className={`mx-auto w-full max-w-md px-5 pt-6 ${showBottomNav ? "pb-32" : "pb-8"}`}>
         {children}
       </div>
       {showBottomNav && <BottomNav />}

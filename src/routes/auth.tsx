@@ -1,21 +1,28 @@
-import { useState } from 'react';
-import { createFileRoute, useNavigate } from '@tanstack/react-router';
-import { useAuth } from '../hooks/use-auth';
-import { Screen } from '@/components/lifehub/Screen';
-import hero3d from '@/assets/hero-3d.png';
-import { Loader2, Star, CalendarDays } from 'lucide-react';
-import { FcGoogle } from 'react-icons/fc';
-import { motion, useReducedMotion } from 'framer-motion';
+import { useEffect, useState } from "react";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { useAuth } from "../hooks/use-auth";
+import { Screen } from "@/components/lifehub/Screen";
+import hero3d from "@/assets/hero-3d.png";
+import { Loader2, Star, CalendarDays } from "lucide-react";
+import { FcGoogle } from "react-icons/fc";
+import { motion, useReducedMotion } from "framer-motion";
 
-export const Route = createFileRoute('/auth')({
+export const Route = createFileRoute("/auth")({
   component: AuthPage,
 });
 
 function AuthPage() {
   const { user, isFirebaseConfigured, signInWithGoogle } = useAuth();
   const navigate = useNavigate();
-  const [error, setError] = useState('');
+  const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const reduceMotion = useReducedMotion();
+
+  useEffect(() => {
+    if (user) {
+      navigate({ to: "/" });
+    }
+  }, [user, navigate]);
 
   if (!isFirebaseConfigured) {
     return (
@@ -35,31 +42,27 @@ function AuthPage() {
     );
   }
 
-  if (user) {
-    navigate({ to: '/' });
-    return null;
-  }
+  if (user) return null;
 
   const handleGoogleSignIn = async () => {
-    setError('');
+    setError("");
     setSubmitting(true);
     try {
       await signInWithGoogle();
-      navigate({ to: '/' });
+      navigate({ to: "/" });
     } catch (err: any) {
-      if (err.code === 'auth/popup-closed-by-user') {
-        setError('Sign-in popup was closed. Please try again.');
-      } else if (err.code === 'auth/popup-blocked') {
-        setError('Pop-up was blocked by your browser. Please allow pop-ups for this site.');
+      if (err.code === "auth/popup-closed-by-user") {
+        setError("Sign-in popup was closed. Please try again.");
+      } else if (err.code === "auth/popup-blocked") {
+        setError("Pop-up was blocked by your browser. Please allow pop-ups for this site.");
       } else {
-        setError(err.message || 'Google sign-in failed. Please try again.');
+        setError(err.message || "Google sign-in failed. Please try again.");
       }
     } finally {
       setSubmitting(false);
     }
   };
 
-  const reduceMotion = useReducedMotion();
   const floatArt = reduceMotion ? undefined : { y: [0, -10, 0] };
   const floatChip = reduceMotion ? undefined : { y: [0, -6, 0] };
 
@@ -87,7 +90,7 @@ function AuthPage() {
 
           <motion.div
             animate={floatArt}
-            transition={{ duration: 3, repeat: Infinity, ease: 'easeInOut' }}
+            transition={{ duration: 3, repeat: Infinity, ease: "easeInOut" }}
             className="relative w-full max-w-xs"
           >
             <img
@@ -102,14 +105,14 @@ function AuthPage() {
             {/* Planner-motif chips, mirrored symmetrically on the same axis */}
             <motion.div
               animate={floatChip}
-              transition={{ duration: 3.2, repeat: Infinity, ease: 'easeInOut', delay: 0.4 }}
+              transition={{ duration: 3.2, repeat: Infinity, ease: "easeInOut", delay: 0.4 }}
               className="absolute left-0 top-20 flex size-9 items-center justify-center rounded-2xl bg-white shadow-lg shadow-black/10"
             >
               <Star className="size-4 text-[#F08C3E]" />
             </motion.div>
             <motion.div
               animate={floatChip}
-              transition={{ duration: 3.2, repeat: Infinity, ease: 'easeInOut', delay: 0.9 }}
+              transition={{ duration: 3.2, repeat: Infinity, ease: "easeInOut", delay: 0.9 }}
               className="absolute right-0 top-20 flex size-9 items-center justify-center rounded-2xl bg-white shadow-lg shadow-black/10"
             >
               <CalendarDays className="size-4 text-[#4FB8C9]" />
