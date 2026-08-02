@@ -1,45 +1,64 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { CalendarHeart, Wallet, Pill, FolderClosed, ListChecks } from "lucide-react";
+import {
+  Calendar,
+  Wallet,
+  Pill,
+  FolderClosed,
+  ListChecks,
+  Bot,
+  Activity,
+  Cake,
+  Dumbbell,
+  Target,
+  Footprints,
+  UtensilsCrossed,
+} from "lucide-react";
 import { Screen, ScreenHeader } from "@/components/lifehub/Screen";
 
 export const Route = createFileRoute("/services")({
   head: () => ({
     meta: [
-      { title: "Services — LifeHub" },
+      { title: "Services — Balance" },
       {
         name: "description",
-        content: "All LifeHub services: appointments, bills, medications, documents and tasks.",
+        content:
+          "Explore all Balance services: Workouts, Programs, Walking, Food, Appointments, Medications, Bills, Documents, Tasks, AI assistant & Progress.",
       },
-      { property: "og:title", content: "Services — LifeHub" },
-      { property: "og:description", content: "Every daily life service in one grid." },
     ],
   }),
   component: Services,
 });
 
 const services = [
-  { to: "/appointments", label: "Appointments", tint: "bg-tangerine", Icon: CalendarHeart },
-  { to: "/bills", label: "Bills", tint: "bg-blush", Icon: Wallet },
-  { to: "/medications", label: "Medications", tint: "bg-sky", Icon: Pill },
-  { to: "/documents", label: "Documents", tint: "bg-mint", Icon: FolderClosed },
-  { to: "/tasks", label: "To-Do List", tint: "bg-lavender", Icon: ListChecks },
+  { to: "/workouts", label: "Workouts", bg: "bg-[#FFC593]", Icon: Dumbbell },
+  { to: "/workout-programs", label: "Workout Programs", bg: "bg-[#E8E2FF]", Icon: Target },
+  { to: "/walk", label: "Walking Service", bg: "bg-[#C2F2D0]", Icon: Footprints },
+  { to: "/food", label: "Food & Nutrition", bg: "bg-[#FFE8D6]", Icon: UtensilsCrossed },
+  { to: "/appointments", label: "Appointments", bg: "bg-[#BEE3FF]", Icon: Calendar },
+  { to: "/medications", label: "Hydration & Meds", bg: "bg-[#FFD2E8]", Icon: Pill },
+  { to: "/bills", label: "Bills & Payments", bg: "bg-[#E8E2FF]", Icon: Wallet },
+  { to: "/documents", label: "Documents", bg: "bg-[#C2F2D0]", Icon: FolderClosed },
+  { to: "/tasks", label: "To-Do Routine", bg: "bg-[#FFC593]", Icon: ListChecks },
+  { to: "/birthdays", label: "Birthdays", bg: "bg-[#FFE8D6]", Icon: Cake },
+  { to: "/ai", label: "AI Assistant", bg: "bg-[#7C5CFC] text-white", Icon: Bot },
+  { to: "/analytics", label: "Progress", bg: "bg-white border border-black/5", Icon: Activity },
 ] as const;
 
 function Services() {
   return (
     <Screen>
-      <ScreenHeader title="Services" subtitle="Everything in one place" />
-      <div className="grid grid-cols-2 gap-3">
-        {services.map(({ to, label, tint, Icon }) => (
+      <ScreenHeader title="Services" subtitle="All daily routines & tools" showBack />
+      <div className="mt-3 grid grid-cols-2 gap-3">
+        {services.map(({ to, label, bg, Icon }) => (
           <Link
             key={to}
             to={to}
-            className={`card-soft tap ${tint} p-5 text-ink active:scale-[0.97]`}
+            className={`card-soft tap ${bg} p-5 flex flex-col justify-between active:scale-[0.97] shadow-xs hover:shadow-md transition-all min-h-[130px]`}
           >
-            <span className="flex size-11 items-center justify-center rounded-2xl bg-card">
+            <span className="flex size-10 items-center justify-center rounded-full bg-white/80 text-[#12131A] shadow-xs">
               <Icon className="size-5" />
             </span>
-            <span className="mt-4 block text-[15px] font-extrabold">{label}</span>
+            <span className="mt-3 block text-sm font-extrabold">{label}</span>
           </Link>
         ))}
       </div>

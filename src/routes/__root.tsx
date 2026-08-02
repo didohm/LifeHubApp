@@ -4,13 +4,18 @@ import {
   Link,
   createRootRouteWithContext,
   useRouter,
+  useLocation,
+  useNavigate,
   HeadContent,
   Scripts,
 } from "@tanstack/react-router";
 import { useEffect, type ReactNode } from "react";
+import { Toaster } from "sonner";
 
 import appCss from "../styles.css?url";
 import { reportLovableError } from "../lib/lovable-error-reporting";
+import { AuthProvider, useAuth } from "../hooks/use-auth";
+import { DataProvider } from "../lib/data-context";
 
 function NotFoundComponent() {
   return (
@@ -95,7 +100,7 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
       { rel: "preconnect", href: "https://fonts.gstatic.com", crossOrigin: "anonymous" },
       {
         rel: "stylesheet",
-        href: "https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800;900&display=swap",
+        href: "https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800;900&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap",
       },
       {
         rel: "stylesheet",
@@ -124,13 +129,50 @@ function RootShell({ children }: { children: ReactNode }) {
   );
 }
 
+function AuthenticatedApp({ children }: { children: ReactNode }) {
+  const { user } = useAuth();
+  return <DataProvider userId={user?.id || null}>{children}</DataProvider>;
+}
+
+/**
+ * Onboarding gate: a signed-in user without a date of birth cannot access the
+ * app — they are redirected to /onboarding until the required field is saved.
+ */
+function OnboardingGate({ children }: { children: ReactNode }) {
+  const { user, loading } = useAuth();
+  const location = useLocation();
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    if (loading) return;
+    if (!user) {
+      if (location.pathname !== "/auth") navigate({ to: "/auth" });
+      return;
+    }
+    const missingDob = !user.date_of_birth;
+    if (missingDob && location.pathname !== "/onboarding") {
+      navigate({ to: "/onboarding" });
+    } else if (!missingDob && location.pathname === "/onboarding") {
+      navigate({ to: "/" });
+    }
+  }, [user, loading, location.pathname, navigate]);
+
+  return <>{children}</>;
+}
+
 function RootComponent() {
   const { queryClient } = Route.useRouteContext();
 
   return (
     <QueryClientProvider client={queryClient}>
-      {/* Required: nested routes render here. Removing <Outlet /> breaks all child routes. */}
-      <Outlet />
+      <AuthProvider>
+        <AuthenticatedApp>
+          <OnboardingGate>
+            <Outlet />
+          </OnboardingGate>
+        </AuthenticatedApp>
+        <Toaster position="top-right" richColors closeButton />
+      </AuthProvider>
     </QueryClientProvider>
   );
 }

@@ -5,16 +5,16 @@
 @custom-variant dark (&:is(.dark *));
 
 @theme {
-  --font-sans: "Nunito", ui-rounded, system-ui, sans-serif;
-  --color-lavender: oklch(0.75 0.09 292);
-  --color-lavender-soft: oklch(0.9 0.05 292);
-  --color-tangerine: oklch(0.81 0.14 72);
-  --color-sky: oklch(0.86 0.06 235);
-  --color-blush: oklch(0.82 0.11 345);
-  --color-mint: oklch(0.89 0.08 155);
-  --color-ink: oklch(0.19 0 0);
-  --shadow-soft: 0 10px 30px -12px oklch(0.19 0 0 / 0.18);
-  --shadow-pill: 0 14px 34px -10px oklch(0.19 0 0 / 0.35);
+  --font-sans: "Plus Jakarta Sans", "Nunito", ui-rounded, system-ui, sans-serif;
+  --color-lavender: oklch(0.65 0.21 282);
+  --color-lavender-soft: oklch(0.94 0.04 285);
+  --color-tangerine: oklch(0.83 0.14 65);
+  --color-sky: oklch(0.89 0.07 235);
+  --color-blush: oklch(0.87 0.09 345);
+  --color-mint: oklch(0.92 0.08 150);
+  --color-ink: oklch(0.14 0.02 265);
+  --shadow-soft: 0 12px 32px -12px oklch(0.14 0.02 265 / 0.12);
+  --shadow-pill: 0 14px 34px -10px oklch(0.65 0.21 282 / 0.35);
 }
 
 @utility card-soft {
@@ -28,7 +28,7 @@
     box-shadow 0.18s ease;
 }
 @utility tap-active {
-  transform: scale(0.97);
+  transform: scale(0.96);
 }
 
 /*
@@ -101,7 +101,7 @@
   --secondary: oklch(0.96 0.006 285);
   --secondary-foreground: oklch(0.19 0 0);
   --muted: oklch(0.955 0.004 285);
-  --muted-foreground: oklch(0.62 0.008 285);
+  --muted-foreground: oklch(0.53 0.01 285);
   --accent: oklch(0.9 0.05 292);
   --accent-foreground: oklch(0.19 0 0);
   --destructive: oklch(0.577 0.245 27.325);
@@ -167,5 +167,43 @@
   body {
     background-color: var(--color-background);
     color: var(--color-foreground);
+  }
+
+  /* Compact mode: tighter spacing throughout */
+  .compact-mode .card-soft {
+    padding: 0.75rem !important;
+    border-radius: 1.25rem;
+  }
+  .compact-mode h1 {
+    font-size: 1.125rem !important;
+  }
+  .compact-mode h2 {
+    font-size: 1rem !important;
+  }
+  .compact-mode p,
+  .compact-mode span,
+  .compact-mode button,
+  .compact-mode input {
+    font-size: 0.75rem !important;
+  }
+  .compact-mode .gap-3 {
+    gap: 0.5rem !important;
+  }
+  .compact-mode .gap-4 {
+    gap: 0.75rem !important;
+  }
+  .compact-mode .mt-4 {
+    margin-top: 0.75rem !important;
+  }
+  .compact-mode .mt-5 {
+    margin-top: 1rem !important;
+  }
+
+  /* Disable animations mode */
+  .disable-animations * {
+    animation-duration: 0s !important;
+    animation-delay: 0s !important;
+    transition-duration: 0s !important;
+    transition-delay: 0s !important;
   }
 }
