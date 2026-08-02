@@ -19,13 +19,18 @@ export default defineConfig({
             if (id.includes("framer-motion")) return "vendor-motion";
             if (id.includes("@tanstack")) return "vendor-tanstack";
             if (id.includes("@radix-ui")) return "vendor-radix";
+            if (id.includes("lucide-react") || id.includes("react-icons")) return "vendor-icons";
+            if (id.includes("date-fns")) return "vendor-date";
+            if (id.includes("react-hook-form")) return "vendor-forms";
+            if (id.includes("zod")) return "vendor-utils";
+            if (id.includes("embla-carousel") || id.includes("vaul") || id.includes("cmdk")) return "vendor-ui-components";
             return "vendor";
           },
         },
       },
     },
     server: {
-      hmr: {
+      ws: {
         path: "/__vite_hmr",
       },
     },

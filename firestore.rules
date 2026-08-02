@@ -3,19 +3,121 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // Users can only read/write their own user document
+    // ─── HELPERS ───
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isDataOwnedBy(userId) {
+      return request.resource.data.user_id == userId;
+    }
+
+    // ─── GLOBAL RULES ───
+
+    // All user data is readable by the owner.
+    match /users/{userId}/{allPaths=**} {
+      allow read: if isOwner(userId);
+    }
+
+    // ─── USER PROFILE ───
+
     match /users/{userId} {
-      allow read, write: if request.auth != null && request.auth.uid == userId;
+      allow create: if isOwner(userId) && isDataOwnedBy(userId);
+      allow update: if isOwner(userId) && isDataOwnedBy(userId);
+      allow delete: if isOwner(userId);
+    }
 
-      // All subcollections under a user doc are restricted to the owner
-      match /{subcollection}/{docId} {
-        allow read, write: if request.auth != null && request.auth.uid == userId;
-      }
+    // ─── GENERIC SUBCOLLECTIONS ───
+    // These collections only require ownership and user_id validation.
+    // They do not have additional schema-level constraints applied here.
 
-      // AI conversation messages (nested subcollection)
-      match /ai_conversations/{convId}/messages/{msgId} {
-        allow read, write: if request.auth != null && request.auth.uid == userId;
-      }
+    match /users/{userId}/appointments/{id} {
+      allow create: if isOwner(userId) && isDataOwnedBy(userId);
+      allow update, delete: if isOwner(userId);
+    }
+
+    match /users/{userId}/medications/{id} {
+      allow create: if isOwner(userId) && isDataOwnedBy(userId);
+      allow update, delete: if isOwner(userId);
+    }
+
+    match /users/{userId}/medication_logs/{id} {
+      allow create: if isOwner(userId) && isDataOwnedBy(userId);
+      allow update, delete: if isOwner(userId);
+    }
+
+    match /users/{userId}/payments/{id} {
+      allow create: if isOwner(userId) && isDataOwnedBy(userId);
+      allow update, delete: if isOwner(userId);
+    }
+
+    match /users/{userId}/documents/{id} {
+      allow create: if isOwner(userId) && isDataOwnedBy(userId);
+      allow update, delete: if isOwner(userId);
+    }
+
+    match /users/{userId}/activity_logs/{id} {
+      allow create: if isOwner(userId) && isDataOwnedBy(userId);
+      allow update, delete: if isOwner(userId);
+    }
+
+    match /users/{userId}/ai_conversations/{id} {
+      allow create: if isOwner(userId) && isDataOwnedBy(userId);
+      allow update, delete: if isOwner(userId);
+    }
+
+    match /users/{userId}/birthdays/{id} {
+      allow create: if isOwner(userId) && isDataOwnedBy(userId);
+      allow update, delete: if isOwner(userId);
+    }
+
+    match /users/{userId}/workout_programs/{id} {
+      allow create: if isOwner(userId) && isDataOwnedBy(userId);
+      allow update, delete: if isOwner(userId);
+    }
+
+    // ─── HARDENED SUBCOLLECTIONS ───
+    // These collections have additional schema-level validation.
+
+    match /users/{userId}/bills/{id} {
+      allow create: if isOwner(userId) && isDataOwnedBy(userId) && request.resource.data.amount is number;
+      allow update: if isOwner(userId) && request.resource.data.amount is number;
+      allow delete: if isOwner(userId);
+    }
+
+    match /users/{userId}/todos/{id} {
+      allow create: if isOwner(userId) && isDataOwnedBy(userId) && request.resource.data.completed is bool && request.resource.data.progress is number;
+      allow update: if isOwner(userId) && request.resource.data.completed is bool && request.resource.data.progress is number;
+      allow delete: if isOwner(userId);
+    }
+
+    match /users/{userId}/workouts/{id} {
+      allow create: if isOwner(userId) && isDataOwnedBy(userId) && request.resource.data.duration is number;
+      allow update: if isOwner(userId) && request.resource.data.duration is number;
+      allow delete: if isOwner(userId);
+    }
+
+    match /users/{userId}/walk_sessions/{id} {
+      allow create: if isOwner(userId) && isDataOwnedBy(userId) && request.resource.data.distance is number && request.resource.data.duration is number && request.resource.data.calories is number && request.resource.data.steps is number;
+      allow update: if isOwner(userId) && request.resource.data.distance is number && request.resource.data.duration is number && request.resource.data.calories is number && request.resource.data.steps is number;
+      allow delete: if isOwner(userId);
+    }
+
+    match /users/{userId}/water_logs/{id} {
+      allow create: if isOwner(userId) && isDataOwnedBy(userId) && request.resource.data.glasses is number && request.resource.data.goal is number;
+      allow update: if isOwner(userId) && request.resource.data.glasses is number && request.resource.data.goal is number;
+      allow delete: if isOwner(userId);
+    }
+
+    // Nested subcollection: AI Messages
+    match /users/{userId}/ai_conversations/{convId}/messages/{msgId} {
+      allow create: if isOwner(userId) && request.resource.data.role in ['user', 'assistant', 'system'] && request.resource.data.content is string;
+      allow update, delete: if isOwner(userId);
     }
   }
 }
