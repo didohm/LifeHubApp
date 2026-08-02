@@ -57,7 +57,7 @@ function now(): string {
 }
 
 // Helper: current local date as YYYY-MM-DD (stable across timezones for daily resets)
-function todayLocalDate(d: Date = new Date()): string {
+export function todayLocalDate(d: Date = new Date()): string {
   const y = d.getFullYear();
   const m = String(d.getMonth() + 1).padStart(2, "0");
   const day = String(d.getDate()).padStart(2, "0");
@@ -1246,6 +1246,33 @@ export async function getWalkSessions(userId: string): Promise<WalkSession[]> {
   const q = query(ref, orderBy("created_at", "desc"));
   const snap = await getDocs(q);
   return snap.docs.map((d) => docToObj<WalkSession>(d));
+}
+
+/**
+ * Fetch every non-finished walk session (active/paused). These are sessions
+ * that were started but never completed — e.g. the app was closed or the user
+ * navigated away mid-walk. Used to restore the latest in-progress walk after
+ * a reload and to clean up abandoned ones so they never block new walks.
+ */
+export async function getAbandonedWalkSessions(userId: string): Promise<WalkSession[]> {
+  const ref = collection(db, "users", userId, "walk_sessions");
+  // No orderBy here on purpose: `in` + orderBy on another field would require
+  // a composite index. The result set is small — sort client-side instead.
+  const q = query(ref, where("status", "in", ["active", "paused"]));
+  const snap = await getDocs(q);
+  return snap.docs
+    .map((d) => docToObj<WalkSession>(d))
+    .sort((a, b) => (b.created_at || "").localeCompare(a.created_at || ""));
+}
+
+/**
+ * Mark a walk session as cancelled. Used for abandoned walks — they are kept
+ * for audit/history but never counted in statistics (stats only aggregate
+ * sessions with status "finished").
+ */
+export async function cancelWalkSession(id: string, userId: string): Promise<void> {
+  const docRef = doc(db, "users", userId, "walk_sessions", id);
+  await updateDoc(docRef, { status: "cancelled", updated_at: now() });
 }
 
 export async function createWalkSession(userId: string): Promise<WalkSession> {

@@ -19,6 +19,7 @@ import { Screen, ScreenHeader } from "@/components/lifehub/Screen";
 import { useAuth } from "@/hooks/use-auth";
 import { useData } from "@/lib/data-context";
 import { useWalk } from "@/hooks/use-walk";
+import { todayLocalDate } from "@/lib/api";
 import { WalkSession } from "@/lib/types";
 
 export const Route = createFileRoute("/walk")({
@@ -76,27 +77,33 @@ function WalkPage() {
     }
   };
 
-  // Calculate stats based on real database records
+  // Calculate stats based on real database records.
+  // Every session is an independent record, so all sessions in the selected
+  // period are aggregated (distance, duration, steps, calories, count).
+  // Periods are calendar-based and computed with the LOCAL date (the `day`
+  // field is the local YYYY-MM-DD the walk belongs to), so they stay correct
+  // across midnight and in any timezone.
   const stats = useMemo(() => {
-    const now = new Date();
-    const todayStr = new Date().toISOString().slice(0, 10);
+    const todayStr = todayLocalDate();
+    const startOfPeriod = (offsetDays: number) => {
+      const d = new Date();
+      d.setHours(0, 0, 0, 0);
+      d.setDate(d.getDate() - offsetDays);
+      return todayLocalDate(d);
+    };
+    // Daily = today; Weekly = today + previous 6 calendar days;
+    // Monthly = today + previous 29 calendar days. YYYY-MM-DD strings
+    // compare lexicographically, so string comparison is a valid date range.
+    const periodStart =
+      statsPeriod === "daily"
+        ? todayStr
+        : statsPeriod === "weekly"
+          ? startOfPeriod(6)
+          : startOfPeriod(29);
 
-    const filtered = walkSessions.filter((s) => {
-      if (s.status !== "finished") return false;
-      const sDate = new Date(s.started_at || s.created_at);
-
-      if (statsPeriod === "daily") {
-        return s.day === todayStr || sDate.toISOString().slice(0, 10) === todayStr;
-      } else if (statsPeriod === "weekly") {
-        const sevenDaysAgo = new Date();
-        sevenDaysAgo.setDate(now.getDate() - 7);
-        return sDate >= sevenDaysAgo;
-      } else {
-        const thirtyDaysAgo = new Date();
-        thirtyDaysAgo.setDate(now.getDate() - 30);
-        return sDate >= thirtyDaysAgo;
-      }
-    });
+    const filtered = walkSessions.filter(
+      (s) => s.status === "finished" && !!s.day && s.day >= periodStart && s.day <= todayStr,
+    );
 
     const totalDistance = filtered.reduce((sum, s) => sum + (s.distance || 0), 0);
     const totalDuration = filtered.reduce((sum, s) => sum + (s.duration || 0), 0);
@@ -112,13 +119,13 @@ function WalkPage() {
     };
   }, [walkSessions, statsPeriod]);
 
-  // Today's walk history list
+  // Today's walk history list — every finished session from the local day,
+  // in chronological order (oldest first).
   const todayHistory = useMemo(() => {
-    const todayStr = new Date().toISOString().slice(0, 10);
-    return walkSessions.filter(
-      (s) =>
-        s.status === "finished" && (s.day === todayStr || s.started_at?.slice(0, 10) === todayStr),
-    );
+    const todayStr = todayLocalDate();
+    return walkSessions
+      .filter((s) => s.status === "finished" && s.day === todayStr)
+      .sort((a, b) => (a.started_at || a.created_at).localeCompare(b.started_at || b.created_at));
   }, [walkSessions]);
 
   return (
@@ -193,7 +200,7 @@ function WalkPage() {
               disabled={loading}
               className="tap flex items-center gap-2 rounded-full bg-emerald-500 px-8 py-3.5 text-sm font-black text-white shadow-lg hover:bg-emerald-600 active:scale-95 transition-transform"
             >
-              <Play className="size-5 fill-white" /> Start Walk
+              <Play className="size-5 fill-white" /> Start New Walk
             </button>
           )}
 
@@ -287,7 +294,29 @@ function WalkPage() {
             {stats.totalCalories} <span className="text-xs font-bold">kcal</span>
           </p>
           <span className="text-[10px] text-[#6B7280] font-semibold mt-1 block">
-            ~{stats.totalSteps} steps total
+            {stats.count} walk session{stats.count === 1 ? "" : "s"} total
+          </span>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-2 gap-3 mb-5">
+        <div className="card-soft bg-white p-4 border border-black/5 shadow-xs">
+          <span className="text-xs font-extrabold text-[#6B7280]">Total Duration</span>
+          <p className="mt-1 text-2xl font-black text-[#12131A]">
+            {formatDuration(stats.totalDuration)}
+          </p>
+          <span className="text-[10px] text-[#6B7280] font-semibold mt-1 block">
+            across all sessions
+          </span>
+        </div>
+
+        <div className="card-soft bg-white p-4 border border-black/5 shadow-xs">
+          <span className="text-xs font-extrabold text-[#6B7280]">Total Steps</span>
+          <p className="mt-1 text-2xl font-black text-emerald-600">
+            {stats.totalSteps.toLocaleString()} <span className="text-xs font-bold">steps</span>
+          </p>
+          <span className="text-[10px] text-[#6B7280] font-semibold mt-1 block">
+            combined from all walks
           </span>
         </div>
       </div>

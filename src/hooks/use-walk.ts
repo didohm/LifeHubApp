@@ -5,6 +5,9 @@ import {
   finishWalkSession,
   appendWalkPoint,
   estimateWalkCalories,
+  getAbandonedWalkSessions,
+  cancelWalkSession,
+  todayLocalDate,
 } from "@/lib/api";
 import { WalkSession } from "@/lib/types";
 
@@ -38,6 +41,58 @@ export function useWalk(userId: string | null | undefined) {
   const timerRef = useRef<number | null>(null);
   const lastCoordsRef = useRef<{ lat: number; lng: number } | null>(null);
   lastCoordsRef.current = lastCoords;
+
+  // Set to true as soon as the user performs an explicit action (start/finish)
+  // so a slow in-flight restore never overrides their intent.
+  const userActedRef = useRef(false);
+
+  // Restore in-progress walk (or clean up abandoned ones) after mount / reload.
+  // Every walk is its own independent session, so the most recent non-finished
+  // session from today is restored (paused — the user decides to resume or
+  // finish it), while any older non-finished sessions are treated as abandoned
+  // and marked as cancelled so they never block or pollute new walks.
+  useEffect(() => {
+    if (!userId) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const abandoned = await getAbandonedWalkSessions(userId);
+        if (cancelled || userActedRef.current) return;
+        const latest = abandoned[0];
+        const restoreSession =
+          latest && latest.day === todayLocalDate() && (latest.duration || 0) > 0;
+
+        if (restoreSession) {
+          setActiveSession(latest);
+          setStatus("paused");
+          setDuration(latest.duration || 0);
+          setDistance(latest.distance || 0);
+          setCalories(latest.calories || 0);
+          setSteps(latest.steps || 0);
+          const path = latest.path || [];
+          setLastCoords(
+            path.length > 0
+              ? { lat: path[path.length - 1].lat, lng: path[path.length - 1].lng }
+              : null,
+          );
+          // Any other lingering sessions are abandoned — clean them up.
+          abandoned.slice(1).forEach((s) => {
+            cancelWalkSession(s.id, userId).catch(() => {});
+          });
+        } else {
+          // No restorable walk: cancel every stale non-finished session.
+          abandoned.forEach((s) => {
+            cancelWalkSession(s.id, userId).catch(() => {});
+          });
+        }
+      } catch (e) {
+        console.error("Failed to restore walk session:", e);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [userId]);
 
   // Sync calories & steps with duration/distance in a single pass
   useEffect(() => {
@@ -127,8 +182,15 @@ export function useWalk(userId: string | null | undefined) {
   // Start Walk Session
   const startWalk = useCallback(async () => {
     if (!userId) return;
+    userActedRef.current = true;
     setLoading(true);
     try {
+      // First clean up any abandoned (non-finished) sessions — e.g. one that
+      // was started on a previous visit and never completed — so every walk
+      // starts from a clean slate and past sessions are never overwritten.
+      const abandoned = await getAbandonedWalkSessions(userId);
+      await Promise.all(abandoned.map((s) => cancelWalkSession(s.id, userId).catch(() => {})));
+
       const session = await createWalkSession(userId);
       setActiveSession(session);
       setStatus("active");
@@ -175,6 +237,7 @@ export function useWalk(userId: string | null | undefined) {
   // Finish Walk Session
   const finishWalk = useCallback(async () => {
     if (!activeSession || !userId) return null;
+    userActedRef.current = true;
     setLoading(true);
     try {
       await updateWalkSession(activeSession.id, userId, {
@@ -184,8 +247,16 @@ export function useWalk(userId: string | null | undefined) {
         steps,
       });
       const finished = await finishWalkSession(activeSession.id, userId);
-      setStatus("finished");
+      // Auto-reset the tracker so the user can immediately start a new walk.
+      // The completed session stays saved in the database as an independent
+      // record — nothing is overwritten.
       setActiveSession(null);
+      setStatus("idle");
+      setDuration(0);
+      setDistance(0);
+      setCalories(0);
+      setSteps(0);
+      setLastCoords(null);
       return finished;
     } catch (e) {
       console.error("Failed to finish walk session:", e);
@@ -195,7 +266,7 @@ export function useWalk(userId: string | null | undefined) {
     }
   }, [activeSession, userId, duration, distance, calories, steps]);
 
-  // Reset to idle
+  // Reset to idle (manual fallback — finishWalk already auto-resets)
   const resetWalk = useCallback(() => {
     setStatus("idle");
     setActiveSession(null);
