@@ -27,6 +27,7 @@ import { Route as TasksRouteImport } from './routes/tasks'
 import { Route as WalkRouteImport } from './routes/walk'
 import { Route as WorkoutProgramsRouteImport } from './routes/workout-programs'
 import { Route as WorkoutsRouteImport } from './routes/workouts'
+import { Route as ApiAssistantRouteImport } from './routes/api/assistant'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -118,6 +119,11 @@ const WorkoutsRoute = WorkoutsRouteImport.update({
   path: '/workouts',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiAssistantRoute = ApiAssistantRouteImport.update({
+  id: '/api/assistant',
+  path: '/api/assistant',
+  getParentRoute: () => rootRouteImport,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -138,6 +144,7 @@ export interface FileRoutesByFullPath {
   '/walk': typeof WalkRoute
   '/workout-programs': typeof WorkoutProgramsRoute
   '/workouts': typeof WorkoutsRoute
+  '/api/assistant': typeof ApiAssistantRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -158,6 +165,7 @@ export interface FileRoutesByTo {
   '/walk': typeof WalkRoute
   '/workout-programs': typeof WorkoutProgramsRoute
   '/workouts': typeof WorkoutsRoute
+  '/api/assistant': typeof ApiAssistantRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -179,6 +187,7 @@ export interface FileRoutesById {
   '/walk': typeof WalkRoute
   '/workout-programs': typeof WorkoutProgramsRoute
   '/workouts': typeof WorkoutsRoute
+  '/api/assistant': typeof ApiAssistantRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -201,6 +210,7 @@ export interface FileRouteTypes {
     | '/walk'
     | '/workout-programs'
     | '/workouts'
+    | '/api/assistant'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -221,6 +231,7 @@ export interface FileRouteTypes {
     | '/walk'
     | '/workout-programs'
     | '/workouts'
+    | '/api/assistant'
   id:
     | '__root__'
     | '/'
@@ -241,6 +252,7 @@ export interface FileRouteTypes {
     | '/walk'
     | '/workout-programs'
     | '/workouts'
+    | '/api/assistant'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -262,6 +274,7 @@ export interface RootRouteChildren {
   WalkRoute: typeof WalkRoute
   WorkoutProgramsRoute: typeof WorkoutProgramsRoute
   WorkoutsRoute: typeof WorkoutsRoute
+  ApiAssistantRoute: typeof ApiAssistantRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -392,6 +405,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof WorkoutsRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/assistant': {
+      id: '/api/assistant'
+      path: '/api/assistant'
+      fullPath: '/api/assistant'
+      preLoaderRoute: typeof ApiAssistantRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
@@ -414,6 +434,7 @@ const rootRouteChildren: RootRouteChildren = {
   WalkRoute: WalkRoute,
   WorkoutProgramsRoute: WorkoutProgramsRoute,
   WorkoutsRoute: WorkoutsRoute,
+  ApiAssistantRoute: ApiAssistantRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

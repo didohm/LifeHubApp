@@ -8,6 +8,14 @@ import { defineConfig } from "@lovable.dev/vite-tanstack-config";
 
 export default defineConfig({
   vite: {
+    environments: {
+      // Load server-only secrets (ASSISTANT_API_KEY etc.) into the SSR build
+      // only — they never reach the client bundle. Runtime bindings (Cloudflare
+      // secrets) still win via process.env in the proxy route.
+      ssr: {
+        envPrefix: ["VITE_", "ASSISTANT_"],
+      },
+    },
     build: {
       rollupOptions: {
         output: {
@@ -23,7 +31,8 @@ export default defineConfig({
             if (id.includes("date-fns")) return "vendor-date";
             if (id.includes("react-hook-form")) return "vendor-forms";
             if (id.includes("zod")) return "vendor-utils";
-            if (id.includes("embla-carousel") || id.includes("vaul") || id.includes("cmdk")) return "vendor-ui-components";
+            if (id.includes("embla-carousel") || id.includes("vaul") || id.includes("cmdk"))
+              return "vendor-ui-components";
             return "vendor";
           },
         },

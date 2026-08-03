@@ -237,7 +237,24 @@ function Index() {
 
       <section className="mt-3 grid grid-cols-2 gap-3">
         {/* Real Appointment Card 1 */}
-        {upcomingApp ? (
+        {appLoading ? (
+          <div
+            role="status"
+            aria-label="Loading your sessions"
+            className="card-soft animate-pulse flex flex-col justify-between bg-[#FFC593]/70 p-4 min-h-[160px]"
+          >
+            <div>
+              <div className="h-4 w-16 rounded-full bg-white/60" />
+              <div className="mt-3 h-5 w-3/4 rounded-md bg-white/60" />
+              <div className="mt-2 h-3 w-1/2 rounded-md bg-white/60" />
+              <div className="mt-1.5 h-3 w-2/3 rounded-md bg-white/60" />
+            </div>
+            <div className="mt-4 flex items-center justify-between border-t border-black/10 pt-2.5">
+              <div className="h-3 w-20 rounded-md bg-white/60" />
+              <div className="size-6 rounded-full bg-white/60" />
+            </div>
+          </div>
+        ) : upcomingApp ? (
           <Link
             to="/appointments"
             className="card-soft tap relative flex flex-col justify-between bg-[#FFC593] p-4 text-[#12131A] hover:shadow-md transition-all min-h-[160px]"
@@ -257,14 +274,24 @@ function Index() {
                 {upcomingApp.start_time || "10:00"}{" "}
                 {upcomingApp.location ? `· ${upcomingApp.location}` : ""}
               </p>
+              <p className="mt-2 flex items-center gap-1.5 text-[11px] font-bold text-[#12131A]/90">
+                <span className="flex size-5 items-center justify-center rounded-full bg-white/70 text-[#12131A]">
+                  <Stethoscope className="size-3" />
+                </span>
+                <span className="truncate">{upcomingApp.doctor_name || "Personal Plan"}</span>
+              </p>
             </div>
 
-            <div className="mt-4 flex items-center gap-2 border-t border-black/10 pt-2.5">
-              <span className="flex size-6 items-center justify-center rounded-full bg-white/70 text-[#12131A]">
-                <Stethoscope className="size-3.5" />
-              </span>
-              <span className="text-[11px] font-bold truncate">
-                {upcomingApp.doctor_name || "Personal Plan"}
+            <div className="mt-3 flex items-center justify-between border-t border-black/10 pt-2.5">
+              <span className="text-[11px] font-bold">Session Status</span>
+              <span
+                className={`flex size-6 items-center justify-center rounded-full text-xs font-bold transition-all duration-300 ${
+                  upcomingApp.status === "completed"
+                    ? "bg-[#12131A] text-white"
+                    : "bg-white text-[#12131A]"
+                }`}
+              >
+                {upcomingApp.status === "completed" ? "✓" : "!"}
               </span>
             </div>
           </Link>
@@ -282,7 +309,24 @@ function Index() {
         )}
 
         {/* Real Medication / Health Card 2 */}
-        {upcomingMed ? (
+        {medLoading ? (
+          <div
+            role="status"
+            aria-label="Loading your medications"
+            className="card-soft animate-pulse flex flex-col justify-between bg-[#BEE3FF]/70 p-4 min-h-[160px]"
+          >
+            <div>
+              <div className="h-4 w-16 rounded-full bg-white/60" />
+              <div className="mt-3 h-5 w-3/4 rounded-md bg-white/60" />
+              <div className="mt-2 h-3 w-1/2 rounded-md bg-white/60" />
+              <div className="mt-1.5 h-3 w-2/3 rounded-md bg-white/60" />
+            </div>
+            <div className="mt-4 flex items-center justify-between border-t border-black/10 pt-2.5">
+              <div className="h-3 w-20 rounded-md bg-white/60" />
+              <div className="size-6 rounded-full bg-white/60" />
+            </div>
+          </div>
+        ) : upcomingMed ? (
           <Link
             to="/medications"
             className="card-soft tap relative flex flex-col justify-between bg-[#BEE3FF] p-4 text-[#12131A] hover:shadow-md transition-all min-h-[160px]"
@@ -306,7 +350,7 @@ function Index() {
             <div className="mt-4 flex items-center justify-between border-t border-black/10 pt-2.5">
               <span className="text-[11px] font-bold">Dose Status</span>
               <span
-                className={`flex size-6 items-center justify-center rounded-full text-xs font-bold ${
+                className={`flex size-6 items-center justify-center rounded-full text-xs font-bold transition-all duration-300 ${
                   upcomingMed.taken ? "bg-[#12131A] text-white" : "bg-white text-[#12131A]"
                 }`}
               >

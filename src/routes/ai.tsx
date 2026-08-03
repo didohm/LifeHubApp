@@ -304,7 +304,7 @@ function TypingIndicator() {
 
 // ─── Main Page Component ────────────────────────────────────────────
 function AiPage() {
-  const { user, loading: authLoading } = useAuth();
+  const { user, firebaseUser, loading: authLoading } = useAuth();
   const navigate = useNavigate();
   const chatEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -380,9 +380,16 @@ function AiPage() {
       const userMsg = await addAiMessage(activeConvId, "user", promptToSend, user.id);
       setMessages((prev) => [...prev, userMsg]);
 
+      // Firebase ID token authenticates the server-side model proxy.
+      // Missing/expired token → assistant gracefully uses the built-in engine.
+      const idToken = firebaseUser
+        ? await firebaseUser.getIdToken().catch(() => undefined)
+        : undefined;
+
       const replyText = await generateAssistantReply({
         prompt: promptToSend,
         userId: user.id,
+        idToken,
         conversationHistory: [...messages, userMsg].map((m) => ({
           role: m.role as "user" | "assistant" | "system",
           content: m.content,

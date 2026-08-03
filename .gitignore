@@ -9,6 +9,11 @@ lerna-debug.log*
 
 node_modules
 dist
+
+# Environment secrets — NEVER commit real values
+.env
+.env.*
+!.env.example
 dist-ssr
 .output
 .vinxi

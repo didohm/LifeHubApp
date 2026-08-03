@@ -19,8 +19,9 @@
  * ago is already visible. Only the data the intent actually needs is fetched
  * and (optionally) sent to the model — never the whole account.
  *
- * A configurable external model endpoint can be plugged in via
- * VITE_ASSISTANT_ENDPOINT without changing any UI.
+ * A configurable external model can be plugged in via the server-side proxy
+ * (src/routes/api/assistant.ts + server-only ASSISTANT_API_KEY env var) without
+ * changing any UI. The API key never reaches the browser.
  */
 
 import {
@@ -56,6 +57,8 @@ export interface AssistantOptions {
   userId: string;
   conversationHistory?: { role: "user" | "assistant" | "system"; content: string }[];
   signal?: AbortSignal;
+  /** Firebase ID token — authenticates the server-side model proxy. */
+  idToken?: string;
 }
 
 export const MEDICAL_DISCLAIMER =
@@ -260,11 +263,13 @@ export async function generateAssistantReply(options: AssistantOptions): Promise
   // 2) Retrieve FRESH data at request time (never a stale page-load snapshot)
   const data = await retrieveForPlan(userId, plan);
 
-  // 3) Optional external model — gets ONLY the fetched slice, never the whole account
-  const endpoint = import.meta.env.VITE_ASSISTANT_ENDPOINT as string | undefined;
-  const model = (import.meta.env.VITE_ASSISTANT_MODEL as string | undefined) || "default";
+  // 3) Optional external model — gets ONLY the fetched slice, never the whole account.
+  // The call goes through the server-side proxy (/api/assistant), which holds the
+  // API key and verifies the user's Firebase token — the key never touches the browser.
+  const ASSISTANT_MODEL =
+    (import.meta.env.VITE_ASSISTANT_MODEL as string | undefined) || "google/gemma-4-31b-it:free";
 
-  if (endpoint) {
+  if (options.idToken) {
     try {
       const dataBlock = serializeFetchedData(data);
       const userContent = [
@@ -290,18 +295,19 @@ export async function generateAssistantReply(options: AssistantOptions): Promise
         { role: "user", content: userContent },
       ];
 
-      const res = await fetch(endpoint, {
+      const res = await fetch("/api/assistant", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
+          Authorization: `Bearer ${options.idToken}`,
         },
-        body: JSON.stringify({ model, messages, stream: false }),
+        body: JSON.stringify({ userId, model: ASSISTANT_MODEL, messages }),
         signal,
       });
 
       if (res.ok) {
-        const resData = await res.json();
-        const reply = resData?.choices?.[0]?.message?.content || resData?.content;
+        const resData = (await res.json()) as { content?: string };
+        const reply = resData?.content;
         if (typeof reply === "string" && reply.trim()) return reply.trim();
       }
     } catch (err) {

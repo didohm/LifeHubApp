@@ -121,7 +121,9 @@ export function DataProvider({ userId, children }: { userId: string | null; chil
   // Medications State
   const [medications, setMedications] = useState<Medication[]>([]);
   const [medicationLogs, setMedicationLogs] = useState<MedicationLog[]>([]);
-  const [medLoading, setMedLoading] = useState(false);
+  // Start as loading: the Home page renders skeletons (not empty states)
+  // until the first realtime snapshot arrives.
+  const [medLoading, setMedLoading] = useState(true);
   const [medError, setMedError] = useState<string | null>(null);
 
   // Bills State
@@ -132,7 +134,9 @@ export function DataProvider({ userId, children }: { userId: string | null; chil
 
   // Appointments State
   const [appointments, setAppointments] = useState<Appointment[]>([]);
-  const [appLoading, setAppLoading] = useState(false);
+  // Start as loading: the Home page renders skeletons (not empty states)
+  // until the first realtime snapshot arrives.
+  const [appLoading, setAppLoading] = useState(true);
   const [appError, setAppError] = useState<string | null>(null);
 
   // Fitness State
