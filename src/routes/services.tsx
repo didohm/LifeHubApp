@@ -14,15 +14,16 @@ import {
   UtensilsCrossed,
 } from "lucide-react";
 import { Screen, ScreenHeader } from "@/components/lifehub/Screen";
+import { sounds } from "@/lib/sound";
 
 export const Route = createFileRoute("/services")({
   head: () => ({
     meta: [
-      { title: "Services — Balance" },
+      { title: "Services — LifeHub" },
       {
         name: "description",
         content:
-          "Explore all Balance services: Workouts, Programs, Walking, Food, Appointments, Medications, Bills, Documents, Tasks, AI assistant & Progress.",
+          "Explore all LifeHub services: Workouts, Programs, Walking, Food, Appointments, Medications, Bills, Documents, Tasks, AI assistant & Progress.",
       },
     ],
   }),
@@ -53,6 +54,7 @@ function Services() {
           <Link
             key={to}
             to={to}
+            onClick={() => sounds.playCardClick()}
             className={`card-soft tap ${bg} p-5 flex flex-col justify-between active:scale-[0.97] shadow-xs hover:shadow-md transition-all min-h-[130px]`}
           >
             <span className="flex size-10 items-center justify-center rounded-full bg-white/80 text-[#12131A] shadow-xs">

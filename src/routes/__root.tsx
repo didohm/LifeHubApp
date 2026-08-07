@@ -16,10 +16,12 @@ import appCss from "../styles.css?url";
 import { reportLovableError } from "../lib/lovable-error-reporting";
 import { AuthProvider, useAuth } from "../hooks/use-auth";
 import { DataProvider } from "../lib/data-context";
+import { PermissionManager } from "../lib/permissions";
+import { useNotifications } from "../hooks/use-notifications";
 
 function NotFoundComponent() {
   return (
-    <div className="flex min-h-screen items-center justify-center bg-background px-4">
+    <div className="flex min-h-viewport items-center justify-center bg-background px-4">
       <div className="max-w-md text-center">
         <h1 className="text-7xl font-bold text-foreground">404</h1>
         <h2 className="mt-4 text-xl font-semibold text-foreground">Page not found</h2>
@@ -39,15 +41,37 @@ function NotFoundComponent() {
   );
 }
 
+/**
+ * Startup errors are silently recovered: the boundary auto-resets instead of
+ * flashing a "Try again, this page didn't load" screen. The error UI only
+ * appears when the same crash keeps happening (genuine failure).
+ */
+let consecutiveStartupErrors = 0;
+
 function ErrorComponent({ error, reset }: { error: Error; reset: () => void }) {
   console.error(error);
   const router = useRouter();
+
   useEffect(() => {
     reportLovableError(error, { boundary: "tanstack_root_error_component" });
-  }, [error]);
+
+    if (consecutiveStartupErrors < 3) {
+      consecutiveStartupErrors += 1;
+      // Auto-recover silently — never let a transient startup error flash an
+      // error page (e.g. Firestore offline on first paint).
+      const timer = setTimeout(() => {
+        router.invalidate();
+        reset();
+      }, 250);
+      return () => clearTimeout(timer);
+    }
+  }, [error, router, reset]);
+
+  // Recovering silently — render nothing rather than an error page.
+  if (consecutiveStartupErrors < 3) return null;
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-background px-4">
+    <div className="flex min-h-viewport items-center justify-center bg-background px-4">
       <div className="max-w-md text-center">
         <h1 className="text-xl font-semibold tracking-tight text-foreground">
           This page didn't load
@@ -81,7 +105,7 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
   head: () => ({
     meta: [
       { charSet: "utf-8" },
-      { name: "viewport", content: "width=device-width, initial-scale=1" },
+      { name: "viewport", content: "width=device-width, initial-scale=1, viewport-fit=cover" },
       { title: "LifeHub — All your daily life services, in one place" },
       {
         name: "description",
@@ -129,48 +153,133 @@ function RootShell({ children }: { children: ReactNode }) {
   );
 }
 
-function AuthenticatedApp({ children }: { children: ReactNode }) {
-  const { user } = useAuth();
-  return <DataProvider userId={user?.id || null}>{children}</DataProvider>;
+function AuthLoadingSplash() {
+  return (
+    <div className="flex min-h-dvh w-full items-center justify-center bg-white">
+      <div className="flex flex-col items-center gap-4">
+        <div className="relative size-20">
+          <div className="absolute inset-0 animate-spin rounded-full border-4 border-[#E8E2FF] border-t-[#7C5CFC]" />
+          <div className="absolute inset-0 flex items-center justify-center">
+            <img src="/illustration/LifeHub icon.png" alt="" className="size-12 object-contain" />
+          </div>
+        </div>
+        <p className="text-sm font-semibold text-[#6B7280]">Loading…</p>
+      </div>
+    </div>
+  );
 }
 
 /**
- * Onboarding gate: a signed-in user without a date of birth cannot access the
- * app — they are redirected to /onboarding until the required field is saved.
+ * Auth & Onboarding Gate:
+ * Controls root level layout rendering.
+ *
+ * 1. While loading (Firebase auth state unknown): renders the splash screen —
+ *    the ONLY moment a loading screen is allowed, and it lasts milliseconds.
+ * 2. Unauthenticated: renders nothing and redirects immediately to /auth —
+ *    no loading screen, no user data is loaded.
+ * 3. Authenticated: mounts DataProvider immediately (cached profile shows
+ *    instantly); Firestore data streams in the background.
+ * 4. Brand-new account (no Firestore profile document) with missing DOB:
+ *    redirects to /onboarding without flashing the home page. Existing
+ *    accounts are NEVER sent to onboarding, even without a saved DOB.
  */
-function OnboardingGate({ children }: { children: ReactNode }) {
-  const { user, loading } = useAuth();
+function MainContentGate() {
+  const { user, loading, profileReady, isNewUser } = useAuth();
   const location = useLocation();
   const navigate = useNavigate();
 
+  // The Birthday (Date of Birth) screen is shown ONLY for brand-new accounts
+  // whose profile is missing the date of birth.
+  const missingDob = !!user && !user.date_of_birth;
+  const shouldOnboard = !!user && isNewUser && missingDob;
+
   useEffect(() => {
     if (loading) return;
+
     if (!user) {
-      if (location.pathname !== "/auth") navigate({ to: "/auth" });
+      if (location.pathname !== "/auth") {
+        navigate({ to: "/auth", replace: true });
+      }
       return;
     }
-    const missingDob = !user.date_of_birth;
-    if (missingDob && location.pathname !== "/onboarding") {
-      navigate({ to: "/onboarding" });
-    } else if (!missingDob && location.pathname === "/onboarding") {
-      navigate({ to: "/" });
-    }
-  }, [user, loading, location.pathname, navigate]);
 
-  return <>{children}</>;
+    // App rendered successfully — clear any transient startup error counter.
+    consecutiveStartupErrors = 0;
+
+    if (shouldOnboard && location.pathname !== "/onboarding") {
+      navigate({ to: "/onboarding", replace: true });
+    } else if (
+      !shouldOnboard &&
+      (location.pathname === "/onboarding" || location.pathname === "/auth")
+    ) {
+      navigate({ to: "/", replace: true });
+    }
+  }, [user, loading, shouldOnboard, location.pathname, navigate]);
+
+  // 1. Splash ONLY while Firebase auth state is unknown (milliseconds) or
+  //    while the Firestore profile read that decides onboarding is pending.
+  //    This guarantees the onboarding screen is only ever shown to users
+  //    whose profile is truly missing the date of birth — never to users who
+  //    already completed it, even when the device cache is cold.
+  if (loading || (user && !profileReady)) {
+    return <AuthLoadingSplash />;
+  }
+
+  // 2. Signed out: never mount protected pages or DataProvider. Render nothing
+  //    for the instant the redirect effect takes; the user lands on /auth
+  //    immediately with zero loading screens.
+  if (!user) {
+    if (location.pathname === "/auth") {
+      return <Outlet />;
+    }
+    return null;
+  }
+
+  // 3. Brand-new account with missing DOB → onboarding (only new users).
+  if (shouldOnboard) {
+    if (location.pathname === "/onboarding") {
+      return (
+        <DataProvider userId={user.id}>
+          <Outlet />
+        </DataProvider>
+      );
+    }
+    return null;
+  }
+
+  // 4. Fully authenticated with complete profile → protected routes, data
+  //    loads in the background via Firestore listeners.
+  return (
+    <DataProvider userId={user.id}>
+      <Outlet />
+    </DataProvider>
+  );
+}
+
+/**
+ * Global listener for OS notification taps. Mounted once at the root — works
+ * whether the app is open, backgrounded, or cold-started from a notification.
+ */
+function NotificationTapListener() {
+  useNotifications();
+  return null;
 }
 
 function RootComponent() {
   const { queryClient } = Route.useRouteContext();
 
+  // Ask for the OS permissions (notifications, location, activity, media,
+  // audio) once per install — fire-and-forget and spaced out so dialogs
+  // never stack. Denied ones are re-asked when the feature is actually used.
+  useEffect(() => {
+    PermissionManager.requestAllPermissions();
+  }, []);
+
   return (
     <QueryClientProvider client={queryClient}>
       <AuthProvider>
-        <AuthenticatedApp>
-          <OnboardingGate>
-            <Outlet />
-          </OnboardingGate>
-        </AuthenticatedApp>
+        <MainContentGate />
+        <NotificationTapListener />
         <Toaster position="top-right" richColors closeButton />
       </AuthProvider>
     </QueryClientProvider>

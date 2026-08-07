@@ -1,8 +1,9 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { Plus, Target, Edit2, Trash2, X, Loader2, Calendar } from "lucide-react";
 import { toast } from "sonner";
 import { Screen, ScreenHeader } from "@/components/lifehub/Screen";
+import { Modal } from "@/components/lifehub/Modal";
 import { useAuth } from "@/hooks/use-auth";
 import { useData } from "@/lib/data-context";
 import {
@@ -19,7 +20,7 @@ import { ListSkeleton } from "@/components/lifehub/SkeletonLoader";
 
 export const Route = createFileRoute("/workout-programs")({
   head: () => ({
-    meta: [{ title: "Workout Programs — Balance" }],
+    meta: [{ title: "Workout Programs — LifeHub" }],
   }),
   component: WorkoutProgramsPage,
 });
@@ -203,14 +204,22 @@ function WorkoutProgramsPage() {
     }
   };
 
+  // Guards against repeated taps on the same Remove button: repeat taps on
+  // an item that is already being removed are ignored, and the success toast
+  // uses a per-item id so only ONE "removed" notification is ever shown.
+  const deletingIds = useRef<Set<string>>(new Set());
   const handleDelete = async (id: string) => {
     if (!user) return;
+    if (deletingIds.current.has(id)) return; // already removing this item
+    deletingIds.current.add(id);
     try {
       await deleteWorkoutProgram(id, user.id);
       await refreshFitness();
-      toast.success("Program removed.");
+      toast.success("Program removed.", { id: `program-removed-${id}` });
     } catch {
-      toast.error("Could not delete program.");
+      toast.error("Could not delete program.", { id: `program-delete-error-${id}` });
+    } finally {
+      deletingIds.current.delete(id);
     }
   };
 
@@ -345,153 +354,147 @@ function WorkoutProgramsPage() {
       </div>
 
       {/* Add/Edit Program Modal */}
-      {modalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-xs">
-          <div className="w-full max-w-md rounded-3xl bg-white p-5 shadow-2xl max-h-[90vh] overflow-y-auto">
-            <div className="flex items-center justify-between border-b border-black/5 pb-3">
-              <h3 className="text-base font-extrabold text-[#12131A]">
-                {editingProgram ? "Edit Program" : "Create Workout Program"}
-              </h3>
-              <button
-                onClick={() => setModalOpen(false)}
-                className="size-7 flex items-center justify-center rounded-full bg-black/5"
-              >
-                <X className="size-4" />
-              </button>
-            </div>
-
-            <form onSubmit={handleSave} className="mt-4 space-y-3">
-              <div>
-                <label className="text-xs font-bold text-[#12131A]">Program Name</label>
-                <input
-                  type="text"
-                  required
-                  placeholder="e.g. Calisthenics Master / PPL Split"
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  className="mt-1 w-full rounded-xl border border-black/10 bg-[#F9F9FD] p-2.5 text-xs outline-none focus:border-[#7C5CFC]"
-                />
-              </div>
-
-              <div>
-                <label className="text-xs font-bold text-[#12131A]">Primary Workout Type</label>
-                <select
-                  value={workoutType}
-                  onChange={(e) => handleWorkoutTypeChange(e.target.value as WorkoutType)}
-                  className="mt-1 w-full rounded-xl border border-black/10 bg-[#F9F9FD] p-2.5 text-xs outline-none focus:border-[#7C5CFC]"
-                >
-                  {WORKOUT_TYPES.map((t) => (
-                    <option key={t} value={t}>
-                      {t}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              {/* Weekly Split Inputs */}
-              {workoutType === "Cardio" ? (
-                <div>
-                  <label className="text-xs font-bold text-[#12131A] block mb-0.5">
-                    Cardio Training Days
-                  </label>
-                  <p className="text-[11px] text-[#6B7280] font-medium mb-2">
-                    Check the days you do cardio. Unchecked days are rest days.
-                  </p>
-                  <div className="space-y-1.5">
-                    {DAY_KEY_ORDER.map((dayKey) => {
-                      const checked = cardioDays.includes(dayKey);
-                      return (
-                        <label
-                          key={dayKey}
-                          className={`flex items-center justify-between rounded-xl border p-2.5 cursor-pointer transition-colors ${
-                            checked
-                              ? "border-[#7C5CFC]/30 bg-[#7C5CFC]/5"
-                              : "border-black/10 bg-[#F9F9FD]"
-                          }`}
-                        >
-                          <span className="text-xs font-bold text-[#12131A]">
-                            {DAY_LABELS[dayKey]}
-                          </span>
-                          <span className="flex items-center gap-2">
-                            {checked ? (
-                              <span className="rounded-full bg-[#7C5CFC]/10 px-2 py-0.5 text-[10px] font-extrabold text-[#7C5CFC]">
-                                Cardio
-                              </span>
-                            ) : (
-                              <span className="rounded-full bg-black/5 px-2 py-0.5 text-[10px] font-extrabold text-[#6B7280]">
-                                Rest
-                              </span>
-                            )}
-                            <Checkbox
-                              checked={checked}
-                              onCheckedChange={(v) => handleCardioDayToggle(dayKey, !!v)}
-                              className="size-4 rounded-[6px] border-black/20 data-[state=checked]:border-[#7C5CFC] data-[state=checked]:bg-[#7C5CFC] data-[state=checked]:text-white"
-                            />
-                          </span>
-                        </label>
-                      );
-                    })}
-                  </div>
-                </div>
-              ) : (
-                <div>
-                  <label className="text-xs font-bold text-[#12131A] block mb-1">
-                    Weekly Schedule (7 Days)
-                  </label>
-                  <div className="space-y-1.5">
-                    {DAY_KEY_ORDER.map((dayKey) => {
-                      const currentItem = weeklyPlan.find((p) => p.day === dayKey);
-                      return (
-                        <div key={dayKey} className="flex items-center gap-2">
-                          <span className="w-20 text-xs font-bold text-[#6B7280]">
-                            {DAY_LABELS[dayKey]}
-                          </span>
-                          <input
-                            type="text"
-                            required
-                            placeholder="e.g. Push / Rest"
-                            value={currentItem?.focus || ""}
-                            onChange={(e) => handleDayFocusChange(dayKey, e.target.value)}
-                            className="flex-1 rounded-xl border border-black/10 bg-[#F9F9FD] p-2 text-xs outline-none focus:border-[#7C5CFC]"
-                          />
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
-
-              <div>
-                <label className="text-xs font-bold text-[#12131A]">Program Notes (optional)</label>
-                <textarea
-                  rows={2}
-                  placeholder="Program goals, progression guidelines..."
-                  value={notes}
-                  onChange={(e) => setNotes(e.target.value)}
-                  className="mt-1 w-full rounded-xl border border-black/10 bg-[#F9F9FD] p-2.5 text-xs outline-none focus:border-[#7C5CFC] resize-none"
-                />
-              </div>
-
-              <div className="flex gap-2 pt-3">
-                <button
-                  type="button"
-                  onClick={() => setModalOpen(false)}
-                  className="w-1/2 rounded-xl border border-black/10 py-2.5 text-xs font-bold"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={submitting}
-                  className="w-1/2 flex items-center justify-center gap-1 rounded-xl bg-[#12131A] py-2.5 text-xs font-bold text-white shadow-md disabled:opacity-50"
-                >
-                  {submitting ? <Loader2 className="size-3.5 animate-spin" /> : null} Save Program
-                </button>
-              </div>
-            </form>
-          </div>
+      <Modal open={modalOpen} onClose={() => setModalOpen(false)} className="bg-white">
+        <div className="flex items-center justify-between border-b border-black/5 pb-3">
+          <h3 className="text-base font-extrabold text-[#12131A]">
+            {editingProgram ? "Edit Program" : "Create Workout Program"}
+          </h3>
+          <button
+            onClick={() => setModalOpen(false)}
+            className="size-7 flex items-center justify-center rounded-full bg-black/5"
+          >
+            <X className="size-4" />
+          </button>
         </div>
-      )}
+
+        <form onSubmit={handleSave} className="mt-4 space-y-3">
+          <div>
+            <label className="text-xs font-bold text-[#12131A]">Program Name</label>
+            <input
+              type="text"
+              required
+              placeholder="e.g. Calisthenics Master / PPL Split"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              className="mt-1 w-full rounded-xl border border-black/10 bg-[#F9F9FD] p-2.5 text-xs outline-none focus:border-[#7C5CFC]"
+            />
+          </div>
+
+          <div>
+            <label className="text-xs font-bold text-[#12131A]">Primary Workout Type</label>
+            <select
+              value={workoutType}
+              onChange={(e) => handleWorkoutTypeChange(e.target.value as WorkoutType)}
+              className="mt-1 w-full rounded-xl border border-black/10 bg-[#F9F9FD] p-2.5 text-xs outline-none focus:border-[#7C5CFC]"
+            >
+              {WORKOUT_TYPES.map((t) => (
+                <option key={t} value={t}>
+                  {t}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {/* Weekly Split Inputs */}
+          {workoutType === "Cardio" ? (
+            <div>
+              <label className="text-xs font-bold text-[#12131A] block mb-0.5">
+                Cardio Training Days
+              </label>
+              <p className="text-[11px] text-[#6B7280] font-medium mb-2">
+                Check the days you do cardio. Unchecked days are rest days.
+              </p>
+              <div className="space-y-1.5">
+                {DAY_KEY_ORDER.map((dayKey) => {
+                  const checked = cardioDays.includes(dayKey);
+                  return (
+                    <label
+                      key={dayKey}
+                      className={`flex items-center justify-between rounded-xl border p-2.5 cursor-pointer transition-colors ${
+                        checked
+                          ? "border-[#7C5CFC]/30 bg-[#7C5CFC]/5"
+                          : "border-black/10 bg-[#F9F9FD]"
+                      }`}
+                    >
+                      <span className="text-xs font-bold text-[#12131A]">{DAY_LABELS[dayKey]}</span>
+                      <span className="flex items-center gap-2">
+                        {checked ? (
+                          <span className="rounded-full bg-[#7C5CFC]/10 px-2 py-0.5 text-[10px] font-extrabold text-[#7C5CFC]">
+                            Cardio
+                          </span>
+                        ) : (
+                          <span className="rounded-full bg-black/5 px-2 py-0.5 text-[10px] font-extrabold text-[#6B7280]">
+                            Rest
+                          </span>
+                        )}
+                        <Checkbox
+                          checked={checked}
+                          onCheckedChange={(v) => handleCardioDayToggle(dayKey, !!v)}
+                          className="size-4 rounded-[6px] border-black/20 data-[state=checked]:border-[#7C5CFC] data-[state=checked]:bg-[#7C5CFC] data-[state=checked]:text-white"
+                        />
+                      </span>
+                    </label>
+                  );
+                })}
+              </div>
+            </div>
+          ) : (
+            <div>
+              <label className="text-xs font-bold text-[#12131A] block mb-1">
+                Weekly Schedule (7 Days)
+              </label>
+              <div className="space-y-1.5">
+                {DAY_KEY_ORDER.map((dayKey) => {
+                  const currentItem = weeklyPlan.find((p) => p.day === dayKey);
+                  return (
+                    <div key={dayKey} className="flex items-center gap-2">
+                      <span className="w-20 text-xs font-bold text-[#6B7280]">
+                        {DAY_LABELS[dayKey]}
+                      </span>
+                      <input
+                        type="text"
+                        required
+                        placeholder="e.g. Push / Rest"
+                        value={currentItem?.focus || ""}
+                        onChange={(e) => handleDayFocusChange(dayKey, e.target.value)}
+                        className="flex-1 rounded-xl border border-black/10 bg-[#F9F9FD] p-2 text-xs outline-none focus:border-[#7C5CFC]"
+                      />
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          <div>
+            <label className="text-xs font-bold text-[#12131A]">Program Notes (optional)</label>
+            <textarea
+              rows={2}
+              placeholder="Program goals, progression guidelines..."
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              className="mt-1 w-full rounded-xl border border-black/10 bg-[#F9F9FD] p-2.5 text-xs outline-none focus:border-[#7C5CFC] resize-none"
+            />
+          </div>
+
+          <div className="flex gap-2 pt-3">
+            <button
+              type="button"
+              onClick={() => setModalOpen(false)}
+              className="w-1/2 rounded-xl border border-black/10 py-2.5 text-xs font-bold"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={submitting}
+              className="w-1/2 flex items-center justify-center gap-1 rounded-xl bg-[#12131A] py-2.5 text-xs font-bold text-white shadow-md disabled:opacity-50"
+            >
+              {submitting ? <Loader2 className="size-3.5 animate-spin" /> : null} Save Program
+            </button>
+          </div>
+        </form>
+      </Modal>
     </Screen>
   );
 }

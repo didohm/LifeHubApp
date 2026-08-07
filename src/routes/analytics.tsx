@@ -20,7 +20,7 @@ import { DayKey, WorkoutProgram } from "@/lib/types";
 
 export const Route = createFileRoute("/analytics")({
   head: () => ({
-    meta: [{ title: "Progress & Health Analytics — Balance" }],
+    meta: [{ title: "Progress & Health Analytics — LifeHub" }],
   }),
   component: AnalyticsPage,
 });

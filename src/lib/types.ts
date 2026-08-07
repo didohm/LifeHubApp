@@ -10,6 +10,7 @@ export interface User extends BaseEntity {
   avatar_url?: string | null;
   /** Date of birth as YYYY-MM-DD — required during onboarding, age is always derived */
   date_of_birth?: string | null;
+  weight?: number | string | null;
   theme: "light" | "dark" | "system";
   language: string;
   timezone: string;

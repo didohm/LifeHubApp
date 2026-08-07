@@ -20,6 +20,8 @@ import { useAuth } from "@/hooks/use-auth";
 import { useData } from "@/lib/data-context";
 import { useWalk } from "@/hooks/use-walk";
 import { todayLocalDate } from "@/lib/api";
+import { sounds } from "@/lib/sound";
+import { PermissionManager } from "@/lib/permissions";
 import { WalkSession } from "@/lib/types";
 
 export const Route = createFileRoute("/walk")({
@@ -53,6 +55,7 @@ function WalkPage() {
 
   const {
     status,
+    isAutoPaused,
     duration,
     distance,
     calories,
@@ -63,11 +66,12 @@ function WalkPage() {
     pauseWalk,
     resumeWalk,
     finishWalk,
-  } = useWalk(user?.id);
+  } = useWalk(user?.id, user?.weight ? Number(user.weight) : 70);
 
   const handleFinish = async () => {
     const result = await finishWalk();
     if (result) {
+      sounds.playSuccess();
       toast.success(
         `Walk finished! 🚶 ${formatKm(result.distance)} km · ${formatDuration(
           result.duration,
@@ -144,7 +148,9 @@ function WalkPage() {
             {status === "active"
               ? "Walk in Progress"
               : status === "paused"
-                ? "Walk Paused"
+                ? isAutoPaused
+                  ? "Auto-Paused (No Motion)"
+                  : "Walk Paused"
                 : "Ready to Walk"}
           </span>
 
@@ -196,7 +202,14 @@ function WalkPage() {
         <div className="mt-6 flex items-center justify-center gap-3">
           {status === "idle" && (
             <button
-              onClick={startWalk}
+              onClick={async () => {
+                sounds.playActionClick();
+                // Feature-time permissions: if denied earlier, ask again now
+                // that the user is actually using the walking feature.
+                await PermissionManager.ensurePermission("location");
+                await PermissionManager.ensurePermission("activity");
+                startWalk();
+              }}
               disabled={loading}
               className="tap flex items-center gap-2 rounded-full bg-emerald-500 px-8 py-3.5 text-sm font-black text-white shadow-lg hover:bg-emerald-600 active:scale-95 transition-transform"
             >

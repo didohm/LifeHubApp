@@ -9,6 +9,7 @@ lerna-debug.log*
 
 node_modules
 dist
+dist-capacitor
 
 # Environment secrets — NEVER commit real values
 .env
@@ -20,10 +21,6 @@ dist-ssr
 .tanstack/**
 .nitro
 *.local
-
-# Wrangler / Cloudflare
-.wrangler/
-.dev.vars
 
 # Editor directories and files
 .vscode/*

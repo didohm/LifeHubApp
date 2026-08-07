@@ -40,6 +40,7 @@ import {
   DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
+import { sounds } from "@/lib/sound";
 import { GlobalSearchModal } from "@/components/lifehub/GlobalSearchModal";
 import { UserAvatar } from "@/components/lifehub/UserAvatar";
 
@@ -426,20 +427,32 @@ function AiPage() {
   };
 
   // ─── Delete Conversation ───────────────────────────────────────
+  // Guards against repeated taps on the same conversation's delete button:
+  // repeat taps on an already-deleting conversation are ignored, and the
+  // success toast uses a per-conversation id so only ONE notification shows.
+  const deletingConvs = useRef<Set<string>>(new Set());
   const handleDeleteChat = async (id: string) => {
     if (!user) return;
-    await deleteAiConversation(id, user.id);
-    const updated = conversations.filter((c) => c.id !== id);
-    setConversations(updated);
-    if (activeConvId === id) {
-      setActiveConvId(updated.length > 0 ? updated[0].id : null);
-      if (updated.length > 0) {
-        getAiMessages(updated[0].id, user.id).then((msgs) => setMessages(msgs));
-      } else {
-        setMessages([]);
+    if (deletingConvs.current.has(id)) return; // already deleting this conversation
+    deletingConvs.current.add(id);
+    try {
+      await deleteAiConversation(id, user.id);
+      const updated = conversations.filter((c) => c.id !== id);
+      setConversations(updated);
+      if (activeConvId === id) {
+        setActiveConvId(updated.length > 0 ? updated[0].id : null);
+        if (updated.length > 0) {
+          getAiMessages(updated[0].id, user.id).then((msgs) => setMessages(msgs));
+        } else {
+          setMessages([]);
+        }
       }
+      toast.success("Conversation cleared", { id: `conv-cleared-${id}` });
+    } catch (err) {
+      toast.error("Failed to clear conversation", { id: `conv-clear-error-${id}` });
+    } finally {
+      deletingConvs.current.delete(id);
     }
-    toast.success("Conversation cleared");
   };
 
   // ─── Copy to Clipboard ─────────────────────────────────────────
@@ -498,7 +511,10 @@ function AiPage() {
         </Link>
         <div className="flex items-center gap-2">
           <button
-            onClick={() => setSearchOpen(true)}
+            onClick={() => {
+              sounds.playNavClick();
+              setSearchOpen(true);
+            }}
             aria-label="Search"
             title="Global Search"
             className="tap flex size-10 items-center justify-center rounded-full bg-card shadow-sm border border-border/40 hover:bg-accent active:scale-95"
@@ -507,60 +523,6 @@ function AiPage() {
           </button>
         </div>
       </header>
-
-      {/* ════════════════════════════════════════════════════════════
-          COMPACT AI HEADER — ChatGPT-style, ~100px tall
-          ════════════════════════════════════════════════════════════ */}
-      <motion.section
-        initial={{ opacity: 0, y: 12 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.4, ease: "easeOut" }}
-        className="mt-4 flex items-center gap-3.5 rounded-2xl border border-border/40 bg-card/70 px-4 py-3.5 shadow-sm backdrop-blur-md"
-      >
-        {/* AI Avatar */}
-        <div className="relative shrink-0">
-          <div className="flex size-12 items-center justify-center rounded-2xl bg-gradient-to-br from-[#7C5CFC]/15 to-[#A78BFA]/20 border border-[#7C5CFC]/20 p-1 shadow-sm">
-            <img
-              src="/illustration/ai-robot.png"
-              alt="AI Robot Assistant"
-              className="size-full object-contain drop-shadow-[0_4px_10px_rgba(124,92,252,0.3)]"
-            />
-          </div>
-          <span className="absolute -bottom-0.5 -right-0.5 size-3 rounded-full border-2 border-card bg-emerald-500" />
-        </div>
-
-        {/* Title + subtitle */}
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2">
-            <h1 className="truncate text-[15px] font-extrabold tracking-tight text-foreground">
-              AI Health Assistant
-            </h1>
-            <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-emerald-500/10 px-2 py-0.5 text-[10px] font-bold text-emerald-600">
-              <span className="relative flex size-1.5">
-                <span className="absolute inline-flex size-full animate-ping rounded-full bg-emerald-500 opacity-60" />
-                <span className="relative inline-flex size-1.5 rounded-full bg-emerald-500" />
-              </span>
-              Online
-            </span>
-          </div>
-          <p className="mt-0.5 text-[11px] leading-snug text-muted-foreground">
-            Ask anything about your medications, appointments, medical records, and daily health.
-          </p>
-        </div>
-
-        {/* New Chat */}
-        <motion.button
-          whileTap={{ scale: 0.95 }}
-          onClick={handleNewChat}
-          className={cn(
-            "tap flex shrink-0 items-center gap-1.5 rounded-full bg-ink px-3.5 py-2 text-[11px] font-bold text-card shadow-sm hover:opacity-90 transition-opacity",
-            focusRing,
-          )}
-        >
-          <Plus className="size-3.5" />
-          New Chat
-        </motion.button>
-      </motion.section>
 
       {/* ════════════════════════════════════════════════════════════
           QUICK ACTIONS + PROMPT CHIPS (empty state only)
@@ -572,24 +534,43 @@ function AiPage() {
             initial={{ opacity: 0, scale: 0.96 }}
             animate={{ opacity: 1, scale: 1 }}
             transition={{ duration: 0.4 }}
-            className="mt-4 flex items-center justify-between rounded-2xl bg-gradient-to-r from-[#E8E2FF]/80 to-[#F5F3FF]/80 p-4 border border-[#7C5CFC]/15 shadow-xs"
+            className="mt-4 rounded-2xl bg-gradient-to-r from-[#E8E2FF]/80 to-[#F5F3FF]/80 p-4 border border-[#7C5CFC]/15 shadow-xs"
           >
-            <div className="max-w-[70%]">
-              <span className="inline-flex items-center gap-1 rounded-full bg-white/90 px-2.5 py-0.5 text-[10px] font-extrabold text-[#7C5CFC]">
-                ✨ Personal Health Assistant
-              </span>
-              <h2 className="mt-1.5 text-sm font-black text-[#12131A]">
-                How can I help you today?
-              </h2>
-              <p className="mt-0.5 text-[11px] font-medium text-[#6B7280]">
-                Ask about medications, prepare for appointments, or explore your health history.
-              </p>
+            <div className="flex items-center justify-between">
+              <div className="max-w-[65%]">
+                <span className="inline-flex items-center gap-1 rounded-full bg-white/90 px-2.5 py-0.5 text-[10px] font-extrabold text-[#7C5CFC]">
+                  ✨ Personal Health Assistant
+                </span>
+                <h2 className="mt-1.5 text-sm font-black text-[#12131A]">
+                  How can I help you today?
+                </h2>
+                <p className="mt-0.5 text-[11px] font-medium text-[#6B7280]">
+                  Ask about medications, prepare for appointments, or explore your health history.
+                </p>
+              </div>
+              <img
+                src="/illustration/ai-robot.png"
+                alt="AI Assistant"
+                className="h-20 w-20 object-contain shrink-0 drop-shadow-[0_8px_16px_rgba(124,92,252,0.25)]"
+              />
             </div>
-            <img
-              src="/illustration/ai-robot.png"
-              alt="AI Assistant"
-              className="h-20 w-20 object-contain shrink-0 drop-shadow-[0_8px_16px_rgba(124,92,252,0.25)]"
-            />
+            {/* New Chat button integrated into the card */}
+            <div className="mt-3">
+              <motion.button
+                whileTap={{ scale: 0.95 }}
+                onClick={() => {
+                  sounds.playActionClick();
+                  handleNewChat();
+                }}
+                className={cn(
+                  "tap flex items-center gap-1.5 rounded-full bg-ink px-4 py-2 text-[11px] font-bold text-card shadow-sm hover:opacity-90 transition-opacity",
+                  focusRing,
+                )}
+              >
+                <Plus className="size-3.5" />
+                New Chat
+              </motion.button>
+            </div>
           </motion.div>
           {/* 4 Quick Action Cards — 2x2 grid */}
           <motion.div
@@ -605,7 +586,10 @@ function AiPage() {
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ duration: 0.3, delay: 0.15 + idx * 0.05 }}
                 whileTap={{ scale: 0.97 }}
-                onClick={() => handleSend(action.prompt)}
+                onClick={() => {
+                  sounds.playCardClick();
+                  handleSend(action.prompt);
+                }}
                 className={cn(
                   "tap group flex flex-col items-start gap-2.5 rounded-2xl border border-border/40 bg-card p-3.5 text-left shadow-sm hover:shadow-md hover:-translate-y-0.5 transition-all",
                   focusRing,
@@ -642,7 +626,10 @@ function AiPage() {
               <motion.button
                 key={prompt.label}
                 whileTap={{ scale: 0.96 }}
-                onClick={() => handleSend(prompt.label)}
+                onClick={() => {
+                  sounds.playCardClick();
+                  handleSend(prompt.label);
+                }}
                 className={cn(
                   "tap inline-flex items-center gap-1.5 rounded-full border border-border/50 bg-card px-3.5 py-1.5 text-[11px] font-semibold text-foreground/80 shadow-sm hover:bg-accent hover:text-foreground hover:border-border transition-colors",
                   focusRing,
@@ -687,6 +674,7 @@ function AiPage() {
                     <DropdownMenuItem
                       key={conv.id}
                       onClick={() => {
+                        sounds.playClick();
                         setActiveConvId(conv.id);
                         if (user) getAiMessages(conv.id, user.id).then((msgs) => setMessages(msgs));
                       }}
@@ -706,7 +694,10 @@ function AiPage() {
                   )}
                   <DropdownMenuSeparator />
                   <DropdownMenuItem
-                    onClick={handleNewChat}
+                    onClick={() => {
+                      sounds.playActionClick();
+                      handleNewChat();
+                    }}
                     className="cursor-pointer text-xs font-medium text-foreground"
                   >
                     <Plus className="mr-2 size-3.5" />
@@ -717,7 +708,10 @@ function AiPage() {
 
               {activeConvId && (
                 <button
-                  onClick={() => handleDeleteChat(activeConvId)}
+                  onClick={() => {
+                    sounds.playActionClick();
+                    handleDeleteChat(activeConvId);
+                  }}
                   aria-label="Delete conversation"
                   className={cn(
                     "tap flex size-9 items-center justify-center rounded-full bg-card shadow-sm border border-border/40 text-destructive hover:bg-destructive/10 transition-colors",
@@ -782,7 +776,10 @@ function AiPage() {
                     {m.role === "assistant" && (
                       <div className="mt-3 flex items-center gap-2 border-t border-border/20 pt-2.5">
                         <button
-                          onClick={() => handleCopy(m.content)}
+                          onClick={() => {
+                            sounds.playClick();
+                            handleCopy(m.content);
+                          }}
                           className={cn(
                             "inline-flex items-center gap-1 text-[11px] font-medium text-muted-foreground hover:text-foreground transition-colors",
                             focusRing,
@@ -892,7 +889,10 @@ function AiPage() {
           <motion.button
             whileHover={{ scale: 1.05 }}
             whileTap={{ scale: 0.9 }}
-            onClick={() => handleSend()}
+            onClick={() => {
+              sounds.playActionClick();
+              handleSend();
+            }}
             disabled={loading || !inputPrompt.trim()}
             aria-label="Send message"
             className={cn(

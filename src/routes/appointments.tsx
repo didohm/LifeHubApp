@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import {
   Plus,
@@ -14,15 +14,18 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { Screen, ScreenHeader } from "@/components/lifehub/Screen";
+import { Modal } from "@/components/lifehub/Modal";
 import { useAuth } from "@/hooks/use-auth";
 import { useData } from "@/lib/data-context";
 import { createAppointment, updateAppointment, deleteAppointment } from "@/lib/api";
+import { Notifications } from "@/lib/notifications-integration";
+import { sounds } from "@/lib/sound";
 import { Appointment } from "@/lib/types";
 import { ListSkeleton } from "@/components/lifehub/SkeletonLoader";
 
 export const Route = createFileRoute("/appointments")({
   head: () => ({
-    meta: [{ title: "Appointments — Balance" }],
+    meta: [{ title: "Appointments — LifeHub" }],
   }),
   component: AppointmentsPage,
 });
@@ -100,9 +103,19 @@ function AppointmentsPage() {
           reminder: true,
           notes,
         });
+        Notifications.cancelAppointment(editingApp.id);
+        Notifications.scheduleAppointment({
+          id: editingApp.id,
+          title,
+          doctor_name: doctorName,
+          appointment_date: appointmentDate,
+          start_time: startTime,
+          reminder: true,
+        } as any);
+        sounds.playClick();
         toast.success("Appointment updated!");
       } else {
-        await createAppointment(user.id, {
+        const newApp = await createAppointment(user.id, {
           title,
           doctor_name: doctorName,
           location,
@@ -112,6 +125,8 @@ function AppointmentsPage() {
           reminder: true,
           notes,
         });
+        Notifications.scheduleAppointment(newApp);
+        sounds.playSuccess();
         toast.success("New appointment scheduled!");
       }
       await refreshAppointments();
@@ -124,14 +139,24 @@ function AppointmentsPage() {
     }
   };
 
+  // Guards against repeated taps on the same Remove button: repeat taps on
+  // an item that is already being removed are ignored, and the success toast
+  // uses a per-item id so only ONE "removed" notification is ever shown.
+  const deletingIds = useRef<Set<string>>(new Set());
   const handleDelete = async (id: string) => {
     if (!user) return;
+    if (deletingIds.current.has(id)) return; // already removing this item
+    deletingIds.current.add(id);
     try {
       await deleteAppointment(id, user.id);
+      Notifications.cancelAppointment(id);
+      sounds.playClick();
       await refreshAppointments();
-      toast.success("Removed appointment.");
+      toast.success("Removed appointment.", { id: `apt-removed-${id}` });
     } catch (err) {
-      toast.error("Failed to remove appointment.");
+      toast.error("Failed to remove appointment.", { id: `apt-remove-error-${id}` });
+    } finally {
+      deletingIds.current.delete(id);
     }
   };
 
@@ -142,6 +167,8 @@ function AppointmentsPage() {
     setJoining(true);
     try {
       await updateAppointment(app.id, user.id, { status: "completed" });
+      Notifications.cancelAppointment(app.id);
+      sounds.playSuccess();
       await refreshAppointments();
       toast.success(`Session "${app.title}" completed — nice work! 🎉`);
       setSelectedPlan(null);
@@ -276,188 +303,180 @@ function AppointmentsPage() {
 
       {/* Workout / Session Details Modal for Real Selected Item */}
       {selectedPlan && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-xs animate-in fade-in duration-200">
-          <div className="w-full max-w-md rounded-3xl bg-white p-5 shadow-2xl animate-in zoom-in-95 duration-200">
-            <div className="rounded-2xl bg-[#FFC593] p-5 text-[#12131A] relative">
-              <button
-                onClick={() => setSelectedPlan(null)}
-                aria-label="Close appointment details"
-                className="absolute top-3 right-3 size-7 flex items-center justify-center rounded-full bg-white/70 text-[#12131A]"
-              >
-                <X className="size-4" />
-              </button>
-              <span className="rounded-full bg-white/80 px-3 py-0.5 text-[11px] font-extrabold uppercase">
-                {selectedPlan.priority} Priority
+        <Modal open onClose={() => setSelectedPlan(null)} className="bg-white">
+          <div className="rounded-2xl bg-[#FFC593] p-5 text-[#12131A] relative">
+            <button
+              onClick={() => setSelectedPlan(null)}
+              aria-label="Close appointment details"
+              className="absolute top-3 right-3 size-7 flex items-center justify-center rounded-full bg-white/70 text-[#12131A]"
+            >
+              <X className="size-4" />
+            </button>
+            <span className="rounded-full bg-white/80 px-3 py-0.5 text-[11px] font-extrabold uppercase">
+              {selectedPlan.priority} Priority
+            </span>
+            <h2 className="mt-3 text-2xl font-black">{selectedPlan.title}</h2>
+            <p className="text-xs font-semibold text-[#12131A]/80 mt-1">Real Scheduled Session</p>
+          </div>
+
+          <div className="mt-4 space-y-2.5 text-xs text-[#12131A]">
+            <div className="flex items-center gap-2.5 font-bold">
+              <Clock className="size-4 text-[#7C5CFC]" />
+              <span>
+                {selectedPlan.appointment_date} · {selectedPlan.start_time || "10:00"}
               </span>
-              <h2 className="mt-3 text-2xl font-black">{selectedPlan.title}</h2>
-              <p className="text-xs font-semibold text-[#12131A]/80 mt-1">Real Scheduled Session</p>
             </div>
-
-            <div className="mt-4 space-y-2.5 text-xs text-[#12131A]">
+            {selectedPlan.location && (
               <div className="flex items-center gap-2.5 font-bold">
-                <Clock className="size-4 text-[#7C5CFC]" />
-                <span>
-                  {selectedPlan.appointment_date} · {selectedPlan.start_time || "10:00"}
-                </span>
-              </div>
-              {selectedPlan.location && (
-                <div className="flex items-center gap-2.5 font-bold">
-                  <MapPin className="size-4 text-[#7C5CFC]" />
-                  <span>{selectedPlan.location}</span>
-                </div>
-              )}
-              {selectedPlan.doctor_name && (
-                <div className="flex items-center gap-2.5 border-t border-black/5 pt-3">
-                  <span className="flex size-8 items-center justify-center rounded-full bg-[#E8E2FF] text-[#7C5CFC]">
-                    <User className="size-4" />
-                  </span>
-                  <div>
-                    <span className="block text-[10px] text-[#6B7280] font-bold">
-                      Trainer / Host
-                    </span>
-                    <span className="font-extrabold">{selectedPlan.doctor_name}</span>
-                  </div>
-                </div>
-              )}
-            </div>
-
-            {selectedPlan.notes && (
-              <div className="mt-4 border-t border-black/5 pt-3">
-                <h4 className="text-xs font-extrabold text-[#12131A]">Notes</h4>
-                <p className="mt-1 text-xs text-[#6B7280] leading-relaxed">{selectedPlan.notes}</p>
+                <MapPin className="size-4 text-[#7C5CFC]" />
+                <span>{selectedPlan.location}</span>
               </div>
             )}
-
-            <button
-              onClick={() => handleJoinSession(selectedPlan)}
-              disabled={joining || selectedPlan.status === "completed"}
-              className={`tap mt-5 w-full rounded-full py-3 text-xs font-extrabold text-white shadow-md transition-all ${
-                selectedPlan.status === "completed"
-                  ? "bg-[#34D399] cursor-default"
-                  : "bg-[#7C5CFC] hover:bg-[#6C4CFC]"
-              } ${joining ? "opacity-70" : ""}`}
-            >
-              {joining ? (
-                <span className="inline-flex items-center justify-center gap-1.5">
-                  <Loader2 className="size-3.5 animate-spin" /> Completing…
+            {selectedPlan.doctor_name && (
+              <div className="flex items-center gap-2.5 border-t border-black/5 pt-3">
+                <span className="flex size-8 items-center justify-center rounded-full bg-[#E8E2FF] text-[#7C5CFC]">
+                  <User className="size-4" />
                 </span>
-              ) : selectedPlan.status === "completed" ? (
-                <span className="inline-flex items-center justify-center gap-1.5">
-                  <Check className="size-3.5" /> Session Completed
-                </span>
-              ) : (
-                "Join Session"
-              )}
-            </button>
+                <div>
+                  <span className="block text-[10px] text-[#6B7280] font-bold">Trainer / Host</span>
+                  <span className="font-extrabold">{selectedPlan.doctor_name}</span>
+                </div>
+              </div>
+            )}
           </div>
-        </div>
+
+          {selectedPlan.notes && (
+            <div className="mt-4 border-t border-black/5 pt-3">
+              <h4 className="text-xs font-extrabold text-[#12131A]">Notes</h4>
+              <p className="mt-1 text-xs text-[#6B7280] leading-relaxed">{selectedPlan.notes}</p>
+            </div>
+          )}
+
+          <button
+            onClick={() => handleJoinSession(selectedPlan)}
+            disabled={joining || selectedPlan.status === "completed"}
+            className={`tap mt-5 w-full rounded-full py-3 text-xs font-extrabold text-white shadow-md transition-all ${
+              selectedPlan.status === "completed"
+                ? "bg-[#34D399] cursor-default"
+                : "bg-[#7C5CFC] hover:bg-[#6C4CFC]"
+            } ${joining ? "opacity-70" : ""}`}
+          >
+            {joining ? (
+              <span className="inline-flex items-center justify-center gap-1.5">
+                <Loader2 className="size-3.5 animate-spin" /> Completing…
+              </span>
+            ) : selectedPlan.status === "completed" ? (
+              <span className="inline-flex items-center justify-center gap-1.5">
+                <Check className="size-3.5" /> Session Completed
+              </span>
+            ) : (
+              "Join Session"
+            )}
+          </button>
+        </Modal>
       )}
 
       {/* Add / Edit Form Modal */}
-      {modalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-xs">
-          <div className="w-full max-w-md rounded-3xl bg-white p-5 shadow-2xl">
-            <div className="flex items-center justify-between border-b border-black/5 pb-3">
-              <h3 className="text-base font-extrabold text-[#12131A]">
-                {editingApp ? "Edit Session" : "Schedule New Session"}
-              </h3>
-              <button
-                onClick={() => setModalOpen(false)}
-                aria-label="Close appointment form"
-                className="size-7 flex items-center justify-center rounded-full bg-black/5"
-              >
-                <X className="size-4" />
-              </button>
-            </div>
-            <form onSubmit={handleSave} className="mt-4 space-y-3">
-              <div>
-                <label className="text-xs font-bold text-[#12131A]">Session Title</label>
-                <input
-                  type="text"
-                  required
-                  placeholder="Yoga Group / Consultation"
-                  value={title}
-                  onChange={(e) => setTitle(e.target.value)}
-                  className="mt-1 w-full rounded-xl border border-black/10 bg-[#F9F9FD] p-2.5 text-xs outline-none focus:border-[#7C5CFC]"
-                />
-              </div>
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <label className="text-xs font-bold text-[#12131A]">Doctor / Specialist</label>
-                  <input
-                    type="text"
-                    required
-                    placeholder="Dr. Sarah Smith"
-                    value={doctorName}
-                    onChange={(e) => setDoctorName(e.target.value)}
-                    className="mt-1 w-full rounded-xl border border-black/10 bg-[#F9F9FD] p-2.5 text-xs outline-none focus:border-[#7C5CFC]"
-                  />
-                </div>
-                <div>
-                  <label className="text-xs font-bold text-[#12131A]">Location / Clinic</label>
-                  <input
-                    type="text"
-                    placeholder="City Health Center / Online"
-                    value={location}
-                    onChange={(e) => setLocation(e.target.value)}
-                    className="mt-1 w-full rounded-xl border border-black/10 bg-[#F9F9FD] p-2.5 text-xs outline-none focus:border-[#7C5CFC]"
-                  />
-                </div>
-              </div>
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <label className="text-xs font-bold text-[#12131A]">Date</label>
-                  <input
-                    type="date"
-                    required
-                    value={appointmentDate}
-                    onChange={(e) => setAppointmentDate(e.target.value)}
-                    className="mt-1 w-full rounded-xl border border-black/10 bg-[#F9F9FD] p-2.5 text-xs outline-none focus:border-[#7C5CFC]"
-                  />
-                </div>
-                <div>
-                  <label className="text-xs font-bold text-[#12131A]">Time</label>
-                  <input
-                    type="time"
-                    required
-                    value={startTime}
-                    onChange={(e) => setStartTime(e.target.value)}
-                    className="mt-1 w-full rounded-xl border border-black/10 bg-[#F9F9FD] p-2.5 text-xs outline-none focus:border-[#7C5CFC]"
-                  />
-                </div>
-              </div>
-              <div>
-                <label className="text-xs font-bold text-[#12131A]">Priority / Intensity</label>
-                <select
-                  value={priority}
-                  onChange={(e) => setPriority(e.target.value as any)}
-                  className="mt-1 w-full rounded-xl border border-black/10 bg-[#F9F9FD] p-2.5 text-xs outline-none focus:border-[#7C5CFC]"
-                >
-                  <option value="light">Light</option>
-                  <option value="medium">Medium</option>
-                  <option value="high">High</option>
-                </select>
-              </div>
-              <div className="flex gap-2 pt-3">
-                <button
-                  type="button"
-                  onClick={() => setModalOpen(false)}
-                  className="w-1/2 rounded-xl border border-black/10 py-2.5 text-xs font-bold"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={submitting}
-                  className="w-1/2 flex items-center justify-center gap-1 rounded-xl bg-[#12131A] py-2.5 text-xs font-bold text-white"
-                >
-                  {submitting ? <Loader2 className="size-3.5 animate-spin" /> : null} Save Session
-                </button>
-              </div>
-            </form>
-          </div>
+      <Modal open={modalOpen} onClose={() => setModalOpen(false)} className="bg-white">
+        <div className="flex items-center justify-between border-b border-black/5 pb-3">
+          <h3 className="text-base font-extrabold text-[#12131A]">
+            {editingApp ? "Edit Session" : "Schedule New Session"}
+          </h3>
+          <button
+            onClick={() => setModalOpen(false)}
+            aria-label="Close appointment form"
+            className="size-7 flex items-center justify-center rounded-full bg-black/5"
+          >
+            <X className="size-4" />
+          </button>
         </div>
-      )}
+        <form onSubmit={handleSave} className="mt-4 space-y-3">
+          <div>
+            <label className="text-xs font-bold text-[#12131A]">Session Title</label>
+            <input
+              type="text"
+              required
+              placeholder="Yoga Group / Consultation"
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              className="mt-1 w-full rounded-xl border border-black/10 bg-[#F9F9FD] p-2.5 text-xs outline-none focus:border-[#7C5CFC]"
+            />
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <label className="text-xs font-bold text-[#12131A]">Doctor / Specialist</label>
+              <input
+                type="text"
+                required
+                placeholder="Dr. Sarah Smith"
+                value={doctorName}
+                onChange={(e) => setDoctorName(e.target.value)}
+                className="mt-1 w-full rounded-xl border border-black/10 bg-[#F9F9FD] p-2.5 text-xs outline-none focus:border-[#7C5CFC]"
+              />
+            </div>
+            <div>
+              <label className="text-xs font-bold text-[#12131A]">Location / Clinic</label>
+              <input
+                type="text"
+                placeholder="City Health Center / Online"
+                value={location}
+                onChange={(e) => setLocation(e.target.value)}
+                className="mt-1 w-full rounded-xl border border-black/10 bg-[#F9F9FD] p-2.5 text-xs outline-none focus:border-[#7C5CFC]"
+              />
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <label className="text-xs font-bold text-[#12131A]">Date</label>
+              <input
+                type="date"
+                required
+                value={appointmentDate}
+                onChange={(e) => setAppointmentDate(e.target.value)}
+                className="mt-1 w-full rounded-xl border border-black/10 bg-[#F9F9FD] p-2.5 text-xs outline-none focus:border-[#7C5CFC]"
+              />
+            </div>
+            <div>
+              <label className="text-xs font-bold text-[#12131A]">Time</label>
+              <input
+                type="time"
+                required
+                value={startTime}
+                onChange={(e) => setStartTime(e.target.value)}
+                className="mt-1 w-full rounded-xl border border-black/10 bg-[#F9F9FD] p-2.5 text-xs outline-none focus:border-[#7C5CFC]"
+              />
+            </div>
+          </div>
+          <div>
+            <label className="text-xs font-bold text-[#12131A]">Priority / Intensity</label>
+            <select
+              value={priority}
+              onChange={(e) => setPriority(e.target.value as any)}
+              className="mt-1 w-full rounded-xl border border-black/10 bg-[#F9F9FD] p-2.5 text-xs outline-none focus:border-[#7C5CFC]"
+            >
+              <option value="light">Light</option>
+              <option value="medium">Medium</option>
+              <option value="high">High</option>
+            </select>
+          </div>
+          <div className="flex gap-2 pt-3">
+            <button
+              type="button"
+              onClick={() => setModalOpen(false)}
+              className="w-1/2 rounded-xl border border-black/10 py-2.5 text-xs font-bold"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={submitting}
+              className="w-1/2 flex items-center justify-center gap-1 rounded-xl bg-[#12131A] py-2.5 text-xs font-bold text-white"
+            >
+              {submitting ? <Loader2 className="size-3.5 animate-spin" /> : null} Save Session
+            </button>
+          </div>
+        </form>
+      </Modal>
     </Screen>
   );
 }

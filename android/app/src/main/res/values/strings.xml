@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">LifeHub</string>
+    <string name="title_activity_main">LifeHub</string>
+    <string name="package_name">com.lifehub.app</string>
+    <string name="custom_url_scheme">com.lifehub.app</string>
+</resources>

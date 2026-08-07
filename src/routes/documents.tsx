@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import {
   FolderClosed,
@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { Screen } from "@/components/lifehub/Screen";
+import { Modal } from "@/components/lifehub/Modal";
 import { useAuth } from "@/hooks/use-auth";
 import { getDocuments, createDocument, updateDocument, deleteDocument } from "@/lib/api";
 import { DocumentItem } from "@/lib/types";
@@ -177,14 +178,22 @@ function DocumentsPage() {
     }
   };
 
+  // Guards against repeated taps on the same Delete button: repeat taps on
+  // an item that is already being deleted are ignored, and the success toast
+  // uses a per-item id so only ONE "deleted" notification is ever shown.
+  const deletingIds = useRef<Set<string>>(new Set());
   const handleDelete = async (id: string) => {
     if (!user) return;
+    if (deletingIds.current.has(id)) return; // already deleting this item
+    deletingIds.current.add(id);
     try {
       await deleteDocument(id, user.id);
       setDocuments((prev) => prev.filter((d) => d.id !== id));
-      toast.success("Document deleted.");
+      toast.success("Document deleted.", { id: `doc-deleted-${id}` });
     } catch (err) {
-      toast.error("Failed to delete document.");
+      toast.error("Failed to delete document.", { id: `doc-delete-error-${id}` });
+    } finally {
+      deletingIds.current.delete(id);
     }
   };
 
@@ -330,134 +339,128 @@ function DocumentsPage() {
       </div>
 
       {/* Upload / Edit Modal */}
-      {uploadModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm animate-in fade-in duration-200">
-          <div className="w-full max-w-md rounded-3xl bg-card p-5 shadow-2xl animate-in zoom-in-95 duration-200">
-            <div className="flex items-center justify-between border-b border-border/40 pb-3">
-              <h2 className="text-lg font-extrabold text-foreground">
-                {editingDoc ? "Edit Document" : "Upload Document"}
-              </h2>
-              <button
-                onClick={() => setUploadModalOpen(false)}
-                className="size-8 flex items-center justify-center rounded-full bg-muted text-muted-foreground"
-              >
-                <X className="size-4" />
-              </button>
-            </div>
-
-            <form onSubmit={handleUploadSubmit} className="mt-4 space-y-3">
-              <div>
-                <label className="text-xs font-bold text-foreground">Document Title</label>
-                <input
-                  type="text"
-                  required
-                  placeholder="Document name"
-                  value={docName}
-                  onChange={(e) => setDocName(e.target.value)}
-                  className="mt-1 w-full rounded-xl border border-input bg-muted/30 p-2.5 text-sm outline-none"
-                />
-              </div>
-
-              <div>
-                <label className="text-xs font-bold text-foreground">Category</label>
-                <select
-                  value={category}
-                  onChange={(e) => setCategory(e.target.value)}
-                  className="mt-1 w-full rounded-xl border border-input bg-muted/30 p-2.5 text-sm outline-none"
-                >
-                  <option value="Medical">Medical</option>
-                  <option value="Prescription">Prescription</option>
-                  <option value="Insurance">Insurance</option>
-                  <option value="Lab Results">Lab Results</option>
-                  <option value="Study">Study</option>
-                </select>
-              </div>
-
-              {!editingDoc && (
-                <div>
-                  <label className="text-xs font-bold text-foreground">Select File</label>
-                  <input
-                    type="file"
-                    onChange={(e) => setSelectedFile(e.target.files?.[0] || null)}
-                    className="mt-1 w-full rounded-xl border border-input bg-muted/30 p-2 text-xs"
-                  />
-                </div>
-              )}
-
-              <div className="flex gap-2 pt-3">
-                <button
-                  type="button"
-                  onClick={() => setUploadModalOpen(false)}
-                  className="w-1/2 rounded-xl border border-border py-2.5 text-xs font-bold text-foreground"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={submitting}
-                  className="w-1/2 flex items-center justify-center gap-1.5 rounded-xl bg-ink py-2.5 text-xs font-bold text-card shadow-md disabled:opacity-50"
-                >
-                  {submitting ? <Loader2 className="size-4 animate-spin" /> : null}
-                  {submitting ? "Saving..." : "Save Document"}
-                </button>
-              </div>
-            </form>
-          </div>
+      <Modal open={uploadModalOpen} onClose={() => setUploadModalOpen(false)} className="bg-card">
+        <div className="flex items-center justify-between border-b border-border/40 pb-3">
+          <h2 className="text-lg font-extrabold text-foreground">
+            {editingDoc ? "Edit Document" : "Upload Document"}
+          </h2>
+          <button
+            onClick={() => setUploadModalOpen(false)}
+            className="size-8 flex items-center justify-center rounded-full bg-muted text-muted-foreground"
+          >
+            <X className="size-4" />
+          </button>
         </div>
-      )}
+
+        <form onSubmit={handleUploadSubmit} className="mt-4 space-y-3">
+          <div>
+            <label className="text-xs font-bold text-foreground">Document Title</label>
+            <input
+              type="text"
+              required
+              placeholder="Document name"
+              value={docName}
+              onChange={(e) => setDocName(e.target.value)}
+              className="mt-1 w-full rounded-xl border border-input bg-muted/30 p-2.5 text-sm outline-none"
+            />
+          </div>
+
+          <div>
+            <label className="text-xs font-bold text-foreground">Category</label>
+            <select
+              value={category}
+              onChange={(e) => setCategory(e.target.value)}
+              className="mt-1 w-full rounded-xl border border-input bg-muted/30 p-2.5 text-sm outline-none"
+            >
+              <option value="Medical">Medical</option>
+              <option value="Prescription">Prescription</option>
+              <option value="Insurance">Insurance</option>
+              <option value="Lab Results">Lab Results</option>
+              <option value="Study">Study</option>
+            </select>
+          </div>
+
+          {!editingDoc && (
+            <div>
+              <label className="text-xs font-bold text-foreground">Select File</label>
+              <input
+                type="file"
+                onChange={(e) => setSelectedFile(e.target.files?.[0] || null)}
+                className="mt-1 w-full rounded-xl border border-input bg-muted/30 p-2 text-xs"
+              />
+            </div>
+          )}
+
+          <div className="flex gap-2 pt-3">
+            <button
+              type="button"
+              onClick={() => setUploadModalOpen(false)}
+              className="w-1/2 rounded-xl border border-border py-2.5 text-xs font-bold text-foreground"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={submitting}
+              className="w-1/2 flex items-center justify-center gap-1.5 rounded-xl bg-ink py-2.5 text-xs font-bold text-card shadow-md disabled:opacity-50"
+            >
+              {submitting ? <Loader2 className="size-4 animate-spin" /> : null}
+              {submitting ? "Saving..." : "Save Document"}
+            </button>
+          </div>
+        </form>
+      </Modal>
 
       {/* Preview Modal */}
       {previewDoc && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm animate-in fade-in duration-200">
-          <div className="w-full max-w-lg rounded-3xl bg-card p-5 shadow-2xl animate-in zoom-in-95 duration-200">
-            <div className="flex items-center justify-between border-b border-border/40 pb-3">
-              <h2 className="text-base font-extrabold text-foreground">{previewDoc.name}</h2>
-              <button
-                onClick={() => setPreviewDoc(null)}
-                className="size-8 flex items-center justify-center rounded-full bg-muted text-muted-foreground"
-              >
-                <X className="size-4" />
-              </button>
-            </div>
-            <div className="mt-4 flex flex-col items-center">
-              {previewDoc.file_url.startsWith("data:image/") ? (
-                <img
-                  src={previewDoc.file_url}
-                  alt="Document preview"
-                  className="max-h-64 rounded-xl object-contain shadow-md"
-                />
-              ) : (
-                <FileText className="size-20 text-muted-foreground/60" />
-              )}
-              <p className="mt-3 text-xs text-muted-foreground leading-relaxed text-center">
-                {previewDoc.summary}
-              </p>
-            </div>
+        <Modal open onClose={() => setPreviewDoc(null)} className="bg-card">
+          <div className="flex items-center justify-between border-b border-border/40 pb-3">
+            <h2 className="text-base font-extrabold text-foreground">{previewDoc.name}</h2>
+            <button
+              onClick={() => setPreviewDoc(null)}
+              className="size-8 flex items-center justify-center rounded-full bg-muted text-muted-foreground"
+            >
+              <X className="size-4" />
+            </button>
           </div>
-        </div>
+          <div className="mt-4 flex flex-col items-center">
+            {previewDoc.file_url.startsWith("data:image/") ? (
+              <img
+                src={previewDoc.file_url}
+                alt="Document preview"
+                className="max-h-64 rounded-xl object-contain shadow-md"
+              />
+            ) : (
+              <FileText className="size-20 text-muted-foreground/60" />
+            )}
+            <p className="mt-3 text-xs text-muted-foreground leading-relaxed text-center">
+              {previewDoc.summary}
+            </p>
+          </div>
+        </Modal>
       )}
 
       {/* AI Summary Modal */}
-      {summaryModalText && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm animate-in fade-in duration-200">
-          <div className="w-full max-w-md rounded-3xl bg-card p-5 shadow-2xl animate-in zoom-in-95 duration-200">
-            <div className="flex items-center justify-between border-b border-border/40 pb-3">
-              <h2 className="text-base font-extrabold text-foreground flex items-center gap-2">
-                <Wand2 className="size-4 text-purple-600" /> AI Document Summary
-              </h2>
-              <button
-                onClick={() => setSummaryModalText(null)}
-                className="size-8 flex items-center justify-center rounded-full bg-muted text-muted-foreground"
-              >
-                <X className="size-4" />
-              </button>
-            </div>
-            <div className="mt-4 text-xs leading-relaxed text-foreground whitespace-pre-line max-h-96 overflow-y-auto">
-              {summaryModalText}
-            </div>
-          </div>
+      <Modal
+        open={!!summaryModalText}
+        onClose={() => setSummaryModalText(null)}
+        className="bg-card"
+      >
+        <div className="flex items-center justify-between border-b border-border/40 pb-3">
+          <h2 className="text-base font-extrabold text-foreground flex items-center gap-2">
+            <Wand2 className="size-4 text-purple-600" /> AI Document Summary
+          </h2>
+          <button
+            onClick={() => setSummaryModalText(null)}
+            className="size-8 flex items-center justify-center rounded-full bg-muted text-muted-foreground"
+          >
+            <X className="size-4" />
+          </button>
         </div>
-      )}
+        <div className="mt-4 text-xs leading-relaxed text-foreground whitespace-pre-line max-h-96 overflow-y-auto">
+          {summaryModalText}
+        </div>
+      </Modal>
     </Screen>
   );
 }

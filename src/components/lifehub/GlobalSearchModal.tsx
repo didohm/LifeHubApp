@@ -14,6 +14,7 @@ import {
 import { performGlobalSearch } from "../../lib/api";
 import { GlobalSearchResult } from "../../lib/types";
 import { useNavigate } from "@tanstack/react-router";
+import { Modal } from "./Modal";
 
 interface GlobalSearchModalProps {
   isOpen: boolean;
@@ -75,54 +76,52 @@ export function GlobalSearchModal({ isOpen, onClose, userId }: GlobalSearchModal
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/60 p-4 pt-16 backdrop-blur-sm">
-      <div className="w-full max-w-lg overflow-hidden rounded-3xl bg-card p-4 shadow-2xl animate-in fade-in zoom-in-95 duration-200">
-        <div className="flex items-center gap-3 border-b border-border/50 pb-3">
-          <Search className="size-5 text-muted-foreground" />
-          <input
-            type="text"
-            placeholder="Search appointments, bills, meds, docs, tasks..."
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            autoFocus
-            className="flex-1 bg-transparent text-base text-foreground outline-none placeholder:text-muted-foreground"
-          />
-          <button
-            onClick={onClose}
-            className="flex size-8 items-center justify-center rounded-full bg-muted text-muted-foreground hover:bg-accent"
-          >
-            <X className="size-4" />
-          </button>
-        </div>
-
-        <div className="mt-3 max-h-80 overflow-y-auto space-y-2">
-          {loading && <p className="p-4 text-center text-sm text-muted-foreground">Searching...</p>}
-          {!loading && query && results.length === 0 && (
-            <p className="p-4 text-center text-sm text-muted-foreground">
-              No matches found for &quot;{query}&quot;
-            </p>
-          )}
-
-          {results.map((res) => (
-            <div
-              key={res.id}
-              onClick={() => handleSelect(res.url)}
-              className="flex items-center justify-between rounded-xl p-3 transition-colors hover:bg-accent/60 cursor-pointer"
-            >
-              <div className="flex items-center gap-3">
-                <div className="flex size-9 items-center justify-center rounded-lg bg-muted">
-                  {getIcon(res.type)}
-                </div>
-                <div>
-                  <p className="text-sm font-semibold text-foreground">{res.title}</p>
-                  <p className="text-xs text-muted-foreground">{res.subtitle}</p>
-                </div>
-              </div>
-              <ArrowRight className="size-4 text-muted-foreground" />
-            </div>
-          ))}
-        </div>
+    <Modal open={isOpen} onClose={onClose} alignTop className="bg-card">
+      <div className="flex items-center gap-3 border-b border-border/50 pb-3">
+        <Search className="size-5 text-muted-foreground" />
+        <input
+          type="text"
+          placeholder="Search appointments, bills, meds, docs, tasks..."
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          autoFocus
+          className="flex-1 bg-transparent text-base text-foreground outline-none placeholder:text-muted-foreground"
+        />
+        <button
+          onClick={onClose}
+          className="flex size-8 items-center justify-center rounded-full bg-muted text-muted-foreground hover:bg-accent"
+        >
+          <X className="size-4" />
+        </button>
       </div>
-    </div>
+
+      <div className="mt-3 max-h-80 overflow-y-auto space-y-2">
+        {loading && <p className="p-4 text-center text-sm text-muted-foreground">Searching...</p>}
+        {!loading && query && results.length === 0 && (
+          <p className="p-4 text-center text-sm text-muted-foreground">
+            No matches found for &quot;{query}&quot;
+          </p>
+        )}
+
+        {results.map((res) => (
+          <div
+            key={res.id}
+            onClick={() => handleSelect(res.url)}
+            className="flex items-center justify-between rounded-xl p-3 transition-colors hover:bg-accent/60 cursor-pointer"
+          >
+            <div className="flex items-center gap-3">
+              <div className="flex size-9 items-center justify-center rounded-lg bg-muted">
+                {getIcon(res.type)}
+              </div>
+              <div>
+                <p className="text-sm font-semibold text-foreground">{res.title}</p>
+                <p className="text-xs text-muted-foreground">{res.subtitle}</p>
+              </div>
+            </div>
+            <ArrowRight className="size-4 text-muted-foreground" />
+          </div>
+        ))}
+      </div>
+    </Modal>
   );
 }

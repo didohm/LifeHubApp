@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from "react";
+import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import {
   Plus,
@@ -17,8 +17,10 @@ import {
 import { toast } from "sonner";
 import { motion, AnimatePresence } from "framer-motion";
 import { Screen } from "@/components/lifehub/Screen";
+import { Modal } from "@/components/lifehub/Modal";
 import { useAuth } from "@/hooks/use-auth";
 import { getBirthdays, createBirthday, updateBirthday, deleteBirthday } from "@/lib/api";
+import { Notifications } from "@/lib/notifications-integration";
 import { Birthday } from "@/lib/types";
 import { ListSkeleton } from "@/components/lifehub/SkeletonLoader";
 
@@ -184,6 +186,8 @@ function BirthdaysPage() {
           birthday_date: birthdayDate,
         });
         setBirthdays((prev) => prev.map((b) => (b.id === editingBirthday.id ? updated : b)));
+        Notifications.cancelBirthday(editingBirthday.id);
+        Notifications.scheduleBirthday(updated);
         toast.success("Birthday updated! 🎂");
       } else {
         const created = await createBirthday(user.id, {
@@ -192,6 +196,7 @@ function BirthdaysPage() {
           birthday_date: birthdayDate,
         });
         setBirthdays((prev) => [...prev, created]);
+        Notifications.scheduleBirthday(created);
         toast.success("Birthday saved! 🎉");
       }
       closeModal();
@@ -202,14 +207,23 @@ function BirthdaysPage() {
     }
   };
 
+  // Guards against repeated taps on the same Delete button: repeat taps on
+  // an item that is already being deleted are ignored, and the success toast
+  // uses a per-item id so only ONE "deleted" notification is ever shown.
+  const deletingIds = useRef<Set<string>>(new Set());
   const handleDelete = async (id: string) => {
     if (!user) return;
+    if (deletingIds.current.has(id)) return; // already deleting this item
+    deletingIds.current.add(id);
     try {
       await deleteBirthday(id, user.id);
       setBirthdays((prev) => prev.filter((b) => b.id !== id));
-      toast.success("Birthday deleted.");
+      Notifications.cancelBirthday(id);
+      toast.success("Birthday deleted.", { id: `bday-deleted-${id}` });
     } catch (err) {
-      toast.error("Failed to delete birthday.");
+      toast.error("Failed to delete birthday.", { id: `bday-delete-error-${id}` });
+    } finally {
+      deletingIds.current.delete(id);
     }
   };
 
@@ -481,95 +495,91 @@ function BirthdaysPage() {
       </div>
 
       {/* ── Add / Edit Birthday Modal ── */}
-      {modalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm animate-in fade-in duration-200">
-          <div className="w-full max-w-md rounded-3xl bg-card p-5 shadow-2xl animate-in zoom-in-95 duration-200">
-            <div className="flex items-center justify-between border-b border-border/40 pb-3">
-              <h2 className="text-lg font-extrabold text-foreground">
-                {editingBirthday ? "Edit Birthday" : "Add New Birthday"}
-              </h2>
-              <button
-                onClick={closeModal}
-                className="size-8 flex items-center justify-center rounded-full bg-muted text-muted-foreground"
-              >
-                <X className="size-4" />
-              </button>
-            </div>
-
-            <form onSubmit={handleSave} className="mt-4 space-y-3">
-              <div>
-                <label className="text-xs font-bold text-foreground">
-                  Full Name <span className="text-destructive">*</span>
-                </label>
-                <div className="relative mt-1">
-                  <Cake className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-muted-foreground" />
-                  <input
-                    type="text"
-                    required
-                    placeholder="e.g. Jane Doe"
-                    value={fullName}
-                    onChange={(e) => setFullName(e.target.value)}
-                    className="w-full rounded-xl border border-input bg-muted/30 p-2.5 pl-10 text-sm outline-none focus:border-ring transition-colors"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label className="text-xs font-bold text-foreground">Phone Number</label>
-                <span className="ml-1 text-[10px] text-muted-foreground">(optional)</span>
-                <div className="relative mt-1">
-                  <Phone className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-muted-foreground" />
-                  <input
-                    type="tel"
-                    placeholder="e.g. +1 555-0123"
-                    value={phoneNumber}
-                    onChange={(e) => setPhoneNumber(e.target.value)}
-                    className="w-full rounded-xl border border-input bg-muted/30 p-2.5 pl-10 text-sm outline-none focus:border-ring transition-colors"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label className="text-xs font-bold text-foreground">
-                  Birthday Date <span className="text-destructive">*</span>
-                </label>
-                <div className="relative mt-1">
-                  <CalendarDays className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-muted-foreground" />
-                  <input
-                    type="date"
-                    required
-                    value={birthdayDate}
-                    onChange={(e) => setBirthdayDate(e.target.value)}
-                    className="w-full rounded-xl border border-input bg-muted/30 p-2.5 pl-10 text-sm outline-none focus:border-ring transition-colors"
-                  />
-                </div>
-              </div>
-
-              <div className="flex gap-2 pt-3">
-                <button
-                  type="button"
-                  onClick={closeModal}
-                  className="w-1/2 rounded-xl border border-border py-2.5 text-xs font-bold text-foreground hover:bg-muted transition-colors"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={submitting}
-                  className="w-1/2 flex items-center justify-center gap-1.5 rounded-xl bg-ink py-2.5 text-xs font-bold text-card shadow-md disabled:opacity-50 hover:opacity-90 transition-opacity"
-                >
-                  {submitting ? (
-                    <Loader2 className="size-4 animate-spin" />
-                  ) : (
-                    <Gift className="size-4" />
-                  )}
-                  {submitting ? "Saving..." : editingBirthday ? "Update Birthday" : "Save Birthday"}
-                </button>
-              </div>
-            </form>
-          </div>
+      <Modal open={modalOpen} onClose={closeModal} className="bg-card">
+        <div className="flex items-center justify-between border-b border-border/40 pb-3">
+          <h2 className="text-lg font-extrabold text-foreground">
+            {editingBirthday ? "Edit Birthday" : "Add New Birthday"}
+          </h2>
+          <button
+            onClick={closeModal}
+            className="size-8 flex items-center justify-center rounded-full bg-muted text-muted-foreground"
+          >
+            <X className="size-4" />
+          </button>
         </div>
-      )}
+
+        <form onSubmit={handleSave} className="mt-4 space-y-3">
+          <div>
+            <label className="text-xs font-bold text-foreground">
+              Full Name <span className="text-destructive">*</span>
+            </label>
+            <div className="relative mt-1">
+              <Cake className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-muted-foreground" />
+              <input
+                type="text"
+                required
+                placeholder="e.g. Jane Doe"
+                value={fullName}
+                onChange={(e) => setFullName(e.target.value)}
+                className="w-full rounded-xl border border-input bg-muted/30 p-2.5 pl-10 text-sm outline-none focus:border-ring transition-colors"
+              />
+            </div>
+          </div>
+
+          <div>
+            <label className="text-xs font-bold text-foreground">Phone Number</label>
+            <span className="ml-1 text-[10px] text-muted-foreground">(optional)</span>
+            <div className="relative mt-1">
+              <Phone className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-muted-foreground" />
+              <input
+                type="tel"
+                placeholder="e.g. +1 555-0123"
+                value={phoneNumber}
+                onChange={(e) => setPhoneNumber(e.target.value)}
+                className="w-full rounded-xl border border-input bg-muted/30 p-2.5 pl-10 text-sm outline-none focus:border-ring transition-colors"
+              />
+            </div>
+          </div>
+
+          <div>
+            <label className="text-xs font-bold text-foreground">
+              Birthday Date <span className="text-destructive">*</span>
+            </label>
+            <div className="relative mt-1">
+              <CalendarDays className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-muted-foreground" />
+              <input
+                type="date"
+                required
+                value={birthdayDate}
+                onChange={(e) => setBirthdayDate(e.target.value)}
+                className="w-full rounded-xl border border-input bg-muted/30 p-2.5 pl-10 text-sm outline-none focus:border-ring transition-colors"
+              />
+            </div>
+          </div>
+
+          <div className="flex gap-2 pt-3">
+            <button
+              type="button"
+              onClick={closeModal}
+              className="w-1/2 rounded-xl border border-border py-2.5 text-xs font-bold text-foreground hover:bg-muted transition-colors"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={submitting}
+              className="w-1/2 flex items-center justify-center gap-1.5 rounded-xl bg-ink py-2.5 text-xs font-bold text-card shadow-md disabled:opacity-50 hover:opacity-90 transition-opacity"
+            >
+              {submitting ? (
+                <Loader2 className="size-4 animate-spin" />
+              ) : (
+                <Gift className="size-4" />
+              )}
+              {submitting ? "Saving..." : editingBirthday ? "Update Birthday" : "Save Birthday"}
+            </button>
+          </div>
+        </form>
+      </Modal>
     </Screen>
   );
 }

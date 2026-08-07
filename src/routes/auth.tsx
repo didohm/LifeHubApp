@@ -12,17 +12,24 @@ export const Route = createFileRoute("/auth")({
 });
 
 function AuthPage() {
-  const { user, isFirebaseConfigured, signInWithGoogle } = useAuth();
+  const { user, loading, isFirebaseConfigured, signInWithGoogle } = useAuth();
   const navigate = useNavigate();
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const reduceMotion = useReducedMotion();
 
   useEffect(() => {
-    if (user) {
+    if (!loading && user) {
       navigate({ to: "/" });
     }
-  }, [user, navigate]);
+  }, [user, loading, navigate]);
+
+  // While auth state is unknown, the root gate owns the splash. Here we
+  // render nothing — no loading screen, no flash of the Sign In page.
+  if (loading) return null;
+
+  // After loading, if user exists, don't render anything (redirect in progress)
+  if (user) return null;
 
   if (!isFirebaseConfigured) {
     return (
@@ -42,8 +49,6 @@ function AuthPage() {
     );
   }
 
-  if (user) return null;
-
   const handleGoogleSignIn = async () => {
     setError("");
     setSubmitting(true);
@@ -51,8 +56,15 @@ function AuthPage() {
       await signInWithGoogle();
       navigate({ to: "/" });
     } catch (err: any) {
-      if (err.code === "auth/popup-closed-by-user") {
-        setError("Sign-in popup was closed. Please try again.");
+      const message = (err?.message || "").toLowerCase();
+      const cancelled =
+        err?.code === "auth/popup-closed-by-user" ||
+        err?.code === "canceled" ||
+        err?.code === "sign_in_cancelled" ||
+        message.includes("canceled") ||
+        message.includes("cancelled");
+      if (cancelled) {
+        setError("Sign-in was cancelled. Please try again.");
       } else if (err.code === "auth/popup-blocked") {
         setError("Pop-up was blocked by your browser. Please allow pop-ups for this site.");
       } else {
@@ -72,7 +84,7 @@ function AuthPage() {
         {/* Hero cluster: logo + tagline */}
         <div className="flex flex-col items-center">
           <img
-            src="/illustration/lifehub.png"
+            src="/illustration/LifeHub icon.png"
             alt="LifeHub"
             className="h-32 w-auto object-contain"
           />

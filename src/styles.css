@@ -24,26 +24,52 @@
 
 @utility tap {
   transition:
-    transform 0.18s ease,
-    box-shadow 0.18s ease;
-}
-@utility tap-active {
-  transform: scale(0.96);
+    transform 0.16s cubic-bezier(0.34, 1.56, 0.64, 1),
+    box-shadow 0.16s ease,
+    background-color 0.16s ease;
+  will-change: transform;
 }
 
-/*
- * Design system definition.
- *
- * The @theme inline block maps CSS custom properties to Tailwind utility
- * classes (e.g. --color-primary -> bg-primary, text-primary).
- *
- * The :root and .dark blocks define the actual color values using oklch.
- * All colors MUST use oklch format.
- *
- * To add a new semantic color:
- * 1. Add the variable to :root (light value) and .dark (dark value)
- * 2. Register it in @theme inline as --color-<name>: var(--<name>)
- */
+@utility tap-active {
+  transform: scale(0.96) translate3d(0, 0, 0);
+}
+
+@utility h-viewport {
+  height: 100vh;
+  height: 100dvh;
+}
+
+@utility min-h-viewport {
+  min-height: 100vh;
+  min-height: 100dvh;
+}
+
+.page-fade-enter {
+  animation: pageFadeIn 0.22s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  will-change: transform, opacity;
+}
+
+@keyframes pageFadeIn {
+  from {
+    opacity: 0.85;
+    transform: translate3d(0, 6px, 0);
+  }
+
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+@keyframes shimmer {
+  0% {
+    transform: translateX(-100%);
+  }
+
+  100% {
+    transform: translateX(100%);
+  }
+}
 
 @theme inline {
   --radius-sm: calc(var(--radius) - 4px);
@@ -174,27 +200,34 @@
     padding: 0.75rem !important;
     border-radius: 1.25rem;
   }
+
   .compact-mode h1 {
     font-size: 1.125rem !important;
   }
+
   .compact-mode h2 {
     font-size: 1rem !important;
   }
+
   .compact-mode p,
   .compact-mode span,
   .compact-mode button,
   .compact-mode input {
     font-size: 0.75rem !important;
   }
+
   .compact-mode .gap-3 {
     gap: 0.5rem !important;
   }
+
   .compact-mode .gap-4 {
     gap: 0.75rem !important;
   }
+
   .compact-mode .mt-4 {
     margin-top: 0.75rem !important;
   }
+
   .compact-mode .mt-5 {
     margin-top: 1rem !important;
   }

@@ -1,0 +1,47 @@
+{
+  "project_info": {
+    "project_number": "474626172728",
+    "project_id": "life-hub-79641",
+    "storage_bucket": "life-hub-79641.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:474626172728:android:92c198dbc6e4388b4e83cd",
+        "android_client_info": {
+          "package_name": "com.lifehub.app"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "474626172728-cpheqjkfhu27n1mss3rvsrah89k8lj6h.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.lifehub.app",
+            "certificate_hash": "908c1d6cd8231bcfe0e60eeb088efd2614afa59a"
+          }
+        },
+        {
+          "client_id": "474626172728-gidq5rch7k3v7gpr1ph2a04qofmmtrg7.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyB-Lrnx9ZEtxRfJxiGs7xAmu4Pw-VYph8M"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "474626172728-gidq5rch7k3v7gpr1ph2a04qofmmtrg7.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

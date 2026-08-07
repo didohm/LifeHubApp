@@ -9,7 +9,7 @@ import { calculateAge, toDateInputValue } from "@/lib/utils";
 
 export const Route = createFileRoute("/onboarding")({
   head: () => ({
-    meta: [{ title: "Welcome — Balance" }],
+    meta: [{ title: "Welcome — LifeHub" }],
   }),
   component: OnboardingPage,
 });
@@ -17,7 +17,7 @@ export const Route = createFileRoute("/onboarding")({
 const MIN_DATE = "1900-01-01";
 
 function OnboardingPage() {
-  const { user, loading: authLoading, updateUserField } = useAuth();
+  const { user, loading: authLoading, isNewUser, updateUserField } = useAuth();
   const navigate = useNavigate();
 
   const [dob, setDob] = useState("");
@@ -33,8 +33,12 @@ function OnboardingPage() {
     } else if (user.date_of_birth) {
       // Already onboarded — skip this screen
       navigate({ to: "/" });
+    } else if (!isNewUser) {
+      // The Birthday (Date of Birth) screen is only for brand-new accounts.
+      // Existing users who somehow land here are sent home — never prompted.
+      navigate({ to: "/" });
     }
-  }, [authLoading, user, navigate]);
+  }, [authLoading, user, isNewUser, navigate]);
 
   const isFuture = dob !== "" && dob > todayStr;
   const isTooOld = dob !== "" && dob < MIN_DATE;
@@ -49,7 +53,7 @@ function OnboardingPage() {
     try {
       await updateUserProfile(user.id, { date_of_birth: dob });
       updateUserField("date_of_birth", dob);
-      toast.success("Welcome to Balance! 🎉");
+      toast.success("Welcome to LifeHub! 🎉");
       navigate({ to: "/" });
     } catch {
       setError("Could not save your date of birth. Please try again.");
@@ -58,15 +62,9 @@ function OnboardingPage() {
     }
   };
 
-  if (authLoading) {
-    return (
-      <Screen>
-        <div className="flex min-h-[70vh] items-center justify-center">
-          <Loader2 className="size-6 animate-spin text-[#7C5CFC]" />
-        </div>
-      </Screen>
-    );
-  }
+  // While auth state is unknown render nothing (the root gate owns the splash
+  // — no loading screens after auth is resolved).
+  if (authLoading) return null;
 
   return (
     <Screen>
@@ -80,7 +78,7 @@ function OnboardingPage() {
             />
           </div>
           <h1 className="text-center text-xl font-black text-[#12131A] tracking-tight">
-            Welcome to Balance
+            Welcome to LifeHub
           </h1>
           <p className="mt-1 text-center text-xs font-medium text-[#6B7280] leading-relaxed">
             One last step — tell us your date of birth to complete your profile.

@@ -2,6 +2,7 @@ import * as React from "react";
 import { Drawer as DrawerPrimitive } from "vaul";
 
 import { cn } from "@/lib/utils";
+import { registerOverlay } from "@/lib/overlay-registry";
 
 const Drawer = ({
   shouldScaleBackground = true,
@@ -20,13 +21,16 @@ const DrawerClose = DrawerPrimitive.Close;
 const DrawerOverlay = React.forwardRef<
   React.ElementRef<typeof DrawerPrimitive.Overlay>,
   React.ComponentPropsWithoutRef<typeof DrawerPrimitive.Overlay>
->(({ className, ...props }, ref) => (
-  <DrawerPrimitive.Overlay
-    ref={ref}
-    className={cn("fixed inset-0 z-50 bg-black/80", className)}
-    {...props}
-  />
-));
+>(({ className, ...props }, ref) => {
+  React.useEffect(() => registerOverlay(), []);
+  return (
+    <DrawerPrimitive.Overlay
+      ref={ref}
+      className={cn("fixed inset-0 h-viewport z-[80] bg-black/40 backdrop-blur-xl", className)}
+      {...props}
+    />
+  );
+});
 DrawerOverlay.displayName = DrawerPrimitive.Overlay.displayName;
 
 const DrawerContent = React.forwardRef<
@@ -38,7 +42,7 @@ const DrawerContent = React.forwardRef<
     <DrawerPrimitive.Content
       ref={ref}
       className={cn(
-        "fixed inset-x-0 bottom-0 z-50 mt-24 flex h-auto flex-col rounded-t-[10px] border bg-background",
+        "fixed inset-x-0 bottom-0 z-[90] mt-24 flex max-h-[85vh] max-h-[85dvh] flex-col overflow-y-auto rounded-t-[10px] border bg-background",
         className,
       )}
       {...props}
@@ -48,7 +52,7 @@ const DrawerContent = React.forwardRef<
     </DrawerPrimitive.Content>
   </DrawerPortal>
 ));
-DrawerContent.displayName = "DrawerContent";
+DrawerContent.displayName = DrawerPrimitive.Content.displayName;
 
 const DrawerHeader = ({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) => (
   <div className={cn("grid gap-1.5 p-4 text-center sm:text-left", className)} {...props} />

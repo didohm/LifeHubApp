@@ -2,7 +2,6 @@ import { useState, useEffect, useRef } from "react";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import {
   LogOut,
-  Download,
   Trash2,
   Camera,
   X,
@@ -11,38 +10,38 @@ import {
   User,
   Target,
   Bell,
-  HelpCircle,
   ChevronRight,
   ShieldCheck,
-  Moon,
   Dumbbell,
   CheckCircle2,
   Droplets,
   Footprints,
   Calendar,
   Award,
+  Volume2,
+  VolumeX,
+  BellRing,
+  CalendarDays,
+  Pencil,
+  Headset,
+  Instagram,
+  Linkedin,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Screen, ScreenHeader } from "@/components/lifehub/Screen";
 import { UserAvatar } from "@/components/lifehub/UserAvatar";
+import { Modal } from "@/components/lifehub/Modal";
 import { useAuth } from "@/hooks/use-auth";
 import { calculateAge, toDateInputValue } from "@/lib/utils";
-import {
-  updateUserProfile,
-  deleteUserAccount,
-  getAppointments,
-  getMedications,
-  getBills,
-  getDocuments,
-  getTodos,
-  getActivityLogs,
-  getProfileStats,
-  ProfileStats,
-} from "@/lib/api";
+import { sounds } from "@/lib/sound";
+import { Notifications, readReminderSettings } from "@/lib/notifications-integration";
+import { PermissionManager } from "@/lib/permissions";
+import { Capacitor } from "@capacitor/core";
+import { updateUserProfile, deleteUserAccount, getProfileStats, ProfileStats } from "@/lib/api";
 
 export const Route = createFileRoute("/profile")({
   head: () => ({
-    meta: [{ title: "Profile & Settings — Balance" }],
+    meta: [{ title: "Profile & Settings — LifeHub" }],
   }),
   component: ProfilePage,
 });
@@ -54,15 +53,19 @@ function ProfilePage() {
   const [editModalOpen, setEditModalOpen] = useState(false);
   const [settingsModalOpen, setSettingsModalOpen] = useState(false);
   const [deleteModalOpen, setDeleteModalOpen] = useState(false);
+  const [helpModalOpen, setHelpModalOpen] = useState(false);
 
   const [fullName, setFullName] = useState("");
   const [dob, setDob] = useState("");
-  const [avatarPreview, setAvatarPreview] = useState<string>("");
-  const [timezone, setTimezone] = useState("UTC");
-
+  // Initialize from the already-published user profile so the real photo is
+  // visible on the very first frame — no placeholder, no flicker after login.
+  const [avatarPreview, setAvatarPreview] = useState<string>(() => user?.avatar_url || "");
   const [submitting, setSubmitting] = useState(false);
-  const [exporting, setExporting] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [soundsEnabled, setSoundsEnabled] = useState(sounds.isEnabled());
+  const [notificationsEnabled, setNotificationsEnabled] = useState(true);
+  // Real OS reminder settings (persisted locally, re-scheduled on app start)
+  const [reminderSettings, setReminderSettings] = useState(readReminderSettings);
 
   // Real Database Statistics
   const [realStats, setRealStats] = useState<ProfileStats | null>(null);
@@ -75,7 +78,6 @@ function ProfilePage() {
       setFullName(user.full_name || "");
       setDob(user.date_of_birth || "");
       setAvatarPreview(user.avatar_url || "");
-      setTimezone(user.timezone || "UTC");
 
       // Load real statistics computed directly from Firestore
       setStatsLoading(true);
@@ -124,16 +126,45 @@ function ProfilePage() {
       await updateUserProfile(user.id, {
         full_name: fullName,
         avatar_url: avatarPreview,
-        timezone,
-        date_of_birth: dob || null,
       });
-      updateUserField("date_of_birth", dob || null);
+      // Publish instantly so the avatar/name update everywhere right away
+      updateUserField("full_name", fullName);
+      updateUserField("avatar_url", avatarPreview || null);
       setEditModalOpen(false);
       toast.success("Profile updated successfully!");
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to update profile.");
     } finally {
       setSubmitting(false);
+    }
+  };
+
+  /** Toggles the real daily check-in OS notification (recurring every day). */
+  const handleToggleDailyReminder = async () => {
+    const next = !reminderSettings.daily.enabled;
+    try {
+      if (next) {
+        const granted = await PermissionManager.ensurePermission("notification");
+        if (!granted) {
+          toast.error(
+            "Notifications are disabled. Enable them in Android Settings to receive reminders.",
+          );
+          return;
+        }
+        const { hour, minute } = reminderSettings.daily;
+        await Notifications.scheduleDailyReminder(hour, minute);
+        toast.success(
+          `Daily reminder ON — every day at ${hour.toString().padStart(2, "0")}:${minute
+            .toString()
+            .padStart(2, "0")}`,
+        );
+      } else {
+        await Notifications.cancelDailyReminder();
+        toast.success("Daily reminder turned off");
+      }
+      setReminderSettings(readReminderSettings());
+    } catch {
+      toast.error("Could not update reminder");
     }
   };
 
@@ -146,51 +177,6 @@ function ProfilePage() {
       toast.success("Preference updated");
     } catch {
       toast.error("Could not update preference");
-    }
-  };
-
-  const handleExportData = async () => {
-    if (!user) return;
-    setExporting(true);
-    try {
-      const [apps, meds, bills, docs, todos, logs] = await Promise.all([
-        getAppointments(user.id),
-        getMedications(user.id),
-        getBills(user.id),
-        getDocuments(user.id),
-        getTodos(user.id),
-        getActivityLogs(user.id),
-      ]);
-
-      const exportObject = {
-        user_profile: user,
-        appointments: apps,
-        medications: meds,
-        bills: bills,
-        documents: docs,
-        todos: todos,
-        activity_logs: logs,
-        exported_at: new Date().toISOString(),
-        version: "Balance 2.0",
-      };
-
-      const dataStr =
-        "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(exportObject, null, 2));
-      const downloadAnchor = document.createElement("a");
-      downloadAnchor.setAttribute("href", dataStr);
-      downloadAnchor.setAttribute(
-        "download",
-        `balance_export_${(user.full_name || "user").replace(/\s+/g, "_")}.json`,
-      );
-      document.body.appendChild(downloadAnchor);
-      downloadAnchor.click();
-      downloadAnchor.remove();
-
-      toast.success("Account data exported!");
-    } catch {
-      toast.error("Failed to export data.");
-    } finally {
-      setExporting(false);
     }
   };
 
@@ -383,21 +369,16 @@ function ProfilePage() {
         </button>
 
         <button
-          onClick={handleExportData}
-          disabled={exporting}
+          onClick={() => setHelpModalOpen(true)}
           className="tap card-soft w-full bg-white p-4 flex items-center justify-between border border-black/5 shadow-xs text-[#12131A] hover:shadow-md transition-all"
         >
           <div className="flex items-center gap-3">
             <div className="flex size-9 items-center justify-center rounded-full bg-[#F0F0F5] text-[#12131A]">
-              <Download className="size-4.5" />
+              <Headset className="size-4.5" />
             </div>
-            <span className="text-sm font-extrabold">Help & Support / Export</span>
+            <span className="text-sm font-extrabold">Support / Help</span>
           </div>
-          {exporting ? (
-            <Loader2 className="size-4 animate-spin" />
-          ) : (
-            <ChevronRight className="size-4 opacity-50" />
-          )}
+          <ChevronRight className="size-4 opacity-50" />
         </button>
 
         <button
@@ -414,133 +395,362 @@ function ProfilePage() {
         </button>
       </section>
 
-      {/* Settings Modal (Matching Screen 13) */}
-      {settingsModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-xs">
-          <div className="w-full max-w-md rounded-3xl bg-white p-5 shadow-2xl">
-            <div className="flex items-center justify-between border-b border-black/5 pb-3">
-              <h3 className="text-base font-extrabold text-[#12131A]">Settings</h3>
-              <button
-                onClick={() => setSettingsModalOpen(false)}
-                className="size-7 flex items-center justify-center rounded-full bg-black/5"
-              >
-                <X className="size-4" />
-              </button>
-            </div>
+      {/* Settings Modal — matches Document dialog layout & tokens */}
+      <Modal
+        open={settingsModalOpen}
+        onClose={() => setSettingsModalOpen(false)}
+        className="bg-card"
+        backdropClassName="px-3"
+      >
+        {/* Header */}
+        <div className="flex items-center justify-between border-b border-border/40 pb-4">
+          <h2 className="text-lg font-extrabold tracking-tight text-foreground">Settings</h2>
+          <button
+            onClick={() => setSettingsModalOpen(false)}
+            className="size-8 flex shrink-0 items-center justify-center rounded-full bg-muted text-muted-foreground transition-colors hover:bg-muted/70"
+          >
+            <X className="size-4" />
+          </button>
+        </div>
 
-            <div className="mt-4 space-y-4 text-xs">
-              <div>
-                <h4 className="font-extrabold text-[#6B7280] uppercase tracking-wider mb-2">
-                  General
-                </h4>
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between rounded-xl bg-[#F9F9FD] p-3">
-                    <span className="font-bold text-[#12131A]">Units</span>
-                    <span className="font-extrabold text-[#7C5CFC]">Metric (kg, cm) &gt;</span>
-                  </div>
-                  <div className="flex items-center justify-between rounded-xl bg-[#F9F9FD] p-3">
-                    <span className="font-bold text-[#12131A]">Reminders</span>
-                    <span className="font-extrabold text-emerald-600">On &gt;</span>
-                  </div>
-                </div>
-              </div>
-
-              <div>
-                <h4 className="font-extrabold text-[#6B7280] uppercase tracking-wider mb-2">
-                  About
-                </h4>
-                <div className="flex items-center justify-between rounded-xl bg-[#F9F9FD] p-3">
-                  <span className="font-bold text-[#12131A]">Version</span>
-                  <span className="font-semibold text-[#6B7280]">1.0.0</span>
-                </div>
+        <div className="mt-4 space-y-4">
+          {/* General */}
+          <div>
+            <h4 className="mb-2.5 text-xs font-bold uppercase tracking-wider text-muted-foreground">
+              General
+            </h4>
+            <div className="space-y-2">
+              <div className="flex items-center justify-between gap-3 rounded-xl bg-muted/30 p-3.5">
+                <span className="text-sm font-bold text-foreground">Units</span>
+                <span className="flex shrink-0 items-center gap-1 text-xs font-extrabold text-primary">
+                  Metric (kg, cm) <ChevronRight className="size-3" />
+                </span>
               </div>
             </div>
           </div>
-        </div>
-      )}
 
-      {/* Edit Profile Modal */}
-      {editModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-xs">
-          <div className="w-full max-w-md rounded-3xl bg-white p-5 shadow-2xl">
-            <div className="flex items-center justify-between border-b border-black/5 pb-3">
-              <h3 className="text-base font-extrabold text-[#12131A]">Edit Personal Info</h3>
+          {/* Preferences */}
+          <div>
+            <h4 className="mb-2.5 text-xs font-bold uppercase tracking-wider text-muted-foreground">
+              Preferences
+            </h4>
+            <div className="space-y-2">
               <button
-                onClick={() => setEditModalOpen(false)}
-                className="size-7 flex items-center justify-center rounded-full bg-black/5"
+                onClick={() => {
+                  const newVal = !soundsEnabled;
+                  setSoundsEnabled(newVal);
+                  sounds.setEnabled(newVal);
+                  if (newVal) sounds.playClick();
+                }}
+                className="tap flex w-full items-center justify-between gap-3 rounded-xl bg-muted/30 p-3.5 transition-colors hover:bg-muted"
               >
-                <X className="size-4" />
+                <span className="text-sm font-bold text-foreground">Sound Effects</span>
+                <div className="flex shrink-0 items-center gap-2">
+                  <span
+                    className={`text-xs font-extrabold ${soundsEnabled ? "text-emerald-600" : "text-muted-foreground"}`}
+                  >
+                    {soundsEnabled ? "On" : "Off"}
+                  </span>
+                  {soundsEnabled ? (
+                    <Volume2 className="size-4 text-emerald-600" />
+                  ) : (
+                    <VolumeX className="size-4 text-muted-foreground" />
+                  )}
+                </div>
+              </button>
+
+              {Capacitor.isNativePlatform() && (
+                <>
+                  {/* Real daily check-in reminder (OS-level, recurring) */}
+                  <div className="flex items-center justify-between gap-3 rounded-xl bg-muted/30 p-3.5">
+                    <div className="flex min-w-0 items-center gap-3">
+                      <div className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary">
+                        <BellRing className="size-4" />
+                      </div>
+                      <div className="min-w-0">
+                        <span className="block truncate text-sm font-bold text-foreground">
+                          Daily Reminder
+                        </span>
+                        <span className="block truncate text-xs font-medium text-muted-foreground">
+                          {reminderSettings.daily.enabled
+                            ? `Every day at ${reminderSettings.daily.hour
+                                .toString()
+                                .padStart(2, "0")}:${reminderSettings.daily.minute
+                                .toString()
+                                .padStart(2, "0")}`
+                            : "Off — one check-in per day"}
+                        </span>
+                      </div>
+                    </div>
+                    <div className="flex shrink-0 items-center gap-2">
+                      <input
+                        type="time"
+                        value={`${reminderSettings.daily.hour
+                          .toString()
+                          .padStart(2, "0")}:${reminderSettings.daily.minute
+                          .toString()
+                          .padStart(2, "0")}`}
+                        onChange={(e) => {
+                          const [h, m] = e.target.value.split(":").map(Number);
+                          if (!Number.isNaN(h) && !Number.isNaN(m)) {
+                            setReminderSettings((prev) => {
+                              const next = {
+                                ...prev,
+                                daily: { ...prev.daily, hour: h, minute: m },
+                              };
+                              // Re-schedule immediately when already enabled
+                              if (next.daily.enabled) {
+                                void Notifications.scheduleDailyReminder(h, m);
+                              }
+                              return next;
+                            });
+                          }
+                        }}
+                        className="rounded-lg border border-input bg-card px-2.5 py-2 text-xs font-bold text-foreground outline-none"
+                      />
+                      <button
+                        role="switch"
+                        aria-checked={reminderSettings.daily.enabled}
+                        aria-label="Toggle daily reminder"
+                        onClick={handleToggleDailyReminder}
+                        className={`relative h-6 w-11 shrink-0 rounded-full transition-colors ${
+                          reminderSettings.daily.enabled
+                            ? "bg-emerald-500"
+                            : "bg-muted-foreground/30"
+                        }`}
+                      >
+                        <span
+                          className={`absolute top-0.5 size-5 rounded-full bg-card shadow transition-all ${
+                            reminderSettings.daily.enabled ? "left-[22px]" : "left-0.5"
+                          }`}
+                        />
+                      </button>
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+
+          {/* About */}
+          <div>
+            <h4 className="mb-2.5 text-xs font-bold uppercase tracking-wider text-muted-foreground">
+              About
+            </h4>
+            <div className="flex items-center justify-between gap-3 rounded-xl bg-muted/30 p-3.5">
+              <span className="text-sm font-bold text-foreground">Version</span>
+              <span className="shrink-0 text-xs font-semibold text-muted-foreground">1.0.0</span>
+            </div>
+          </div>
+        </div>
+      </Modal>
+
+      {/* Help & Support dialog — developer info + social links */}
+      <Modal open={helpModalOpen} onClose={() => setHelpModalOpen(false)} className="bg-card">
+        {/* Header */}
+        <div className="flex items-center justify-between border-b border-border/40 pb-4">
+          <h2 className="text-lg font-extrabold tracking-tight text-foreground">Help & Support</h2>
+          <button
+            onClick={() => setHelpModalOpen(false)}
+            className="size-8 flex shrink-0 items-center justify-center rounded-full bg-muted text-muted-foreground transition-colors hover:bg-muted/70"
+            aria-label="Close"
+          >
+            <X className="size-4" />
+          </button>
+        </div>
+
+        <div className="mt-5 space-y-4">
+          {/* Developer card */}
+          <div className="flex flex-col items-center gap-2 rounded-2xl bg-muted/30 px-5 py-6 text-center">
+            <div className="flex size-12 items-center justify-center rounded-full bg-primary/10 text-primary">
+              <ShieldCheck className="size-5" />
+            </div>
+            <p className="mt-1 text-[11px] font-bold uppercase tracking-widest text-muted-foreground">
+              Developed by
+            </p>
+            <p className="text-lg font-extrabold tracking-tight text-foreground">
+              Boumedien Himich
+            </p>
+          </div>
+
+          {/* Social links */}
+          <div className="space-y-2.5">
+            <a
+              href="https://www.instagram.com/didohm_/"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="tap flex w-full items-center justify-between gap-3 rounded-xl bg-muted/30 p-3.5 transition-colors hover:bg-muted"
+            >
+              <div className="flex items-center gap-3">
+                <div className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-gradient-to-tr from-amber-500 via-rose-500 to-purple-600 text-white">
+                  <Instagram className="size-4.5" />
+                </div>
+                <span className="text-sm font-bold text-foreground">Instagram</span>
+              </div>
+              <ChevronRight className="size-4 text-muted-foreground" />
+            </a>
+
+            <a
+              href="https://www.linkedin.com/in/boumedienhimich/"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="tap flex w-full items-center justify-between gap-3 rounded-xl bg-muted/30 p-3.5 transition-colors hover:bg-muted"
+            >
+              <div className="flex items-center gap-3">
+                <div className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-[#0A66C2] text-white">
+                  <Linkedin className="size-4.5" />
+                </div>
+                <span className="text-sm font-bold text-foreground">LinkedIn</span>
+              </div>
+              <ChevronRight className="size-4 text-muted-foreground" />
+            </a>
+          </div>
+
+          <p className="text-center text-[11px] font-semibold text-muted-foreground">
+            Questions or feedback? Reach out on any platform above.
+          </p>
+        </div>
+      </Modal>
+
+      {/* Edit Profile Modal — matches Document dialog layout & tokens */}
+      <Modal open={editModalOpen} onClose={() => setEditModalOpen(false)} className="bg-card">
+        <form onSubmit={handleUpdateProfile} className="mt-4 space-y-3">
+          {/* Header */}
+          <div className="flex items-center justify-between border-b border-border/40 pb-3">
+            <h2 className="text-lg font-extrabold text-foreground">Edit Personal Info</h2>
+            <button
+              onClick={() => setEditModalOpen(false)}
+              className="size-8 flex items-center justify-center rounded-full bg-muted text-muted-foreground"
+            >
+              <X className="size-4" />
+            </button>
+          </div>
+
+          {/* Avatar section — centered */}
+          <div className="relative flex flex-col items-center overflow-hidden rounded-xl border border-border/40 bg-muted/30 px-5 py-6">
+            {/* Soft ambient glow behind avatar */}
+            <div
+              aria-hidden
+              className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_50%_60%_at_50%_30%,oklch(0.75_0.09_292/0.1),transparent_70%)]"
+            />
+            <div className="relative">
+              {/* Outer ring */}
+              <div className="rounded-full bg-card p-1.5 shadow-md">
+                <UserAvatar
+                  name={user?.full_name}
+                  src={avatarPreview}
+                  alt={user?.full_name || "Profile avatar"}
+                  className="size-24 rounded-full border-2 border-primary/10"
+                  initialsClassName="text-2xl"
+                />
+              </div>
+              {/* Camera button */}
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                title="Change profile photo"
+                className="tap absolute -bottom-0.5 -right-0.5 flex size-9 items-center justify-center rounded-full bg-ink text-card shadow-md ring-4 ring-card transition-transform hover:scale-105 active:scale-95"
+              >
+                <Camera className="size-4" />
               </button>
             </div>
 
-            <form onSubmit={handleUpdateProfile} className="mt-4 space-y-3">
-              <div>
-                <label className="text-xs font-bold text-[#12131A]">Full Name</label>
-                <input
-                  type="text"
-                  required
-                  value={fullName}
-                  onChange={(e) => setFullName(e.target.value)}
-                  className="mt-1 w-full rounded-xl border border-black/10 bg-[#F9F9FD] p-2.5 text-xs outline-none focus:border-[#7C5CFC]"
-                />
-              </div>
+            {/* Action buttons */}
+            <div className="mt-4 flex items-center gap-2.5">
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                className="tap flex items-center gap-1.5 rounded-full bg-card px-4 py-2 text-xs font-bold text-primary shadow-sm ring-1 ring-primary/20 transition-all hover:bg-primary/5 hover:ring-primary/30 active:scale-95"
+              >
+                <Pencil className="size-3" /> Change photo
+              </button>
+              {avatarPreview ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAvatarPreview("");
+                    toast.success("Photo removed — click Save to apply.");
+                  }}
+                  className="tap flex items-center gap-1.5 rounded-full bg-card px-4 py-2 text-xs font-bold text-rose-500 shadow-sm ring-1 ring-rose-200 transition-all hover:bg-rose-50 hover:ring-rose-300 active:scale-95"
+                >
+                  <Trash2 className="size-3" /> Remove
+                </button>
+              ) : null}
+            </div>
 
-              <div>
-                <label className="text-xs font-bold text-[#12131A]">Date of Birth</label>
+            <input
+              type="file"
+              ref={fileInputRef}
+              accept="image/*"
+              onChange={handleImageFileChange}
+              className="hidden"
+            />
+          </div>
+
+          {/* Form fields */}
+          <div>
+            <label className="text-xs font-bold text-foreground">Full Name</label>
+            <div className="relative mt-1">
+              <User className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground/60" />
+              <input
+                type="text"
+                required
+                value={fullName}
+                onChange={(e) => setFullName(e.target.value)}
+                placeholder="Enter your full name"
+                className="w-full rounded-xl border border-input bg-muted/30 py-2.5 pl-9 pr-4 text-sm font-semibold text-foreground outline-none transition-all placeholder:font-medium placeholder:text-muted-foreground/60 focus:border-primary focus:bg-card focus:ring-2 focus:ring-primary/15"
+              />
+            </div>
+          </div>
+
+          {/* Date of Birth — read-only with inline age badge */}
+          {dob ? (
+            <div>
+              <label className="text-xs font-bold text-foreground">Date of Birth</label>
+              <div className="relative mt-1">
+                <CalendarDays className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground/60" />
                 <input
                   type="date"
-                  required
-                  max={toDateInputValue()}
+                  readOnly
                   value={dob}
-                  onChange={(e) => setDob(e.target.value)}
-                  className="mt-1 w-full rounded-xl border border-black/10 bg-[#F9F9FD] p-2.5 text-xs outline-none focus:border-[#7C5CFC]"
+                  className="w-full cursor-not-allowed rounded-xl border border-input bg-muted/50 py-2.5 pl-9 pr-4 text-sm font-semibold text-foreground/60 outline-none"
                 />
-                <p className="mt-1.5 flex items-center gap-1 text-[11px] font-bold text-[#6B7280]">
-                  Age:{" "}
-                  <span className="rounded-full bg-[#7C5CFC]/10 px-2 py-0.5 text-[10px] font-extrabold text-[#7C5CFC]">
-                    {dob ? `${calculateAge(dob)} years` : "—"}
-                  </span>
-                </p>
+                {/* Lock indicator */}
+                <div className="pointer-events-none absolute right-3 top-1/2 flex -translate-y-1/2 items-center gap-1 text-[10px] font-bold text-muted-foreground">
+                  <ShieldCheck className="size-3" /> Locked
+                </div>
               </div>
+              <div className="mt-1.5 flex items-center gap-2">
+                <span className="inline-flex items-center gap-1 rounded-full bg-primary/10 px-2.5 py-1 text-[11px] font-extrabold text-primary">
+                  {calculateAge(dob)} years old
+                </span>
+                <span className="text-[11px] font-medium text-muted-foreground">
+                  Set during onboarding
+                </span>
+              </div>
+            </div>
+          ) : null}
 
-              <div>
-                <label className="text-xs font-bold text-[#12131A]">Profile Photo</label>
-                <input
-                  type="file"
-                  ref={fileInputRef}
-                  accept="image/*"
-                  onChange={handleImageFileChange}
-                  className="hidden"
-                />
-                <button
-                  type="button"
-                  onClick={() => fileInputRef.current?.click()}
-                  className="mt-1 flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-black/20 p-3 text-xs font-bold text-[#12131A]"
-                >
-                  <Camera className="size-4 text-[#7C5CFC]" /> Upload New Avatar
-                </button>
-              </div>
-
-              <div className="flex gap-2 pt-3">
-                <button
-                  type="button"
-                  onClick={() => setEditModalOpen(false)}
-                  className="w-1/2 rounded-xl border border-black/10 py-2.5 text-xs font-bold"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={submitting}
-                  className="w-1/2 flex items-center justify-center gap-1 rounded-xl bg-[#12131A] py-2.5 text-xs font-bold text-white"
-                >
-                  {submitting ? <Loader2 className="size-3.5 animate-spin" /> : null} Save Changes
-                </button>
-              </div>
-            </form>
+          {/* Footer — clear primary/secondary hierarchy */}
+          <div className="flex gap-2 pt-3">
+            <button
+              type="button"
+              onClick={() => setEditModalOpen(false)}
+              className="w-1/2 rounded-xl border border-border py-2.5 text-xs font-bold text-foreground"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={submitting}
+              className="w-1/2 flex items-center justify-center gap-1.5 rounded-xl bg-ink py-2.5 text-xs font-bold text-card shadow-md disabled:opacity-50"
+            >
+              {submitting ? <Loader2 className="size-4 animate-spin" /> : null}
+              {submitting ? "Saving..." : "Save Changes"}
+            </button>
           </div>
-        </div>
-      )}
+        </form>
+      </Modal>
     </Screen>
   );
 }

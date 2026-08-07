@@ -1,20 +1,23 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import {
   Plus,
   ListChecks,
-  CheckSquare,
-  Square,
+  Check,
   Trash2,
   Edit2,
   X,
   Loader2,
   Search,
+  CalendarDays,
 } from "lucide-react";
+import { differenceInCalendarDays, format } from "date-fns";
 import { toast } from "sonner";
 import { Screen } from "@/components/lifehub/Screen";
+import { Modal } from "@/components/lifehub/Modal";
 import { useAuth } from "@/hooks/use-auth";
 import { getTodos, createTodo, updateTodo, deleteTodo } from "@/lib/api";
+import { Notifications } from "@/lib/notifications-integration";
 import { Todo } from "@/lib/types";
 import { ListSkeleton } from "@/components/lifehub/SkeletonLoader";
 
@@ -24,6 +27,56 @@ export const Route = createFileRoute("/tasks")({
   }),
   component: TasksPage,
 });
+
+type TaskStatus = "completed" | "in_progress" | "overdue";
+
+/** Parse a YYYY-MM-DD (or ISO) date string as a LOCAL mid-day date — tz-safe. */
+function parseLocalDate(value: string): Date {
+  const [y, m, d] = value.slice(0, 10).split("-").map(Number);
+  return new Date(y || 1970, (m || 0) - 1, d || 1, 12);
+}
+
+function getTaskStatus(t: Todo): TaskStatus {
+  if (t.completed) return "completed";
+  if (t.due_date && differenceInCalendarDays(parseLocalDate(t.due_date), new Date()) < 0) {
+    return "overdue";
+  }
+  return "in_progress";
+}
+
+function formatDueDate(value: string): string {
+  const due = parseLocalDate(value);
+  const diff = differenceInCalendarDays(due, new Date());
+  if (diff === 0) return "Today";
+  if (diff === 1) return "Tomorrow";
+  return format(due, "EEE, MMM d");
+}
+
+const STATUS_META: Record<TaskStatus, { label: string; className: string }> = {
+  completed: {
+    label: "Completed",
+    className: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
+  },
+  in_progress: {
+    label: "In Progress",
+    className: "bg-sky-500/10 text-sky-600 dark:text-sky-400",
+  },
+  overdue: {
+    label: "Overdue",
+    className: "bg-rose-500/10 text-rose-600 dark:text-rose-400",
+  },
+};
+
+const CATEGORY_META: Record<string, string> = {
+  Health: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
+  Finance: "bg-amber-500/10 text-amber-600 dark:text-amber-400",
+  Personal: "bg-violet-500/10 text-violet-600 dark:text-violet-400",
+  Work: "bg-sky-500/10 text-sky-600 dark:text-sky-400",
+};
+
+function categoryBadgeClass(category: string): string {
+  return CATEGORY_META[category] || "bg-muted text-muted-foreground";
+}
 
 function TasksPage() {
   const { user, loading: authLoading } = useAuth();
@@ -42,7 +95,6 @@ function TasksPage() {
   const [category, setCategory] = useState("Health");
   const [priority, setPriority] = useState<"high" | "medium" | "light">("medium");
   const [dueDate, setDueDate] = useState(new Date().toISOString().split("T")[0]);
-  const [progress, setProgress] = useState(0);
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
@@ -75,7 +127,6 @@ function TasksPage() {
     setCategory("Health");
     setPriority("medium");
     setDueDate(new Date().toISOString().split("T")[0]);
-    setProgress(0);
     setModalOpen(true);
   };
 
@@ -85,7 +136,6 @@ function TasksPage() {
     setCategory(task.category);
     setPriority(task.priority);
     setDueDate(task.due_date || new Date().toISOString().split("T")[0]);
-    setProgress(task.progress || 0);
     setModalOpen(true);
   };
 
@@ -96,15 +146,16 @@ function TasksPage() {
 
     try {
       if (editingTask) {
-        // Edit existing task
-        const isComp = progress >= 100;
+        // Edit existing task — keep its stored progress; completion is only
+        // toggled from the card checkbox, not from this form.
+        const keptProgress = editingTask.progress || 0;
         await updateTodo(editingTask.id, user.id, {
           title,
           category,
           priority,
           due_date: dueDate,
-          progress,
-          completed: isComp,
+          progress: keptProgress,
+          completed: editingTask.completed,
         });
         setTodos((prev) =>
           prev.map((t) =>
@@ -115,12 +166,20 @@ function TasksPage() {
                   category,
                   priority,
                   due_date: dueDate,
-                  progress,
-                  completed: isComp,
+                  progress: keptProgress,
+                  completed: editingTask.completed,
                 }
               : t,
           ),
         );
+        // Keep the real OS notification in sync with the edited task
+        Notifications.cancelTodo(editingTask.id);
+        Notifications.scheduleTodo({
+          ...editingTask,
+          title,
+          due_date: dueDate,
+          completed: editingTask.completed,
+        });
         toast.success("Task updated!");
       } else {
         // Create new task
@@ -129,10 +188,11 @@ function TasksPage() {
           category,
           priority,
           due_date: dueDate,
-          completed: progress >= 100,
-          progress,
+          completed: false,
+          progress: 0,
         });
         setTodos((prev) => [task, ...prev]);
+        Notifications.scheduleTodo(task);
         toast.success("Task created!");
       }
       setModalOpen(false);
@@ -153,33 +213,35 @@ function TasksPage() {
           t.id === id ? { ...t, completed: newStatus, progress: newStatus ? 100 : 0 } : t,
         ),
       );
+      // Real OS notification follows the task state
+      if (newStatus) Notifications.cancelTodo(id);
+      else {
+        const todo = todos.find((t) => t.id === id);
+        if (todo) Notifications.scheduleTodo({ ...todo, completed: false });
+      }
       toast.success(newStatus ? "Task completed! 🎉" : "Task marked active");
     } catch (err) {
       toast.error("Could not update task status");
     }
   };
 
-  const handleProgressChange = async (id: string, newProgress: number) => {
-    if (!user) return;
-    const isComp = newProgress >= 100;
-    try {
-      await updateTodo(id, user.id, { progress: newProgress, completed: isComp });
-      setTodos((prev) =>
-        prev.map((t) => (t.id === id ? { ...t, progress: newProgress, completed: isComp } : t)),
-      );
-    } catch (e) {
-      console.error(e);
-    }
-  };
-
+  // Guards against repeated taps on the same Delete button: repeat taps on
+  // an item that is already being deleted are ignored, and the success toast
+  // uses a per-item id so only ONE "deleted" notification is ever shown.
+  const deletingIds = useRef<Set<string>>(new Set());
   const handleDelete = async (id: string) => {
     if (!user) return;
+    if (deletingIds.current.has(id)) return; // already deleting this item
+    deletingIds.current.add(id);
     try {
       await deleteTodo(id, user.id);
       setTodos((prev) => prev.filter((t) => t.id !== id));
-      toast.success("Task deleted.");
+      Notifications.cancelTodo(id);
+      toast.success("Task deleted.", { id: `task-deleted-${id}` });
     } catch (err) {
-      toast.error("Failed to delete task.");
+      toast.error("Failed to delete task.", { id: `task-delete-error-${id}` });
+    } finally {
+      deletingIds.current.delete(id);
     }
   };
 
@@ -261,15 +323,19 @@ function TasksPage() {
             <p className="mt-2 text-sm font-bold text-foreground">No tasks found</p>
           </div>
         ) : (
-          filteredTasks.map((t) => (
-            <div
-              key={t.id}
-              className={`card-soft p-4 border transition-all shadow-sm hover:shadow-md ${
-                t.completed ? "bg-muted/40 border-border/30 opacity-75" : "bg-card border-border/40"
-              }`}
-            >
-              <div className="flex items-start justify-between">
-                <div className="flex items-start gap-3">
+          filteredTasks.map((t) => {
+            const status = getTaskStatus(t);
+            const statusMeta = STATUS_META[status];
+            const overdue = status === "overdue";
+            return (
+              <div
+                key={t.id}
+                className={`card-soft overflow-hidden border bg-card shadow-sm transition-all hover:shadow-md ${
+                  t.completed ? "border-border/40 opacity-75" : "border-border/40"
+                }`}
+              >
+                <div className="flex items-center gap-3 p-4">
+                  {/* Completion checkbox — Apple Reminders style */}
                   <button
                     onClick={() => handleToggleComplete(t.id, t.completed)}
                     aria-label={
@@ -277,169 +343,171 @@ function TasksPage() {
                         ? `Mark task ${t.title} as active`
                         : `Mark task ${t.title} as complete`
                     }
-                    className="mt-0.5 text-primary hover:scale-110 transition-transform"
+                    className={`mt-0.5 flex size-[22px] shrink-0 items-center justify-center rounded-full border-[1.5px] transition-all active:scale-90 ${
+                      t.completed
+                        ? "border-emerald-500 bg-emerald-500 text-white shadow-sm shadow-emerald-500/30"
+                        : "border-muted-foreground/25 bg-transparent text-transparent hover:border-emerald-500"
+                    }`}
                   >
-                    {t.completed ? (
-                      <CheckSquare className="size-5" />
-                    ) : (
-                      <Square className="size-5" />
-                    )}
+                    <Check className="size-3.5" strokeWidth={3.5} />
                   </button>
-                  <div>
-                    <span className="inline-block rounded-full bg-muted px-2 py-0.5 text-[10px] font-bold text-muted-foreground">
-                      {t.category}
-                    </span>
+
+                  {/* Title + meta */}
+                  <div className="min-w-0 flex-1">
                     <h3
-                      className={`mt-0.5 text-sm font-extrabold ${
-                        t.completed ? "line-through text-muted-foreground" : "text-foreground"
+                      className={`truncate text-[15px] font-bold leading-snug tracking-tight ${
+                        t.completed
+                          ? "text-muted-foreground line-through decoration-muted-foreground/50"
+                          : "text-foreground"
                       }`}
                     >
                       {t.title}
                     </h3>
-                    <p className="text-[11px] text-muted-foreground mt-0.5">
-                      Due: {t.due_date || "Today"}
-                    </p>
+                    <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1">
+                      {/* Category badge */}
+                      <span
+                        className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-bold ${categoryBadgeClass(
+                          t.category,
+                        )}`}
+                      >
+                        {t.category}
+                      </span>
+
+                      {/* Due date */}
+                      {t.due_date && (
+                        <span
+                          className={`inline-flex items-center gap-1 text-[11px] font-semibold ${
+                            overdue ? "text-rose-600 dark:text-rose-400" : "text-muted-foreground"
+                          }`}
+                        >
+                          <CalendarDays className="size-3" />
+                          {overdue
+                            ? `${formatDueDate(t.due_date)} • Overdue`
+                            : formatDueDate(t.due_date)}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Status badge + actions */}
+                  <div className="flex shrink-0 flex-col items-end gap-2.5 self-start">
+                    <span
+                      className={`inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[10px] font-bold ${statusMeta.className}`}
+                    >
+                      <span className="size-1.5 rounded-full bg-current" />
+                      {statusMeta.label}
+                    </span>
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        onClick={() => openEditModal(t)}
+                        aria-label={`Edit task ${t.title}`}
+                        title="Edit Task"
+                        className="flex size-8 items-center justify-center rounded-full bg-muted text-muted-foreground transition-colors hover:bg-accent hover:text-foreground active:scale-95"
+                      >
+                        <Edit2 className="size-4" />
+                      </button>
+                      <button
+                        onClick={() => handleDelete(t.id)}
+                        aria-label={`Delete task ${t.title}`}
+                        title="Delete Task"
+                        className="flex size-8 items-center justify-center rounded-full bg-muted text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive active:scale-95"
+                      >
+                        <Trash2 className="size-4" />
+                      </button>
+                    </div>
                   </div>
                 </div>
-
-                <div className="flex items-center gap-1">
-                  <button
-                    onClick={() => openEditModal(t)}
-                    aria-label={`Edit task ${t.title}`}
-                    title="Edit Task"
-                    className="size-8 flex items-center justify-center rounded-full text-muted-foreground hover:bg-accent hover:text-foreground"
-                  >
-                    <Edit2 className="size-4" />
-                  </button>
-                  <button
-                    onClick={() => handleDelete(t.id)}
-                    aria-label={`Delete task ${t.title}`}
-                    title="Delete Task"
-                    className="size-8 flex items-center justify-center rounded-full text-muted-foreground hover:text-destructive hover:bg-destructive/10"
-                  >
-                    <Trash2 className="size-4" />
-                  </button>
-                </div>
               </div>
-
-              {/* Interactive Progress Bar */}
-              <div className="mt-3 flex items-center gap-2 border-t border-border/20 pt-2">
-                <input
-                  type="range"
-                  min="0"
-                  max="100"
-                  value={t.progress}
-                  onChange={(e) => handleProgressChange(t.id, Number(e.target.value))}
-                  className="h-1.5 flex-1 accent-primary cursor-pointer"
-                />
-                <span className="text-[10px] font-bold text-muted-foreground">{t.progress}%</span>
-              </div>
-            </div>
-          ))
+            );
+          })
         )}
       </div>
 
       {/* Add / Edit Task Modal */}
-      {modalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm animate-in fade-in duration-200">
-          <div className="w-full max-w-md rounded-3xl bg-card p-5 shadow-2xl animate-in zoom-in-95 duration-200">
-            <div className="flex items-center justify-between border-b border-border/40 pb-3">
-              <h2 className="text-lg font-extrabold text-foreground">
-                {editingTask ? "Edit Task" : "Add New Task"}
-              </h2>
-              <button
-                onClick={() => setModalOpen(false)}
-                className="size-8 flex items-center justify-center rounded-full bg-muted text-muted-foreground"
-              >
-                <X className="size-4" />
-              </button>
-            </div>
-
-            <form onSubmit={handleSave} className="mt-4 space-y-3">
-              <div>
-                <label className="text-xs font-bold text-foreground">Task Title</label>
-                <input
-                  type="text"
-                  required
-                  placeholder="Refill prescription"
-                  value={title}
-                  onChange={(e) => setTitle(e.target.value)}
-                  className="mt-1 w-full rounded-xl border border-input bg-muted/30 p-2.5 text-sm outline-none"
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <label className="text-xs font-bold text-foreground">Category</label>
-                  <select
-                    value={category}
-                    onChange={(e) => setCategory(e.target.value)}
-                    className="mt-1 w-full rounded-xl border border-input bg-muted/30 p-2.5 text-sm outline-none"
-                  >
-                    <option value="Health">Health</option>
-                    <option value="Finance">Finance</option>
-                    <option value="Personal">Personal</option>
-                    <option value="Work">Work</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="text-xs font-bold text-foreground">Priority</label>
-                  <select
-                    value={priority}
-                    onChange={(e) => setPriority(e.target.value as any)}
-                    className="mt-1 w-full rounded-xl border border-input bg-muted/30 p-2.5 text-sm outline-none"
-                  >
-                    <option value="high">High</option>
-                    <option value="medium">Medium</option>
-                    <option value="light">Light</option>
-                  </select>
-                </div>
-              </div>
-
-              <div>
-                <label className="text-xs font-bold text-foreground">Due Date</label>
-                <input
-                  type="date"
-                  required
-                  value={dueDate}
-                  onChange={(e) => setDueDate(e.target.value)}
-                  className="mt-1 w-full rounded-xl border border-input bg-muted/30 p-2.5 text-sm outline-none"
-                />
-              </div>
-
-              <div>
-                <label className="text-xs font-bold text-foreground">Progress ({progress}%)</label>
-                <input
-                  type="range"
-                  min="0"
-                  max="100"
-                  value={progress}
-                  onChange={(e) => setProgress(Number(e.target.value))}
-                  className="w-full mt-1 accent-primary"
-                />
-              </div>
-
-              <div className="flex gap-2 pt-3">
-                <button
-                  type="button"
-                  onClick={() => setModalOpen(false)}
-                  className="w-1/2 rounded-xl border border-border py-2.5 text-xs font-bold text-foreground"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={submitting}
-                  className="w-1/2 flex items-center justify-center gap-1.5 rounded-xl bg-ink py-2.5 text-xs font-bold text-card shadow-md disabled:opacity-50"
-                >
-                  {submitting ? <Loader2 className="size-4 animate-spin" /> : null}
-                  {submitting ? "Saving..." : "Save Task"}
-                </button>
-              </div>
-            </form>
-          </div>
+      <Modal open={modalOpen} onClose={() => setModalOpen(false)} className="bg-card">
+        <div className="flex items-center justify-between border-b border-border/40 pb-3">
+          <h2 className="text-lg font-extrabold text-foreground">
+            {editingTask ? "Edit Task" : "Add New Task"}
+          </h2>
+          <button
+            onClick={() => setModalOpen(false)}
+            className="size-8 flex items-center justify-center rounded-full bg-muted text-muted-foreground"
+          >
+            <X className="size-4" />
+          </button>
         </div>
-      )}
+
+        <form onSubmit={handleSave} className="mt-4 space-y-3">
+          <div>
+            <label className="text-xs font-bold text-foreground">Task Title</label>
+            <input
+              type="text"
+              required
+              placeholder="Refill prescription"
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              className="mt-1 w-full rounded-xl border border-input bg-muted/30 p-2.5 text-sm outline-none"
+            />
+          </div>
+
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <label className="text-xs font-bold text-foreground">Category</label>
+              <select
+                value={category}
+                onChange={(e) => setCategory(e.target.value)}
+                className="mt-1 w-full rounded-xl border border-input bg-muted/30 p-2.5 text-sm outline-none"
+              >
+                <option value="Health">Health</option>
+                <option value="Finance">Finance</option>
+                <option value="Personal">Personal</option>
+                <option value="Work">Work</option>
+              </select>
+            </div>
+            <div>
+              <label className="text-xs font-bold text-foreground">Priority</label>
+              <select
+                value={priority}
+                onChange={(e) => setPriority(e.target.value as any)}
+                className="mt-1 w-full rounded-xl border border-input bg-muted/30 p-2.5 text-sm outline-none"
+              >
+                <option value="high">High</option>
+                <option value="medium">Medium</option>
+                <option value="light">Light</option>
+              </select>
+            </div>
+          </div>
+
+          <div>
+            <label className="text-xs font-bold text-foreground">Due Date</label>
+            <input
+              type="date"
+              required
+              value={dueDate}
+              onChange={(e) => setDueDate(e.target.value)}
+              className="mt-1 w-full rounded-xl border border-input bg-muted/30 p-2.5 text-sm outline-none"
+            />
+          </div>
+
+          <div className="flex gap-2 pt-3">
+            <button
+              type="button"
+              onClick={() => setModalOpen(false)}
+              className="w-1/2 rounded-xl border border-border py-2.5 text-xs font-bold text-foreground"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={submitting}
+              className="w-1/2 flex items-center justify-center gap-1.5 rounded-xl bg-ink py-2.5 text-xs font-bold text-card shadow-md disabled:opacity-50"
+            >
+              {submitting ? <Loader2 className="size-4 animate-spin" /> : null}
+              {submitting ? "Saving..." : "Save Task"}
+            </button>
+          </div>
+        </form>
+      </Modal>
     </Screen>
   );
 }

@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import {
   Plus,
@@ -16,16 +16,18 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { Screen, ScreenHeader } from "@/components/lifehub/Screen";
+import { Modal } from "@/components/lifehub/Modal";
 import { useAuth } from "@/hooks/use-auth";
 import { useData } from "@/lib/data-context";
 import { useHydration } from "@/lib/use-hydration";
 import { Medication } from "@/lib/types";
 import { Progress } from "@/components/ui/progress";
 import { ListSkeleton } from "@/components/lifehub/SkeletonLoader";
+import { sounds } from "@/lib/sound";
 
 export const Route = createFileRoute("/medications")({
   head: () => ({
-    meta: [{ title: "Health Routine & Hydration — Balance" }],
+    meta: [{ title: "Health Routine & Hydration — LifeHub" }],
   }),
   component: MedicationsPage,
 });
@@ -141,23 +143,33 @@ function MedicationsPage() {
     }
   };
 
+  // Guards against repeated taps on the same Remove button: repeat taps on
+  // an item that is already being removed are ignored, and the success toast
+  // uses a per-item id so only ONE "removed" notification is ever shown.
+  const deletingIds = useRef<Set<string>>(new Set());
   const handleDelete = async (id: string) => {
     if (!user) return;
+    if (deletingIds.current.has(id)) return; // already removing this item
+    deletingIds.current.add(id);
     try {
       await removeMedication(id);
-      toast.success("Item deleted.");
+      toast.success("Item deleted.", { id: `med-removed-${id}` });
     } catch (err) {
-      toast.error("Failed to delete.");
+      toast.error("Failed to delete.", { id: `med-delete-error-${id}` });
+    } finally {
+      deletingIds.current.delete(id);
     }
   };
 
   const handleAddWater = async () => {
+    sounds.playActionClick();
     await addWaterApi(1);
     toast.success("Added +1 Glass of water 💧");
   };
 
   const handleRemoveWater = async () => {
     if (waterGlasses > 0) {
+      sounds.playActionClick();
       await removeWaterApi(1);
       toast.info("Removed 1 glass of water");
     }
@@ -342,114 +354,104 @@ function MedicationsPage() {
       </div>
 
       {/* Add/Edit Modal */}
-      {modalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-xs">
-          <div className="w-full max-w-md rounded-3xl bg-white p-5 shadow-2xl">
-            <div className="flex items-center justify-between border-b border-black/5 pb-3">
-              <h3 className="text-base font-extrabold text-[#12131A]">
-                {editingMed ? "Edit Medication" : "Add Medication Routine"}
-              </h3>
-              <button
-                onClick={() => setModalOpen(false)}
-                className="size-7 flex items-center justify-center rounded-full bg-black/5"
-              >
-                <X className="size-4" />
-              </button>
-            </div>
-            <form onSubmit={handleSave} className="mt-4 space-y-3">
-              <div>
-                <label className="text-xs font-bold text-[#12131A]">Medication Name</label>
-                <input
-                  type="text"
-                  required
-                  placeholder="Vitamin D3 / Omeprazole"
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  className="mt-1 w-full rounded-xl border border-black/10 bg-[#F9F9FD] p-2.5 text-xs outline-none focus:border-[#7C5CFC]"
-                />
-              </div>
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <label className="text-xs font-bold text-[#12131A]">Dosage</label>
-                  <input
-                    type="text"
-                    required
-                    placeholder="1 Tablet / 10mg"
-                    value={dosage}
-                    onChange={(e) => setDosage(e.target.value)}
-                    className="mt-1 w-full rounded-xl border border-black/10 bg-[#F9F9FD] p-2.5 text-xs outline-none focus:border-[#7C5CFC]"
-                  />
-                </div>
-                <div>
-                  <label className="text-xs font-bold text-[#12131A]">Time</label>
-                  <input
-                    type="time"
-                    required
-                    value={scheduledTime}
-                    onChange={(e) => setScheduledTime(e.target.value)}
-                    className="mt-1 w-full rounded-xl border border-black/10 bg-[#F9F9FD] p-2.5 text-xs outline-none focus:border-[#7C5CFC]"
-                  />
-                </div>
-              </div>
-              <div className="flex gap-2 pt-3">
-                <button
-                  type="button"
-                  onClick={() => setModalOpen(false)}
-                  className="w-1/2 rounded-xl border border-black/10 py-2.5 text-xs font-bold"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={submitting}
-                  className="w-1/2 flex items-center justify-center gap-1 rounded-xl bg-[#12131A] py-2.5 text-xs font-bold text-white"
-                >
-                  {submitting ? <Loader2 className="size-3.5 animate-spin" /> : null} Save
-                </button>
-              </div>
-            </form>
-          </div>
+      <Modal open={modalOpen} onClose={() => setModalOpen(false)} className="bg-white">
+        <div className="flex items-center justify-between border-b border-black/5 pb-3">
+          <h3 className="text-base font-extrabold text-[#12131A]">
+            {editingMed ? "Edit Medication" : "Add Medication Routine"}
+          </h3>
+          <button
+            onClick={() => setModalOpen(false)}
+            className="size-7 flex items-center justify-center rounded-full bg-black/5"
+          >
+            <X className="size-4" />
+          </button>
         </div>
-      )}
+        <form onSubmit={handleSave} className="mt-4 space-y-3">
+          <div>
+            <label className="text-xs font-bold text-[#12131A]">Medication Name</label>
+            <input
+              type="text"
+              required
+              placeholder="Vitamin D3 / Omeprazole"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              className="mt-1 w-full rounded-xl border border-black/10 bg-[#F9F9FD] p-2.5 text-xs outline-none focus:border-[#7C5CFC]"
+            />
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <label className="text-xs font-bold text-[#12131A]">Dosage</label>
+              <input
+                type="text"
+                required
+                placeholder="1 Tablet / 10mg"
+                value={dosage}
+                onChange={(e) => setDosage(e.target.value)}
+                className="mt-1 w-full rounded-xl border border-black/10 bg-[#F9F9FD] p-2.5 text-xs outline-none focus:border-[#7C5CFC]"
+              />
+            </div>
+            <div>
+              <label className="text-xs font-bold text-[#12131A]">Time</label>
+              <input
+                type="time"
+                required
+                value={scheduledTime}
+                onChange={(e) => setScheduledTime(e.target.value)}
+                className="mt-1 w-full rounded-xl border border-black/10 bg-[#F9F9FD] p-2.5 text-xs outline-none focus:border-[#7C5CFC]"
+              />
+            </div>
+          </div>
+          <div className="flex gap-2 pt-3">
+            <button
+              type="button"
+              onClick={() => setModalOpen(false)}
+              className="w-1/2 rounded-xl border border-black/10 py-2.5 text-xs font-bold"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={submitting}
+              className="w-1/2 flex items-center justify-center gap-1 rounded-xl bg-[#12131A] py-2.5 text-xs font-bold text-white"
+            >
+              {submitting ? <Loader2 className="size-3.5 animate-spin" /> : null} Save
+            </button>
+          </div>
+        </form>
+      </Modal>
 
       {/* Logs Modal */}
-      {logsModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-xs">
-          <div className="w-full max-w-md rounded-3xl bg-white p-5 shadow-2xl">
-            <div className="flex items-center justify-between border-b border-black/5 pb-3">
-              <h3 className="text-base font-extrabold text-[#12131A]">Health History Logs</h3>
-              <button
-                onClick={() => setLogsModalOpen(false)}
-                className="size-7 flex items-center justify-center rounded-full bg-black/5"
-              >
-                <X className="size-4" />
-              </button>
-            </div>
-            <div className="mt-3 max-h-72 overflow-y-auto space-y-2">
-              {medicationLogs.length === 0 ? (
-                <p className="p-6 text-center text-xs text-[#6B7280]">
-                  No history logs recorded yet.
-                </p>
-              ) : (
-                medicationLogs.map((l) => (
-                  <div
-                    key={l.id}
-                    className="flex items-center justify-between rounded-xl bg-[#F9F9FD] p-3 text-xs"
-                  >
-                    <span className="font-bold text-[#12131A]">Dose marked taken</span>
-                    <span className="text-[10px] text-[#6B7280]">
-                      {new Date(l.taken_at).toLocaleTimeString([], {
-                        hour: "2-digit",
-                        minute: "2-digit",
-                      })}
-                    </span>
-                  </div>
-                ))
-              )}
-            </div>
-          </div>
+      <Modal open={logsModalOpen} onClose={() => setLogsModalOpen(false)} className="bg-white">
+        <div className="flex items-center justify-between border-b border-black/5 pb-3">
+          <h3 className="text-base font-extrabold text-[#12131A]">Health History Logs</h3>
+          <button
+            onClick={() => setLogsModalOpen(false)}
+            className="size-7 flex items-center justify-center rounded-full bg-black/5"
+          >
+            <X className="size-4" />
+          </button>
         </div>
-      )}
+        <div className="mt-3 max-h-72 overflow-y-auto space-y-2">
+          {medicationLogs.length === 0 ? (
+            <p className="p-6 text-center text-xs text-[#6B7280]">No history logs recorded yet.</p>
+          ) : (
+            medicationLogs.map((l) => (
+              <div
+                key={l.id}
+                className="flex items-center justify-between rounded-xl bg-[#F9F9FD] p-3 text-xs"
+              >
+                <span className="font-bold text-[#12131A]">Dose marked taken</span>
+                <span className="text-[10px] text-[#6B7280]">
+                  {new Date(l.taken_at).toLocaleTimeString([], {
+                    hour: "2-digit",
+                    minute: "2-digit",
+                  })}
+                </span>
+              </div>
+            ))
+          )}
+        </div>
+      </Modal>
     </Screen>
   );
 }

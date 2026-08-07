@@ -32,6 +32,7 @@ import {
   subscribeBills,
   subscribePayments,
   subscribeAppointments,
+  subscribeBirthdays,
   subscribeWorkoutPrograms,
   subscribeWorkouts,
   subscribeWalkSessions,
@@ -45,6 +46,7 @@ import {
   Bill,
   Payment,
   Appointment,
+  Birthday,
   WorkoutProgram,
   Workout,
   WalkSession,
@@ -52,6 +54,9 @@ import {
   Todo,
   WaterLog,
 } from "./types";
+import { Notifications } from "./notifications-integration";
+import { sounds } from "./sound";
+import { useRef } from "react";
 
 // Utility: deduplicate an array of objects with `id` field
 function dedupeById<T extends { id: string }>(items: T[]): T[] {
@@ -118,12 +123,15 @@ export interface DataContextValue {
 const DataContext = createContext<DataContextValue | undefined>(undefined);
 
 export function DataProvider({ userId, children }: { userId: string | null; children: ReactNode }) {
+  // One-shot flag: after the first real data batch arrives we re-sync the OS
+  // notification schedule (idempotent — pending notifications are kept).
+  const didNotificationResync = useRef(false);
   // Medications State
   const [medications, setMedications] = useState<Medication[]>([]);
   const [medicationLogs, setMedicationLogs] = useState<MedicationLog[]>([]);
-  // Start as loading: the Home page renders skeletons (not empty states)
-  // until the first realtime snapshot arrives.
-  const [medLoading, setMedLoading] = useState(true);
+  // Start as false — Firestore local persistence means data arrives quickly.
+  // Skeletons only show briefly if truly empty (new user).
+  const [medLoading, setMedLoading] = useState(false);
   const [medError, setMedError] = useState<string | null>(null);
 
   // Bills State
@@ -132,11 +140,11 @@ export function DataProvider({ userId, children }: { userId: string | null; chil
   const [billLoading, setBillLoading] = useState(false);
   const [billError, setBillError] = useState<string | null>(null);
 
-  // Appointments State
+  // Appointments & Birthdays State
   const [appointments, setAppointments] = useState<Appointment[]>([]);
-  // Start as loading: the Home page renders skeletons (not empty states)
-  // until the first realtime snapshot arrives.
-  const [appLoading, setAppLoading] = useState(true);
+  const [birthdays, setBirthdays] = useState<Birthday[]>([]);
+  // Start as false — same reasoning as medications
+  const [appLoading, setAppLoading] = useState(false);
   const [appError, setAppError] = useState<string | null>(null);
 
   // Fitness State
@@ -183,6 +191,8 @@ export function DataProvider({ userId, children }: { userId: string | null; chil
       try {
         const med = await createMedication(userId, data);
         setMedications((prev) => dedupeById([...prev, med]));
+        sounds.playSuccess();
+        Notifications.scheduleMedication(med);
         return med;
       } catch (e: any) {
         console.error("Failed to add medication:", e);
@@ -198,6 +208,9 @@ export function DataProvider({ userId, children }: { userId: string | null; chil
       try {
         const updated = await updateMedication(id, userId, data);
         setMedications((prev) => dedupeById(prev.map((m) => (m.id === id ? updated : m))));
+        sounds.playClick();
+        Notifications.cancelMedication(id);
+        Notifications.scheduleMedication(updated);
         return updated;
       } catch (e: any) {
         console.error("Failed to update medication:", e);
@@ -213,6 +226,8 @@ export function DataProvider({ userId, children }: { userId: string | null; chil
       try {
         await deleteMedication(id, userId);
         setMedications((prev) => prev.filter((m) => m.id !== id));
+        sounds.playClick();
+        Notifications.cancelMedication(id);
       } catch (e: any) {
         console.error("Failed to delete medication:", e);
       }
@@ -226,6 +241,8 @@ export function DataProvider({ userId, children }: { userId: string | null; chil
       try {
         const updated = await toggleMedicationTaken(id, userId, !currentTaken);
         setMedications((prev) => dedupeById(prev.map((m) => (m.id === id ? updated : m))));
+        if (!currentTaken) sounds.playSuccess();
+        else sounds.playClick();
         // Refresh logs
         const logsData = await getMedicationLogs(userId);
         setMedicationLogs(dedupeById(logsData));
@@ -259,6 +276,8 @@ export function DataProvider({ userId, children }: { userId: string | null; chil
       try {
         const bill = await createBill(userId, data);
         setBills((prev) => dedupeById([...prev, bill]));
+        sounds.playSuccess();
+        Notifications.scheduleBill(bill);
         return bill;
       } catch (e: any) {
         console.error("Failed to add bill:", e);
@@ -274,6 +293,9 @@ export function DataProvider({ userId, children }: { userId: string | null; chil
       try {
         const updated = await updateBill(id, userId, data);
         setBills((prev) => dedupeById(prev.map((b) => (b.id === id ? updated : b))));
+        sounds.playClick();
+        Notifications.cancelBill(id);
+        Notifications.scheduleBill(updated);
         return updated;
       } catch (e: any) {
         console.error("Failed to update bill:", e);
@@ -289,6 +311,8 @@ export function DataProvider({ userId, children }: { userId: string | null; chil
       try {
         await deleteBill(id, userId);
         setBills((prev) => prev.filter((b) => b.id !== id));
+        sounds.playClick();
+        Notifications.cancelBill(id);
       } catch (e: any) {
         console.error("Failed to delete bill:", e);
       }
@@ -302,6 +326,8 @@ export function DataProvider({ userId, children }: { userId: string | null; chil
       try {
         const updated = await payBillApi(id, userId, paymentMethod);
         setBills((prev) => dedupeById(prev.map((b) => (b.id === id ? updated : b))));
+        sounds.playSuccess();
+        Notifications.cancelBill(id);
         // Refresh payments
         const payData = await getPayments(userId);
         setPayments(dedupeById(payData));
@@ -374,23 +400,16 @@ export function DataProvider({ userId, children }: { userId: string | null; chil
     setWaterLogs([]);
   }, [userId]);
 
-  // Realtime subscriptions — every service collection streams live changes
-  // so ALL pages (including Analytics) stay in sync with the database
-  // automatically: any create, edit, delete or complete action anywhere in
-  // the app updates these arrays instantly, with no page reload.
+
   useEffect(() => {
     if (!userId) return;
 
     let active = true;
     const unsubscribes: (() => void)[] = [];
 
-    setMedLoading(true);
-    setBillLoading(true);
-    setAppLoading(true);
-    setFitnessLoading(true);
-    setActivityLoading(true);
-    setTodosLoading(true);
-    setWaterLoading(true);
+    // Don't reset loading states to true here — they start as their initial values.
+    // Firestore's local persistence means listeners fire quickly with cached data,
+    // so we avoid the skeleton flash on app restart.
 
     unsubscribes.push(
       subscribeMedications(userId, (items) => {
@@ -415,6 +434,10 @@ export function DataProvider({ userId, children }: { userId: string | null; chil
         if (!active) return;
         setAppointments(dedupeById(items));
         setAppLoading(false);
+      }),
+      subscribeBirthdays(userId, (items) => {
+        if (!active) return;
+        setBirthdays(dedupeById(items));
       }),
       subscribeWorkoutPrograms(userId, (items) => {
         if (!active) return;
@@ -451,6 +474,32 @@ export function DataProvider({ userId, children }: { userId: string | null; chil
       unsubscribes.forEach((unsub) => unsub());
     };
   }, [userId]);
+
+  // Re-sync scheduled OS notifications once the first data batch arrives —
+  // guarantees real notifications survive app restarts (they are re-created
+  // if the OS cleaned them up) and never duplicates pending ones.
+  useEffect(() => {
+    if (didNotificationResync.current) return;
+    if (!userId) return;
+    if (
+      medications.length === 0 &&
+      appointments.length === 0 &&
+      bills.length === 0 &&
+      birthdays.length === 0 &&
+      workouts.length === 0 &&
+      todos.length === 0
+    )
+      return;
+    didNotificationResync.current = true;
+    void Notifications.resyncAll({
+      medications,
+      appointments,
+      bills,
+      birthdays,
+      workouts,
+      todos,
+    });
+  }, [userId, medications, appointments, bills, birthdays, workouts, todos]);
 
   const value = useMemo<DataContextValue>(
     () => ({

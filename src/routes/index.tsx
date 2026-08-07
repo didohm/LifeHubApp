@@ -1,5 +1,6 @@
 import { useEffect, useState, useMemo } from "react";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
+import { sounds } from "@/lib/sound";
 import {
   Search,
   Wallet,
@@ -34,11 +35,11 @@ import { DashboardSkeleton } from "@/components/lifehub/SkeletonLoader";
 export const Route = createFileRoute("/")({
   head: () => ({
     meta: [
-      { title: "Balance — Plan your day. Elevate your life." },
+      { title: "LifeHub — Plan your day. Elevate your life." },
       {
         name: "description",
         content:
-          "Balance keeps your schedule, habits, health, workouts, and daily tasks together in one elegant, calm space.",
+          "LifeHub keeps your schedule, habits, health, workouts, and daily tasks together in one elegant, calm space.",
       },
     ],
   }),
@@ -76,7 +77,7 @@ function Index() {
   const RING_CIRCUMFERENCE = 2 * Math.PI * 52;
 
   const [activityTimeline, setActivityTimeline] = useState<ActivityEntry[]>([]);
-  const [extraLoading, setExtraLoading] = useState(true);
+  const [extraLoading, setExtraLoading] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [selectedDayIndex, setSelectedDayIndex] = useState(new Date().getDay());
 
@@ -100,8 +101,6 @@ function Index() {
         setExtraLoading(false);
       });
   }, [user]);
-
-  const isLoading = authLoading || medLoading || billLoading || appLoading || extraLoading;
 
   const { takenMeds, compliancePct } = useMemo(() => {
     const taken = medications.filter((m) => m.taken).length;
@@ -158,7 +157,7 @@ function Index() {
           </div>
         </Link>
         <button
-          onClick={() => setSearchOpen(true)}
+          onClick={() => { sounds.playNavClick(); setSearchOpen(true); }}
           aria-label="Search"
           title="Search features and items"
           className="tap flex size-10 items-center justify-center rounded-full bg-white shadow-xs border border-black/5 hover:bg-black/5 active:scale-95"
@@ -196,7 +195,7 @@ function Index() {
         </div>
         <img
           src="/illustration/hero-health.png"
-          alt="Health & Balance Illustration"
+          alt="Health & LifeHub Illustration"
           width={400}
           height={400}
           className="pointer-events-none absolute -right-2 top-1/2 w-44 max-h-40 -translate-y-1/2 object-contain drop-shadow-[0_10px_20px_rgba(124,92,252,0.25)] transition-transform hover:scale-105"
@@ -210,7 +209,7 @@ function Index() {
           return (
             <button
               key={dayIndex}
-              onClick={() => setSelectedDayIndex(dayIndex)}
+              onClick={() => { sounds.playNavClick(); setSelectedDayIndex(dayIndex); }}
               className={`tap flex flex-col items-center justify-center py-2.5 px-3 rounded-full transition-all ${
                 isSelected
                   ? "bg-[#12131A] text-white shadow-md font-bold scale-105"
@@ -453,7 +452,7 @@ function Index() {
           <div className="mt-3 flex items-center justify-center gap-3">
             <button
               type="button"
-              onClick={() => removeWater()}
+              onClick={() => { sounds.playActionClick(); removeWater(); }}
               disabled={waterBusy || waterGlasses <= 0}
               aria-label="Remove a glass of water"
               title="Remove a glass"
@@ -466,7 +465,7 @@ function Index() {
             </span>
             <button
               type="button"
-              onClick={() => addWater()}
+              onClick={() => { sounds.playActionClick(); addWater(); }}
               disabled={waterBusy}
               aria-label="Add a glass of water"
               title="Add a glass"
@@ -512,6 +511,7 @@ function Index() {
           <Link
             to="/bills"
             title="Pay Bills"
+            onClick={() => sounds.playNavClick()}
             className="tap flex size-11 items-center justify-center rounded-full bg-white text-[#12131A] shadow-xs hover:scale-105"
           >
             <Wallet className="size-4.5" />
@@ -519,6 +519,7 @@ function Index() {
           <Link
             to="/documents"
             title="Documents"
+            onClick={() => sounds.playNavClick()}
             className="tap flex size-11 items-center justify-center rounded-full bg-white text-[#12131A] shadow-xs hover:scale-105"
           >
             <FolderClosed className="size-4.5" />
@@ -526,6 +527,7 @@ function Index() {
           <Link
             to="/tasks"
             title="To-Do List"
+            onClick={() => sounds.playNavClick()}
             className="tap flex size-11 items-center justify-center rounded-full bg-white text-[#12131A] shadow-xs hover:scale-105"
           >
             <ListChecks className="size-4.5" />
@@ -533,6 +535,7 @@ function Index() {
           <Link
             to="/birthdays"
             title="Birthdays"
+            onClick={() => sounds.playNavClick()}
             className="tap flex size-11 items-center justify-center rounded-full bg-white text-[#12131A] shadow-xs hover:scale-105"
           >
             <Cake className="size-4.5" />
@@ -540,6 +543,7 @@ function Index() {
           <Link
             to="/ai"
             title="AI Assistant"
+            onClick={() => sounds.playNavClick()}
             className="tap flex size-11 items-center justify-center rounded-full bg-[#12131A] text-white shadow-md hover:scale-105"
           >
             <Bot className="size-4.5" />

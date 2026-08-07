@@ -269,6 +269,13 @@ export async function generateAssistantReply(options: AssistantOptions): Promise
   const ASSISTANT_MODEL =
     (import.meta.env.VITE_ASSISTANT_MODEL as string | undefined) || "google/gemma-4-31b-it:free";
 
+  // Web builds call the same-origin server-side proxy (/api/assistant), which
+  // holds the API key. The native (Capacitor) build has no server, so it can
+  // point at a separately deployed backend via VITE_ASSISTANT_ENDPOINT — the
+  // key stays on that server either way. Unset → built-in engine fallback.
+  const ASSISTANT_ENDPOINT =
+    (import.meta.env.VITE_ASSISTANT_ENDPOINT as string | undefined) || "/api/assistant";
+
   if (options.idToken) {
     try {
       const dataBlock = serializeFetchedData(data);
@@ -295,7 +302,7 @@ export async function generateAssistantReply(options: AssistantOptions): Promise
         { role: "user", content: userContent },
       ];
 
-      const res = await fetch("/api/assistant", {
+      const res = await fetch(ASSISTANT_ENDPOINT, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

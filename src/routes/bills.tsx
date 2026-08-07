@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import {
   Plus,
@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { Screen } from "@/components/lifehub/Screen";
+import { Modal } from "@/components/lifehub/Modal";
 import { useAuth } from "@/hooks/use-auth";
 import { useData } from "@/lib/data-context";
 import { Bill } from "@/lib/types";
@@ -131,13 +132,21 @@ function BillsPage() {
     }
   };
 
+  // Guards against repeated taps on the same Remove button: repeat taps on
+  // an item that is already being removed are ignored, and the success toast
+  // uses a per-item id so only ONE "removed" notification is ever shown.
+  const deletingIds = useRef<Set<string>>(new Set());
   const handleDelete = async (id: string) => {
     if (!user) return;
+    if (deletingIds.current.has(id)) return; // already removing this item
+    deletingIds.current.add(id);
     try {
       await removeBill(id);
-      toast.success("Bill removed.");
+      toast.success("Bill removed.", { id: `bill-removed-${id}` });
     } catch (err) {
-      toast.error("Failed to delete bill.");
+      toast.error("Failed to delete bill.", { id: `bill-delete-error-${id}` });
+    } finally {
+      deletingIds.current.delete(id);
     }
   };
 
@@ -312,203 +321,193 @@ function BillsPage() {
       </div>
 
       {/* Add Bill Modal */}
-      {modalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm animate-in fade-in duration-200">
-          <div className="w-full max-w-md rounded-3xl bg-card p-5 shadow-2xl animate-in zoom-in-95 duration-200">
-            <div className="flex items-center justify-between border-b border-border/40 pb-3">
-              <h2 className="text-lg font-extrabold text-foreground">
-                {editingBill ? "Edit Bill" : "Add New Bill"}
-              </h2>
-              <button
-                onClick={() => setModalOpen(false)}
-                className="size-8 flex items-center justify-center rounded-full bg-muted text-muted-foreground"
-              >
-                <X className="size-4" />
-              </button>
-            </div>
-
-            <form onSubmit={handleSaveBill} className="mt-4 space-y-3">
-              <div>
-                <label className="text-xs font-bold text-foreground">Bill Title</label>
-                <input
-                  type="text"
-                  required
-                  placeholder="Electricity / Clinic Bill"
-                  value={title}
-                  onChange={(e) => setTitle(e.target.value)}
-                  className="mt-1 w-full rounded-xl border border-input bg-muted/30 p-2.5 text-sm outline-none"
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <label className="text-xs font-bold text-foreground">Amount ($)</label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    required
-                    placeholder="85.00"
-                    value={amount}
-                    onChange={(e) => setAmount(e.target.value)}
-                    className="mt-1 w-full rounded-xl border border-input bg-muted/30 p-2.5 text-sm outline-none"
-                  />
-                </div>
-                <div>
-                  <label className="text-xs font-bold text-foreground">Category</label>
-                  <select
-                    value={category}
-                    onChange={(e) => setCategory(e.target.value)}
-                    className="mt-1 w-full rounded-xl border border-input bg-muted/30 p-2.5 text-sm outline-none"
-                  >
-                    <option value="Health">Health</option>
-                    <option value="Utilities">Utilities</option>
-                    <option value="Insurance">Insurance</option>
-                    <option value="Medical">Medical</option>
-                    <option value="Subscriptions">Subscriptions</option>
-                  </select>
-                </div>
-              </div>
-
-              <div>
-                <label className="text-xs font-bold text-foreground">Due Date</label>
-                <input
-                  type="date"
-                  required
-                  value={dueDate}
-                  onChange={(e) => setDueDate(e.target.value)}
-                  className="mt-1 w-full rounded-xl border border-input bg-muted/30 p-2.5 text-sm outline-none"
-                />
-              </div>
-
-              <div className="flex gap-2 pt-3">
-                <button
-                  type="button"
-                  onClick={() => setModalOpen(false)}
-                  className="w-1/2 rounded-xl border border-border py-2.5 text-xs font-bold text-foreground"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={submitting}
-                  className="w-1/2 flex items-center justify-center gap-1.5 rounded-xl bg-ink py-2.5 text-xs font-bold text-card shadow-md disabled:opacity-50"
-                >
-                  {submitting ? <Loader2 className="size-4 animate-spin" /> : null}
-                  {submitting ? "Saving..." : editingBill ? "Update Bill" : "Save Bill"}
-                </button>
-              </div>
-            </form>
-          </div>
+      <Modal open={modalOpen} onClose={() => setModalOpen(false)} className="bg-card">
+        <div className="flex items-center justify-between border-b border-border/40 pb-3">
+          <h2 className="text-lg font-extrabold text-foreground">
+            {editingBill ? "Edit Bill" : "Add New Bill"}
+          </h2>
+          <button
+            onClick={() => setModalOpen(false)}
+            className="size-8 flex items-center justify-center rounded-full bg-muted text-muted-foreground"
+          >
+            <X className="size-4" />
+          </button>
         </div>
-      )}
+
+        <form onSubmit={handleSaveBill} className="mt-4 space-y-3">
+          <div>
+            <label className="text-xs font-bold text-foreground">Bill Title</label>
+            <input
+              type="text"
+              required
+              placeholder="Electricity / Clinic Bill"
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              className="mt-1 w-full rounded-xl border border-input bg-muted/30 p-2.5 text-sm outline-none"
+            />
+          </div>
+
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <label className="text-xs font-bold text-foreground">Amount ($)</label>
+              <input
+                type="number"
+                step="0.01"
+                required
+                placeholder="85.00"
+                value={amount}
+                onChange={(e) => setAmount(e.target.value)}
+                className="mt-1 w-full rounded-xl border border-input bg-muted/30 p-2.5 text-sm outline-none"
+              />
+            </div>
+            <div>
+              <label className="text-xs font-bold text-foreground">Category</label>
+              <select
+                value={category}
+                onChange={(e) => setCategory(e.target.value)}
+                className="mt-1 w-full rounded-xl border border-input bg-muted/30 p-2.5 text-sm outline-none"
+              >
+                <option value="Health">Health</option>
+                <option value="Utilities">Utilities</option>
+                <option value="Insurance">Insurance</option>
+                <option value="Medical">Medical</option>
+                <option value="Subscriptions">Subscriptions</option>
+              </select>
+            </div>
+          </div>
+
+          <div>
+            <label className="text-xs font-bold text-foreground">Due Date</label>
+            <input
+              type="date"
+              required
+              value={dueDate}
+              onChange={(e) => setDueDate(e.target.value)}
+              className="mt-1 w-full rounded-xl border border-input bg-muted/30 p-2.5 text-sm outline-none"
+            />
+          </div>
+
+          <div className="flex gap-2 pt-3">
+            <button
+              type="button"
+              onClick={() => setModalOpen(false)}
+              className="w-1/2 rounded-xl border border-border py-2.5 text-xs font-bold text-foreground"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={submitting}
+              className="w-1/2 flex items-center justify-center gap-1.5 rounded-xl bg-ink py-2.5 text-xs font-bold text-card shadow-md disabled:opacity-50"
+            >
+              {submitting ? <Loader2 className="size-4 animate-spin" /> : null}
+              {submitting ? "Saving..." : editingBill ? "Update Bill" : "Save Bill"}
+            </button>
+          </div>
+        </form>
+      </Modal>
 
       {/* Pay Bill Modal */}
       {payModalBill && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm animate-in fade-in duration-200">
-          <div className="w-full max-w-md rounded-3xl bg-card p-5 shadow-2xl animate-in zoom-in-95 duration-200">
-            <div className="flex items-center justify-between border-b border-border/40 pb-3">
-              <h2 className="text-lg font-extrabold text-foreground">Pay Bill Dues</h2>
-              <button
-                onClick={() => setPayModalBill(null)}
-                className="size-8 flex items-center justify-center rounded-full bg-muted text-muted-foreground"
+        <Modal open onClose={() => setPayModalBill(null)} className="bg-card">
+          <div className="flex items-center justify-between border-b border-border/40 pb-3">
+            <h2 className="text-lg font-extrabold text-foreground">Pay Bill Dues</h2>
+            <button
+              onClick={() => setPayModalBill(null)}
+              className="size-8 flex items-center justify-center rounded-full bg-muted text-muted-foreground"
+            >
+              <X className="size-4" />
+            </button>
+          </div>
+
+          <div className="mt-4 rounded-2xl bg-muted/30 p-4 text-center">
+            <p className="text-xs text-muted-foreground">Amount Due for {payModalBill.title}</p>
+            <p className="text-3xl font-black text-foreground mt-1">
+              ${Number(payModalBill.amount).toFixed(2)}
+            </p>
+          </div>
+
+          <form onSubmit={handleConfirmPayment} className="mt-4 space-y-3">
+            <div>
+              <label className="text-xs font-bold text-foreground">Payment Method</label>
+              <select
+                value={paymentMethod}
+                onChange={(e) => setPaymentMethod(e.target.value)}
+                className="mt-1 w-full rounded-xl border border-input bg-muted/30 p-2.5 text-xs outline-none"
               >
-                <X className="size-4" />
+                <option value="Carte Edahabia">Carte Edahabia</option>
+                <option value="Cash (Espèces)">Cash (Espèces)</option>
+              </select>
+            </div>
+
+            <div className="flex gap-2 pt-3">
+              <button
+                type="button"
+                onClick={() => setPayModalBill(null)}
+                className="w-1/3 rounded-xl border border-border py-2.5 text-xs font-bold text-foreground"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                disabled={paying}
+                className="w-2/3 flex items-center justify-center gap-1.5 rounded-xl bg-emerald-600 py-2.5 text-xs font-bold text-white shadow-md hover:bg-emerald-700 active:scale-95 disabled:opacity-50"
+              >
+                {paying ? (
+                  <Loader2 className="size-4 animate-spin" />
+                ) : (
+                  <CheckCircle2 className="size-4" />
+                )}
+                {paying
+                  ? "Processing..."
+                  : `Confirm Pay $${Number(payModalBill.amount).toFixed(2)}`}
               </button>
             </div>
-
-            <div className="mt-4 rounded-2xl bg-muted/30 p-4 text-center">
-              <p className="text-xs text-muted-foreground">Amount Due for {payModalBill.title}</p>
-              <p className="text-3xl font-black text-foreground mt-1">
-                ${Number(payModalBill.amount).toFixed(2)}
-              </p>
-            </div>
-
-            <form onSubmit={handleConfirmPayment} className="mt-4 space-y-3">
-              <div>
-                <label className="text-xs font-bold text-foreground">Payment Method</label>
-                <select
-                  value={paymentMethod}
-                  onChange={(e) => setPaymentMethod(e.target.value)}
-                  className="mt-1 w-full rounded-xl border border-input bg-muted/30 p-2.5 text-xs outline-none"
-                >
-                  <option value="Carte Edahabia">Carte Edahabia</option>
-                  <option value="Cash (Espèces)">Cash (Espèces)</option>
-                </select>
-              </div>
-
-              <div className="flex gap-2 pt-3">
-                <button
-                  type="button"
-                  onClick={() => setPayModalBill(null)}
-                  className="w-1/3 rounded-xl border border-border py-2.5 text-xs font-bold text-foreground"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={paying}
-                  className="w-2/3 flex items-center justify-center gap-1.5 rounded-xl bg-emerald-600 py-2.5 text-xs font-bold text-white shadow-md hover:bg-emerald-700 active:scale-95 disabled:opacity-50"
-                >
-                  {paying ? (
-                    <Loader2 className="size-4 animate-spin" />
-                  ) : (
-                    <CheckCircle2 className="size-4" />
-                  )}
-                  {paying
-                    ? "Processing..."
-                    : `Confirm Pay $${Number(payModalBill.amount).toFixed(2)}`}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
+          </form>
+        </Modal>
       )}
 
       {/* Payment History Modal */}
-      {historyOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm animate-in fade-in duration-200">
-          <div className="w-full max-w-md rounded-3xl bg-card p-5 shadow-2xl animate-in zoom-in-95 duration-200">
-            <div className="flex items-center justify-between border-b border-border/40 pb-3">
-              <h2 className="text-lg font-extrabold text-foreground">Payment History Log</h2>
-              <button
-                onClick={() => setHistoryOpen(false)}
-                className="size-8 flex items-center justify-center rounded-full bg-muted text-muted-foreground"
-              >
-                <X className="size-4" />
-              </button>
-            </div>
-            <div className="mt-3 max-h-80 overflow-y-auto space-y-2">
-              {payments.length === 0 ? (
-                <p className="p-6 text-center text-sm text-muted-foreground">
-                  No payments recorded yet.
-                </p>
-              ) : (
-                payments.map((p) => (
-                  <div
-                    key={p.id}
-                    className="flex items-center justify-between rounded-xl bg-muted/40 p-3"
-                  >
-                    <div>
-                      <p className="text-xs font-bold text-foreground">{p.payment_method}</p>
-                      <p className="text-[10px] text-muted-foreground">
-                        Ref: {p.reference || "PAY-" + p.id.slice(0, 6)}
-                      </p>
-                    </div>
-                    <div className="text-right">
-                      <p className="text-sm font-black text-emerald-600">
-                        +${Number(p.amount).toFixed(2)}
-                      </p>
-                      <p className="text-[10px] text-muted-foreground">
-                        {new Date(p.payment_date).toLocaleDateString()}
-                      </p>
-                    </div>
-                  </div>
-                ))
-              )}
-            </div>
-          </div>
+      <Modal open={historyOpen} onClose={() => setHistoryOpen(false)} className="bg-card">
+        <div className="flex items-center justify-between border-b border-border/40 pb-3">
+          <h2 className="text-lg font-extrabold text-foreground">Payment History Log</h2>
+          <button
+            onClick={() => setHistoryOpen(false)}
+            className="size-8 flex items-center justify-center rounded-full bg-muted text-muted-foreground"
+          >
+            <X className="size-4" />
+          </button>
         </div>
-      )}
+        <div className="mt-3 max-h-80 overflow-y-auto space-y-2">
+          {payments.length === 0 ? (
+            <p className="p-6 text-center text-sm text-muted-foreground">
+              No payments recorded yet.
+            </p>
+          ) : (
+            payments.map((p) => (
+              <div
+                key={p.id}
+                className="flex items-center justify-between rounded-xl bg-muted/40 p-3"
+              >
+                <div>
+                  <p className="text-xs font-bold text-foreground">{p.payment_method}</p>
+                  <p className="text-[10px] text-muted-foreground">
+                    Ref: {p.reference || "PAY-" + p.id.slice(0, 6)}
+                  </p>
+                </div>
+                <div className="text-right">
+                  <p className="text-sm font-black text-emerald-600">
+                    +${Number(p.amount).toFixed(2)}
+                  </p>
+                  <p className="text-[10px] text-muted-foreground">
+                    {new Date(p.payment_date).toLocaleDateString()}
+                  </p>
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+      </Modal>
     </Screen>
   );
 }

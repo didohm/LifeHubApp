@@ -280,7 +280,7 @@ export async function payBill(
       amount: bill.amount,
       payment_date: now(),
       payment_method: paymentMethod,
-      reference: "TXN-" + Math.floor(100000 + Math.random() * 900000),
+      reference: "TXN-" + Date.now().toString(36).toUpperCase() + Math.floor(Math.random() * 1000),
       created_at: now(),
       updated_at: now(),
     });
@@ -538,6 +538,10 @@ export function subscribeAppointments(
   return subscribeCollection<Appointment>(userId, "appointments", cb, "appointment_date", "asc");
 }
 
+export function subscribeBirthdays(userId: string, cb: (items: Birthday[]) => void): Unsubscribe {
+  return subscribeCollection<Birthday>(userId, "birthdays", cb, "birthday_date", "asc");
+}
+
 export function subscribeTodos(userId: string, cb: (items: Todo[]) => void): Unsubscribe {
   return subscribeCollection<Todo>(
     userId,
@@ -586,6 +590,24 @@ export async function getUserProfile(userId: string): Promise<User | null> {
     return docToObj<User>(userSnap);
   } catch (err) {
     console.error("Failed to load user profile from Firestore:", err);
+    return null;
+  }
+}
+
+/**
+ * Checks whether the user's Firestore profile document exists.
+ * Returns `true` (profile exists), `false` (no profile — brand-new user), or
+ * `null` when the read itself failed. Callers use this to determine whether
+ * the onboarding (Birthday / Date of Birth) screen should be shown: a
+ * transient read failure must never be mistaken for a brand-new account.
+ */
+export async function userProfileExists(userId: string): Promise<boolean | null> {
+  try {
+    const userRef = doc(db, "users", userId);
+    const userSnap = await getDoc(userRef);
+    return userSnap.exists();
+  } catch (err) {
+    console.error("Failed to check user profile existence:", err);
     return null;
   }
 }
@@ -739,7 +761,7 @@ export async function performGlobalSearch(
 
   // Search appointments
   const appsRef = collection(db, "users", userId, "appointments");
-  const appsSnap = await getDocs(appsRef);
+  const appsSnap = await getDocs(query(appsRef, limit(50))); // Added limit
   appsSnap.docs.forEach((d) => {
     const a = docToObj<Appointment>(d);
     if (
@@ -759,7 +781,7 @@ export async function performGlobalSearch(
 
   // Search bills
   const billsRef = collection(db, "users", userId, "bills");
-  const billsSnap = await getDocs(billsRef);
+  const billsSnap = await getDocs(query(billsRef, limit(50))); // Added limit
   billsSnap.docs.forEach((d) => {
     const b = docToObj<Bill>(d);
     if (b.title.toLowerCase().includes(lowerTerm) || b.category.toLowerCase().includes(lowerTerm)) {
@@ -775,7 +797,7 @@ export async function performGlobalSearch(
 
   // Search medications
   const medsRef = collection(db, "users", userId, "medications");
-  const medsSnap = await getDocs(medsRef);
+  const medsSnap = await getDocs(query(medsRef, limit(50))); // Added limit
   medsSnap.docs.forEach((d) => {
     const m = docToObj<Medication>(d);
     if (m.name.toLowerCase().includes(lowerTerm) || m.dosage.toLowerCase().includes(lowerTerm)) {
@@ -791,7 +813,7 @@ export async function performGlobalSearch(
 
   // Search documents
   const docsRef = collection(db, "users", userId, "documents");
-  const docsSnap = await getDocs(docsRef);
+  const docsSnap = await getDocs(query(docsRef, limit(50))); // Added limit
   docsSnap.docs.forEach((d) => {
     const doc = docToObj<DocumentItem>(d);
     if (
@@ -810,7 +832,7 @@ export async function performGlobalSearch(
 
   // Search todos
   const todosRef = collection(db, "users", userId, "todos");
-  const todosSnap = await getDocs(todosRef);
+  const todosSnap = await getDocs(query(todosRef, limit(50))); // Added limit
   todosSnap.docs.forEach((d) => {
     const t = docToObj<Todo>(d);
     if (t.title.toLowerCase().includes(lowerTerm) || t.category.toLowerCase().includes(lowerTerm)) {
@@ -826,7 +848,7 @@ export async function performGlobalSearch(
 
   // Search birthdays
   const birthdaysRef = collection(db, "users", userId, "birthdays");
-  const birthdaysSnap = await getDocs(birthdaysRef);
+  const birthdaysSnap = await getDocs(query(birthdaysRef, limit(50))); // Added limit
   birthdaysSnap.docs.forEach((d) => {
     const b = docToObj<Birthday>(d);
     if (
@@ -845,7 +867,7 @@ export async function performGlobalSearch(
 
   // Search workout programs
   const programsRef = collection(db, "users", userId, "workout_programs");
-  const programsSnap = await getDocs(programsRef);
+  const programsSnap = await getDocs(query(programsRef, limit(50))); // Added limit
   programsSnap.docs.forEach((d) => {
     const p = docToObj<WorkoutProgram>(d);
     if (p.name.toLowerCase().includes(lowerTerm)) {
@@ -861,7 +883,7 @@ export async function performGlobalSearch(
 
   // Search workouts
   const workoutsRef = collection(db, "users", userId, "workouts");
-  const workoutsSnap = await getDocs(workoutsRef);
+  const workoutsSnap = await getDocs(query(workoutsRef, limit(50))); // Added limit
   workoutsSnap.docs.forEach((d) => {
     const w = docToObj<Workout>(d);
     if (
