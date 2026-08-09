@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
     <application
         android:allowBackup="true"
@@ -27,18 +28,25 @@
         <!-- Restore notifications after device restart -->
         <receiver
             android:name="com.capacitorjs.plugins.localnotifications.LocalNotificationRestoreReceiver"
-            android:exported="false">
+            android:exported="true"
+            android:directBootAware="true"
+            tools:replace="android:exported">
             <intent-filter>
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
                 <action android:name="android.intent.action.QUICKBOOT_POWERON" />
             </intent-filter>
         </receiver>
 
-        <!-- Foreground Service for Walk Tracking -->
+        <!-- Foreground Service for Walk Tracking.
+             stopWithTask="false" keeps the walk alive (and the notification
+             persistent) when the app is swiped away — the service re-enters the
+             foreground on its own after a process death, recovering the walk
+             from persisted state instead of silently dropping it. -->
         <service
             android:name=".WalkService"
-            android:foregroundServiceType="location"
-            android:exported="false" />
+            android:foregroundServiceType="location|health"
+            android:exported="false"
+            android:stopWithTask="false" />
 
         <provider
             android:name="androidx.core.content.FileProvider"
@@ -91,5 +99,11 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_HEALTH" />
+
+    <!-- Declare the step-counter hardware so the OS/manufacturers know the
+         app uses it (optional — the service degrades to GPS-only otherwise). -->
+    <uses-feature
+        android:name="android.hardware.sensor.stepcounter"
+        android:required="false" />
 
 </manifest>

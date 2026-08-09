@@ -48,6 +48,7 @@ function AppointmentsPage() {
   const [appointmentDate, setAppointmentDate] = useState(new Date().toISOString().split("T")[0]);
   const [startTime, setStartTime] = useState("10:00");
   const [priority, setPriority] = useState<"high" | "medium" | "light">("medium");
+  const [reminderOffsetMinutes, setReminderOffsetMinutes] = useState<number>(30);
   const [notes, setNotes] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [joining, setJoining] = useState(false);
@@ -65,6 +66,7 @@ function AppointmentsPage() {
     setAppointmentDate(new Date().toISOString().split("T")[0]);
     setStartTime("10:00");
     setPriority("medium");
+    setReminderOffsetMinutes(30);
     setNotes("");
   };
 
@@ -82,6 +84,7 @@ function AppointmentsPage() {
     setAppointmentDate(app.appointment_date);
     setStartTime(app.start_time || "10:00");
     setPriority(app.priority);
+    setReminderOffsetMinutes(app.reminder_offset_minutes ?? 30);
     setNotes(app.notes || "");
     setModalOpen(true);
   };
@@ -101,6 +104,7 @@ function AppointmentsPage() {
           start_time: startTime,
           priority,
           reminder: true,
+          reminder_offset_minutes: reminderOffsetMinutes,
           notes,
         });
         Notifications.cancelAppointment(editingApp.id);
@@ -111,6 +115,7 @@ function AppointmentsPage() {
           appointment_date: appointmentDate,
           start_time: startTime,
           reminder: true,
+          reminder_offset_minutes: reminderOffsetMinutes,
         } as any);
         sounds.playClick();
         toast.success("Appointment updated!");
@@ -123,6 +128,7 @@ function AppointmentsPage() {
           start_time: startTime,
           priority,
           reminder: true,
+          reminder_offset_minutes: reminderOffsetMinutes,
           notes,
         });
         Notifications.scheduleAppointment(newApp);
@@ -457,6 +463,19 @@ function AppointmentsPage() {
               <option value="light">Light</option>
               <option value="medium">Medium</option>
               <option value="high">High</option>
+            </select>
+          </div>
+          <div>
+            <label className="text-xs font-bold text-[#12131A]">Reminder lead time</label>
+            <select
+              value={reminderOffsetMinutes}
+              onChange={(e) => setReminderOffsetMinutes(Number(e.target.value))}
+              className="mt-1 w-full rounded-xl border border-black/10 bg-[#F9F9FD] p-2.5 text-xs outline-none focus:border-[#7C5CFC]"
+            >
+              <option value={0}>At appointment time</option>
+              <option value={15}>15 minutes before</option>
+              <option value={30}>30 minutes before</option>
+              <option value={60}>1 hour before</option>
             </select>
           </div>
           <div className="flex gap-2 pt-3">

@@ -25,10 +25,13 @@ export function Screen({
 
   return (
     <div
-      className={`min-h-viewport bg-[#F7F7FA] font-sans antialiased text-[#12131A] selection:bg-[#7C5CFC]/20 ${className ?? ""
-        }`}
+      className={`min-h-viewport bg-[#F7F7FA] font-sans antialiased text-[#12131A] selection:bg-[#7C5CFC]/20 ${
+        className ?? ""
+      }`}
     >
-      <div className={`mx-auto w-full max-w-md px-5 pt-6 page-fade-enter ${showBottomNav ? "pb-32" : "pb-8"}`}>
+      <div
+        className={`mx-auto w-full max-w-md px-5 pt-6 page-fade-enter ${showBottomNav ? "pb-32" : "pb-8"}`}
+      >
         {children}
       </div>
       {showBottomNav && <BottomNav />}

@@ -74,7 +74,9 @@ class SoundManager {
 
       osc.start();
       osc.stop(ctx.currentTime + 0.02);
-    } catch { /* silent */ }
+    } catch {
+      /* silent */
+    }
   }
 
   /**
@@ -99,7 +101,9 @@ class SoundManager {
 
       osc.start();
       osc.stop(ctx.currentTime + 0.03);
-    } catch { /* silent */ }
+    } catch {
+      /* silent */
+    }
   }
 
   /**
@@ -131,7 +135,9 @@ class SoundManager {
 
       osc.start();
       osc.stop(ctx.currentTime + 0.05);
-    } catch { /* silent */ }
+    } catch {
+      /* silent */
+    }
   }
 
   /**
@@ -158,7 +164,9 @@ class SoundManager {
 
       playTone(523.25, now, 0.08); // C5
       playTone(659.25, now + 0.08, 0.12); // E5
-    } catch { /* silent */ }
+    } catch {
+      /* silent */
+    }
   }
 
   /**
@@ -185,7 +193,9 @@ class SoundManager {
 
       playThud(240, now);
       playThud(180, now + 0.07);
-    } catch { /* silent */ }
+    } catch {
+      /* silent */
+    }
   }
 
   /**
@@ -211,7 +221,9 @@ class SoundManager {
 
       osc.start(now);
       osc.stop(now + 0.2);
-    } catch { /* silent */ }
+    } catch {
+      /* silent */
+    }
   }
 }
 

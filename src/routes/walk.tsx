@@ -1,5 +1,6 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { Capacitor } from "@capacitor/core";
 import {
   Play,
   Pause,
@@ -22,6 +23,7 @@ import { useWalk } from "@/hooks/use-walk";
 import { todayLocalDate } from "@/lib/api";
 import { sounds } from "@/lib/sound";
 import { PermissionManager } from "@/lib/permissions";
+import { WalkServicePlugin } from "@/lib/notifications-integration";
 import { WalkSession } from "@/lib/types";
 
 export const Route = createFileRoute("/walk")({
@@ -67,6 +69,10 @@ function WalkPage() {
     resumeWalk,
     finishWalk,
   } = useWalk(user?.id, user?.weight ? Number(user.weight) : 70);
+
+  // Native walk notification buttons (Pause/Finish) are handled inside use-walk
+  // via the walkUpdate "action" field, which keeps the React session and the
+  // foreground service perfectly in sync.
 
   const handleFinish = async () => {
     const result = await finishWalk();

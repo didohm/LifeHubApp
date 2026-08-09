@@ -23,7 +23,19 @@ export { NativePermissions };
 export type PermissionName = "notification" | "location" | "activity" | "media" | "audio";
 type PermissionState = "granted" | "denied" | "unknown";
 
+/** Fired on `window` whenever a native permission transitions into granted. */
+export const PERMISSIONS_CHANGED_EVENT = "lifehub:permissions-changed";
+
 const PERMISSION_STATES_KEY = "lifehub_permission_states";
+
+/**
+ * In-flight native request per permission. While an OS permission dialog is
+ * open, every other caller awaits the SAME promise instead of racing a second
+ * dialog — a concurrent `requestPermissions()` resolves as denied, which made
+ * `requestAllPermissions()` permanently cache `denied` and silently disable
+ * every reminder type.
+ */
+const inFlight = new Map<PermissionName, Promise<boolean>>();
 
 function loadStates(): Partial<Record<PermissionName, PermissionState>> {
   if (typeof window === "undefined") return {};
@@ -103,6 +115,19 @@ export class PermissionManager {
     }
     if (!isNative()) return true; // web: no OS-level prompts for these
 
+    const pending = inFlight.get(name);
+    if (pending) return pending;
+
+    const task = this.performRequest(name);
+    inFlight.set(name, task);
+    try {
+      return await task;
+    } finally {
+      inFlight.delete(name);
+    }
+  }
+
+  private static async performRequest(name: PermissionName): Promise<boolean> {
     try {
       let granted = false;
       if (name === "notification") {
@@ -113,11 +138,22 @@ export class PermissionManager {
           const status = await LocalNotifications.requestPermissions();
           granted = status.display === "granted";
         }
+        if (granted) {
+          await NotificationService.ensureExactAlarmPermission();
+        }
       } else {
         const result = await NativePermissions.request(name as PermissionAlias);
         granted = result.granted;
       }
+      // Only the OS result writes a state, so a "denied" here is a real denial
+      // (single-flight removed the race that produced false denials).
+      const previous = getState(name);
       saveState(name, granted ? "granted" : "denied");
+      // A denied → granted transition means reminders can be armed now — let
+      // the data context know so it re-runs the full resync immediately.
+      if (granted && previous !== "granted" && name === "notification") {
+        this.dispatchPermissionsChanged();
+      }
       return granted;
     } catch (err) {
       console.warn(`Failed to request ${name} permission:`, err);
@@ -152,6 +188,11 @@ export class PermissionManager {
   /** Local answer cache (what the user last chose in this app). */
   static wasDenied(name: PermissionName): boolean {
     return getState(name) === "denied";
+  }
+
+  private static dispatchPermissionsChanged() {
+    if (typeof window === "undefined") return;
+    window.dispatchEvent(new CustomEvent(PERMISSIONS_CHANGED_EVENT));
   }
 
   private static async requestWebNotification(): Promise<boolean> {

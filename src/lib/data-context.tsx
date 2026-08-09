@@ -55,6 +55,7 @@ import {
   WaterLog,
 } from "./types";
 import { Notifications } from "./notifications-integration";
+import { PERMISSIONS_CHANGED_EVENT } from "./permissions";
 import { sounds } from "./sound";
 import { useRef } from "react";
 
@@ -123,9 +124,6 @@ export interface DataContextValue {
 const DataContext = createContext<DataContextValue | undefined>(undefined);
 
 export function DataProvider({ userId, children }: { userId: string | null; children: ReactNode }) {
-  // One-shot flag: after the first real data batch arrives we re-sync the OS
-  // notification schedule (idempotent — pending notifications are kept).
-  const didNotificationResync = useRef(false);
   // Medications State
   const [medications, setMedications] = useState<Medication[]>([]);
   const [medicationLogs, setMedicationLogs] = useState<MedicationLog[]>([]);
@@ -400,7 +398,6 @@ export function DataProvider({ userId, children }: { userId: string | null; chil
     setWaterLogs([]);
   }, [userId]);
 
-
   useEffect(() => {
     if (!userId) return;
 
@@ -475,31 +472,81 @@ export function DataProvider({ userId, children }: { userId: string | null; chil
     };
   }, [userId]);
 
-  // Re-sync scheduled OS notifications once the first data batch arrives —
-  // guarantees real notifications survive app restarts (they are re-created
-  // if the OS cleaned them up) and never duplicates pending ones.
-  useEffect(() => {
-    if (didNotificationResync.current) return;
+  // Keep the OS notification schedule in sync with the data. reconcile() is
+  // idempotent (cancel + re-schedule per prefix), so it is safe to run on
+  // every relevant data change, on app resume, and when notification
+  // permission is granted — catching reminders the OS dropped while we were
+  // away and dropping reminders for deleted/completed records.
+  const resyncNotifications = useCallback(() => {
     if (!userId) return;
-    if (
-      medications.length === 0 &&
-      appointments.length === 0 &&
-      bills.length === 0 &&
-      birthdays.length === 0 &&
-      workouts.length === 0 &&
-      todos.length === 0
-    )
-      return;
-    didNotificationResync.current = true;
-    void Notifications.resyncAll({
-      medications,
-      appointments,
-      bills,
-      birthdays,
-      workouts,
-      todos,
-    });
-  }, [userId, medications, appointments, bills, birthdays, workouts, todos]);
+    const hasData =
+      medications.length > 0 ||
+      appointments.length > 0 ||
+      bills.length > 0 ||
+      birthdays.length > 0 ||
+      workouts.length > 0 ||
+      todos.length > 0;
+    if (hasData) {
+      void Notifications.resyncAll({
+        medications,
+        appointments,
+        bills,
+        birthdays,
+        workouts,
+        todos,
+      });
+    } else {
+      // A zero-data account still needs its daily check-in reminder armed.
+      void Notifications.resyncRecurringReminders().catch(() => {});
+    }
+  }, [
+    userId,
+    medications,
+    appointments,
+    bills,
+    birthdays,
+    workouts,
+    todos,
+  ]);
+
+  useEffect(() => {
+    if (!userId) return;
+
+    resyncNotifications();
+
+    // Re-sync on foregrounding and on permission grant. `resyncAll` is
+    // idempotent, so frequent triggers are safe — but `visibilitychange`
+    // can fire in rapid succession on app switches, so debounce it.
+    let debounceTimer: number | null = null;
+    const scheduleResync = () => {
+      if (debounceTimer !== null) window.clearTimeout(debounceTimer);
+      debounceTimer = window.setTimeout(() => {
+        debounceTimer = null;
+        resyncNotifications();
+      }, 1500);
+    };
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") scheduleResync();
+    };
+    const onPermissionsChanged = () => scheduleResync();
+
+    document.addEventListener("visibilitychange", onVisibility);
+    window.addEventListener("focus", onVisibility);
+    window.addEventListener(
+      PERMISSIONS_CHANGED_EVENT as keyof WindowEventMap,
+      onPermissionsChanged as EventListener,
+    );
+
+    return () => {
+      if (debounceTimer !== null) window.clearTimeout(debounceTimer);
+      document.removeEventListener("visibilitychange", onVisibility);
+      window.removeEventListener("focus", onVisibility);
+      window.removeEventListener(
+        PERMISSIONS_CHANGED_EVENT as keyof WindowEventMap,
+        onPermissionsChanged as EventListener,
+      );
+    };
+  }, [userId, resyncNotifications]);
 
   const value = useMemo<DataContextValue>(
     () => ({

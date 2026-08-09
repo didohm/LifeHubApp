@@ -11,7 +11,7 @@ import {
   Dumbbell,
   Target,
   Footprints,
-  UtensilsCrossed,
+  Sunrise,
 } from "lucide-react";
 import { Screen, ScreenHeader } from "@/components/lifehub/Screen";
 import { sounds } from "@/lib/sound";
@@ -23,7 +23,7 @@ export const Route = createFileRoute("/services")({
       {
         name: "description",
         content:
-          "Explore all LifeHub services: Workouts, Programs, Walking, Food, Appointments, Medications, Bills, Documents, Tasks, AI assistant & Progress.",
+          "Explore all LifeHub services: Workouts, Programs, Walking, Adhkar, Appointments, Medications, Bills, Documents, Tasks, AI assistant & Progress.",
       },
     ],
   }),
@@ -34,7 +34,7 @@ const services = [
   { to: "/workouts", label: "Workouts", bg: "bg-[#FFC593]", Icon: Dumbbell },
   { to: "/workout-programs", label: "Workout Programs", bg: "bg-[#E8E2FF]", Icon: Target },
   { to: "/walk", label: "Walking Service", bg: "bg-[#C2F2D0]", Icon: Footprints },
-  { to: "/food", label: "Food & Nutrition", bg: "bg-[#FFE8D6]", Icon: UtensilsCrossed },
+  { to: "/adhkar", label: "Adhkar", bg: "bg-[#FFE8D6]", Icon: Sunrise },
   { to: "/appointments", label: "Appointments", bg: "bg-[#BEE3FF]", Icon: Calendar },
   { to: "/medications", label: "Hydration & Meds", bg: "bg-[#FFD2E8]", Icon: Pill },
   { to: "/bills", label: "Bills & Payments", bg: "bg-[#E8E2FF]", Icon: Wallet },

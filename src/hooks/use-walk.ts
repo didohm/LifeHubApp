@@ -10,7 +10,11 @@ import {
   todayLocalDate,
 } from "@/lib/api";
 import { WalkSession } from "@/lib/types";
-import { Notifications, WalkServicePlugin, WalkStatusUpdate } from "@/lib/notifications-integration";
+import {
+  Notifications,
+  WalkServicePlugin,
+  WalkStatusUpdate,
+} from "@/lib/notifications-integration";
 
 export interface StepCounterPluginInterface {
   isAvailable(): Promise<{ available: boolean; hasCounter: boolean; hasDetector: boolean }>;
@@ -67,6 +71,10 @@ export function useWalk(userId: string | null | undefined, userWeightKg: number 
   const lastNativeUpdateCountRef = useRef(0);
   const statusRef = useRef(status);
   statusRef.current = status;
+  // Latest pause/finish callbacks, so the native walkUpdate "action" handler
+  // (which lives in a stable useCallback) can drive the current session.
+  const pauseWalkRef = useRef<(() => void) | null>(null);
+  const finishWalkRef = useRef<(() => void) | null>(null);
   const isAutoPausedRef = useRef(isAutoPaused);
   isAutoPausedRef.current = isAutoPaused;
   const isNative = Capacitor.isNativePlatform();
@@ -153,24 +161,78 @@ export function useWalk(userId: string | null | undefined, userWeightKg: number 
   const applyNativeStatus = useCallback((data: WalkStatusUpdate) => {
     if (!data || typeof data.distanceKm !== "number") return;
 
-    if (data.updateCount > 0) {
-      // A real native location fix exists → native values become the single
-      // source of truth for the session metrics (they keep counting in the
-      // background even when the WebView JS is throttled).
+    // The native foreground notification exposes Pause/Finish action buttons.
+    // The service republishes a walkUpdate carrying `action` when the user
+    // taps one, so the React session reacts in lock-step with the native
+    // service (single source of truth — no duplicate/divergent state).
+    if (data.action === "finish" && statusRef.current === "active") {
+      finishWalkRef.current?.();
+      return;
+    }
+    if (data.action === "pause" && statusRef.current === "active") {
+      pauseWalkRef.current?.();
+      return;
+    }
+
+    // The native service is the single source of truth the moment it reports
+    // ANY real progress — a GPS fix (updateCount > 0), a step (steps > 0), or
+    // accumulated distance (distanceKm > 0). Previously we required
+    // updateCount > 0, so without a GPS lock steps were detected natively but
+    // the UI stayed stuck at 0.00 km.
+    const hasProgress = data.updateCount > 0 || data.steps > 0 || data.distanceKm > 0;
+
+    if (data.tracking && (hasProgress || data.updateCount > 0)) {
       nativeActiveRef.current = true;
-      setNativeTracking(data.tracking);
+      setNativeTracking(true);
       lastMotionTimeRef.current = Date.now();
-      if (typeof data.distanceKm === "number") {
-        setDistance(Math.round(data.distanceKm * 1000));
+
+      setDistance((prev) => {
+        // Monotonic merge — native distance is authoritative, but never move
+        // backwards (native session restart vs. already-accumulated JS value).
+        const nativeMeters = Math.round(data.distanceKm * 1000);
+        return Math.max(prev, nativeMeters);
+      });
+
+      if (data.steps > 0) {
+        setSteps((prev) => Math.max(prev, data.steps));
       }
-      if (typeof data.steps === "number" && data.steps > 0) {
-        // Monotonic merge: never step backwards even if the native session
-        // was restarted while the JS accumulated a few fallback steps.
-        setSteps((prev) => Math.max(prev, data.steps as number));
+
+      // The native service owns elapsed time (it uses a wall-clock reference
+      // that advances while the app is backgrounded / screen-locked), so a
+      // minimized app no longer freezes the duration at the last foreground
+      // tick.
+      if (data.durationSec > 0) {
+        setDuration((prev) => Math.max(prev, data.durationSec));
       }
-      if (data.accuracy !== undefined) {
-        setGpsAvailable(data.accuracy <= 30);
+
+      if (data.calories > 0) {
+        setCalories((prev) => Math.max(prev, Math.round(data.calories)));
       }
+
+      // Feed native GPS fixes into the JS coordinate trail so the path
+      // recorded to Firestore keeps growing even when the WebView watcher
+      // is throttled in the background.
+      if (
+        data.updateCount > 0 &&
+        data.accuracy !== undefined &&
+        data.accuracy > 0 &&
+        data.accuracy <= 30 &&
+        typeof data.latitude === "number" &&
+        typeof data.longitude === "number" &&
+        (data.latitude !== 0 || data.longitude !== 0)
+      ) {
+        const coords = { lat: data.latitude, lng: data.longitude };
+        setLastCoords((prev) => {
+          if (!prev) return coords;
+          // Only record a new trail point for a meaningful displacement.
+          const d = haversineDistance(prev.lat, prev.lng, coords.lat, coords.lng);
+          return d >= 1.2 ? coords : prev;
+        });
+      }
+    }
+
+    if (data.updateCount > 0 && data.accuracy !== undefined && data.accuracy > 0) {
+      setGpsAvailable(data.accuracy <= 30);
     }
 
     if (data.updateCount > lastNativeUpdateCountRef.current) {
@@ -201,19 +263,64 @@ export function useWalk(userId: string | null | undefined, userWeightKg: number 
     };
   }, [isNative, applyNativeStatus]);
 
-  // Periodic status poll — covers WebView suspension gaps and event loss.
+  // Periodic status poll — covers WebView suspension gaps, event loss, and
+  // keeps feeding native trail points into the JS coordinate trail so a
+  // resumed walk has a valid previous fix (without it the first GPS delta
+  // that unlocks the distance is silently dropped and km stays at 0.00).
   useEffect(() => {
-    if (!isNative || status !== "active") return;
+    if (!isNative || (status !== "active" && status !== "paused")) return;
     const poll = window.setInterval(async () => {
       try {
         const data = await WalkServicePlugin.getStatus();
-        if (data && data.tracking) applyNativeStatus(data);
+        if (data) applyNativeStatus(data);
       } catch (e) {
         // Service may not be running (e.g. web or device without location)
       }
     }, 4000);
     return () => clearInterval(poll);
   }, [isNative, status, applyNativeStatus]);
+
+  // App-resume catch-up: WebView timers can be suspended while backgrounded,
+  // so grab a fresh native snapshot the moment the app returns to the
+  // foreground — the 4s poll would otherwise leave a visible stale-value
+  // (e.g. "0.00 km") window right after resuming.
+  useEffect(() => {
+    if (!isNative) return;
+    const fetchStatus = () => {
+      void WalkServicePlugin.getStatus()
+        .then((data) => {
+          if (data) applyNativeStatus(data);
+        })
+        .catch(() => {});
+    };
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") fetchStatus();
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    window.addEventListener("focus", onVisibility);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisibility);
+      window.removeEventListener("focus", onVisibility);
+    };
+  }, [isNative, applyNativeStatus]);
+
+  // Live notification sync. The native foreground service updates its own
+  // notification on every fix/step/tick, but when it runs without motion
+  // data (no GPS lock, no step sensor) the app keeps counting in JS while
+  // the native counter would sit at 0.00 km. While the JS fallback is the
+  // active source, push the app's counters into the native service every
+  // second (monotonic merge) and refresh the JS fallback notification, so
+  // the OS notification always mirrors what the app shows.
+  useEffect(() => {
+    if (!isNative || status !== "active") return;
+    const push = () => {
+      if (nativeActiveRef.current) return;
+      Notifications.updateWalkForeground(distance / 1000, steps, duration, calories, 0);
+    };
+    push();
+    const id = window.setInterval(push, 1000);
+    return () => clearInterval(id);
+  }, [isNative, status, distance, steps, duration, calories]);
 
   // Auto-pause and auto-resume monitoring loop.
   // While the native service is live we do NOT auto-pause on stale JS events:
@@ -309,7 +416,6 @@ export function useWalk(userId: string | null | undefined, userWeightKg: number 
     // NOTE: isAutoPaused intentionally NOT in the dependency array — toggling
     // it must not re-register the native step sensor (which would reset the
     // native session counter and double-count steps in JS).
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [status, isNative]);
 
   // Real GPS Location Watcher
@@ -375,7 +481,6 @@ export function useWalk(userId: string | null | undefined, userWeightKg: number 
         navigator.geolocation.clearWatch(watchIdRef.current);
       }
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [status, activeSession, userId]);
 
   // Start Walk Session
@@ -403,7 +508,7 @@ export function useWalk(userId: string | null | undefined, userWeightKg: number 
       // Persistent OS-level foreground notification in Android Control Center.
       // The native WalkService becomes the source of truth from here on and
       // streams "walkUpdate" events + poll snapshots back to this hook.
-      Notifications.startWalkForeground(0, 0);
+      Notifications.startWalkForeground(0, 0, 0, 0, 0);
     } catch (e) {
       console.error("Failed to start walk session:", e);
     } finally {
@@ -419,7 +524,10 @@ export function useWalk(userId: string | null | undefined, userWeightKg: number 
     nativeActiveRef.current = false;
     setNativeTracking(false);
     lastNativeUpdateCountRef.current = 0;
-    Notifications.stopWalkForeground();
+    // Keep the foreground service alive (so the notification persists) but tell
+    // the native side to stop the clock — the walk notification freezes on the
+    // paused metrics instead of being torn down and rebuilt.
+    Notifications.pauseWalkForeground();
     try {
       await updateWalkSession(activeSession.id, userId, {
         status: "paused",
@@ -443,14 +551,15 @@ export function useWalk(userId: string | null | undefined, userWeightKg: number 
     setNativeTracking(false);
     lastNativeUpdateCountRef.current = 0;
     setLastCoords(null);
-    // Pass the saved session baseline so the native service continues from it.
-    Notifications.startWalkForeground(distance / 1000, steps);
+    // Pass the saved session baseline so the native service continues the
+    // duration clock exactly where we left off.
+    Notifications.resumeWalkForeground(distance / 1000, steps, duration, calories, 0);
     try {
       await updateWalkSession(activeSession.id, userId, { status: "active" });
     } catch (e) {
       console.error("Failed to resume walk session:", e);
     }
-  }, [activeSession, userId, distance, steps]);
+  }, [activeSession, userId, distance, steps, duration, calories]);
 
   // Finish Walk Session
   const finishWalk = useCallback(async () => {
@@ -459,19 +568,24 @@ export function useWalk(userId: string | null | undefined, userWeightKg: number 
     setLoading(true);
     try {
       // Pull the latest native snapshot before saving so the recorded
-      // distance/steps match what the foreground service accumulated.
+      // distance/steps/duration match what the foreground service accumulated
+      // (it kept counting while the app was backgrounded / locked).
       let finalDistance = distance;
       let finalSteps = steps;
+      let finalDuration = duration;
       if (isNative) {
         try {
           const data = await WalkServicePlugin.getStatus();
           if (data && data.tracking) {
             applyNativeStatus(data);
             if (typeof data.distanceKm === "number" && data.distanceKm > 0) {
-              finalDistance = Math.round(data.distanceKm * 1000);
+              finalDistance = Math.max(finalDistance, Math.round(data.distanceKm * 1000));
             }
             if (typeof data.steps === "number" && data.steps > 0) {
-              finalSteps = data.steps;
+              finalSteps = Math.max(finalSteps, data.steps);
+            }
+            if (typeof data.durationSec === "number" && data.durationSec > 0) {
+              finalDuration = Math.max(finalDuration, data.durationSec);
             }
           }
         } catch (e) {
@@ -480,7 +594,7 @@ export function useWalk(userId: string | null | undefined, userWeightKg: number 
       }
 
       await updateWalkSession(activeSession.id, userId, {
-        duration,
+        duration: finalDuration,
         distance: finalDistance,
         calories:
           finalDistance > 0 || finalSteps > 0
@@ -507,7 +621,17 @@ export function useWalk(userId: string | null | undefined, userWeightKg: number 
     } finally {
       setLoading(false);
     }
-  }, [activeSession, userId, duration, distance, calories, steps, isNative, userWeightKg, applyNativeStatus]);
+  }, [
+    activeSession,
+    userId,
+    duration,
+    distance,
+    calories,
+    steps,
+    isNative,
+    userWeightKg,
+    applyNativeStatus,
+  ]);
 
   const resetWalk = useCallback(() => {
     setStatus("idle");
@@ -522,6 +646,12 @@ export function useWalk(userId: string | null | undefined, userWeightKg: number 
     setNativeTracking(false);
     Notifications.stopWalkForeground();
   }, []);
+
+  // Keep the native-action refs pointed at the latest callbacks.
+  useEffect(() => {
+    pauseWalkRef.current = pauseWalk;
+    finishWalkRef.current = finishWalk;
+  }, [pauseWalk, finishWalk]);
 
   return {
     activeSession,

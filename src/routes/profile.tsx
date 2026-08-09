@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback, memo } from "react";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import {
   LogOut,
@@ -46,6 +46,75 @@ export const Route = createFileRoute("/profile")({
   component: ProfilePage,
 });
 
+interface StatCardProps {
+  icon: React.ElementType;
+  iconClassName: string;
+  value: React.ReactNode;
+  label: string;
+  valueClassName?: string;
+}
+
+const StatCard = memo(function StatCard({
+  icon: Icon,
+  iconClassName,
+  value,
+  label,
+  valueClassName,
+}: StatCardProps) {
+  return (
+    <div className="card-soft bg-white p-3.5 border border-black/5 shadow-xs text-left flex items-center gap-3">
+      <div
+        className={`flex size-9 items-center justify-center rounded-2xl shrink-0 ${iconClassName}`}
+      >
+        <Icon className="size-4.5" />
+      </div>
+      <div>
+        <span className={`text-base font-black text-[#12131A] ${valueClassName || ""}`}>
+          {value}
+        </span>
+        <span className="block text-[11px] font-semibold text-[#6B7280]">{label}</span>
+      </div>
+    </div>
+  );
+});
+
+interface MenuButtonProps {
+  icon: React.ElementType;
+  label: string;
+  onClick: () => void;
+  variant?: "default" | "danger";
+}
+
+const MenuButton = memo(function MenuButton({
+  icon: Icon,
+  label,
+  onClick,
+  variant = "default",
+}: MenuButtonProps) {
+  return (
+    <button
+      onClick={onClick}
+      className={`tap card-soft w-full bg-white p-4 flex items-center justify-between border shadow-xs transition-all ${
+        variant === "danger"
+          ? "border-rose-100 text-rose-600 hover:bg-rose-50/50 mt-4"
+          : "border-black/5 text-[#12131A] hover:shadow-md"
+      }`}
+    >
+      <div className="flex items-center gap-3">
+        <div
+          className={`flex size-9 items-center justify-center rounded-full ${
+            variant === "danger" ? "bg-rose-100 text-rose-600" : "bg-[#F0F0F5] text-[#12131A]"
+          }`}
+        >
+          <Icon className="size-4.5" />
+        </div>
+        <span className="text-sm font-extrabold">{label}</span>
+      </div>
+      <ChevronRight className="size-4 opacity-50" />
+    </button>
+  );
+});
+
 function ProfilePage() {
   const { user, logout, updateUserField } = useAuth();
   const navigate = useNavigate();
@@ -57,52 +126,49 @@ function ProfilePage() {
 
   const [fullName, setFullName] = useState("");
   const [dob, setDob] = useState("");
-  // Initialize from the already-published user profile so the real photo is
-  // visible on the very first frame — no placeholder, no flicker after login.
   const [avatarPreview, setAvatarPreview] = useState<string>(() => user?.avatar_url || "");
   const [submitting, setSubmitting] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [soundsEnabled, setSoundsEnabled] = useState(sounds.isEnabled());
-  const [notificationsEnabled, setNotificationsEnabled] = useState(true);
-  // Real OS reminder settings (persisted locally, re-scheduled on app start)
   const [reminderSettings, setReminderSettings] = useState(readReminderSettings);
 
-  // Real Database Statistics
   const [realStats, setRealStats] = useState<ProfileStats | null>(null);
   const [statsLoading, setStatsLoading] = useState(true);
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const statsRequestId = useRef(0);
 
+  // Sync user fields only when the relevant fields actually change
   useEffect(() => {
-    if (user) {
-      setFullName(user.full_name || "");
-      setDob(user.date_of_birth || "");
-      setAvatarPreview(user.avatar_url || "");
-
-      // Load real statistics computed directly from Firestore
-      setStatsLoading(true);
-      getProfileStats(user.id)
-        .then((data) => {
-          setRealStats(data);
-        })
-        .catch((err) => {
-          console.error("Failed to load profile stats:", err);
-        })
-        .finally(() => {
-          setStatsLoading(false);
-        });
-    }
+    if (!user) return;
+    setFullName((prev) => (prev !== user.full_name ? user.full_name || "" : prev));
+    setDob((prev) => (prev !== user.date_of_birth ? user.date_of_birth || "" : prev));
+    setAvatarPreview((prev) => (prev !== user.avatar_url ? user.avatar_url || "" : prev));
   }, [user]);
 
-  const handleImageFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  // Load stats when user id changes
+  useEffect(() => {
+    if (!user) return;
+    statsRequestId.current += 1;
+    const myId = statsRequestId.current;
+    setStatsLoading(true);
+    getProfileStats(user.id)
+      .then((data) => {
+        if (myId === statsRequestId.current) setRealStats(data);
+      })
+      .catch((err) => console.error("Failed to load profile stats:", err))
+      .finally(() => {
+        if (myId === statsRequestId.current) setStatsLoading(false);
+      });
+  }, [user]);
+
+  const handleImageFileChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-
     if (!file.type.startsWith("image/")) {
       toast.error("Please select a valid image file.");
       return;
     }
-
     const reader = new FileReader();
     reader.onload = (event) => {
       const dataUrl = event.target?.result as string;
@@ -110,38 +176,35 @@ function ProfilePage() {
       toast.success("Profile photo updated! Click Save to apply.");
     };
     reader.readAsDataURL(file);
-  };
+  }, []);
 
-  const handleUpdateProfile = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!user) return;
+  const handleUpdateProfile = useCallback(
+    async (e: React.FormEvent) => {
+      e.preventDefault();
+      if (!user) return;
+      if (dob && dob > toDateInputValue()) {
+        toast.error("Date of birth can't be in the future.");
+        return;
+      }
+      setSubmitting(true);
+      try {
+        await updateUserProfile(user.id, { full_name: fullName, avatar_url: avatarPreview });
+        updateUserField("full_name", fullName);
+        updateUserField("avatar_url", avatarPreview || null);
+        setEditModalOpen(false);
+        toast.success("Profile updated successfully!");
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : "Failed to update profile.");
+      } finally {
+        setSubmitting(false);
+      }
+    },
+    [user, dob, fullName, avatarPreview, updateUserField],
+  );
 
-    if (dob && dob > toDateInputValue()) {
-      toast.error("Date of birth can't be in the future.");
-      return;
-    }
-
-    setSubmitting(true);
-    try {
-      await updateUserProfile(user.id, {
-        full_name: fullName,
-        avatar_url: avatarPreview,
-      });
-      // Publish instantly so the avatar/name update everywhere right away
-      updateUserField("full_name", fullName);
-      updateUserField("avatar_url", avatarPreview || null);
-      setEditModalOpen(false);
-      toast.success("Profile updated successfully!");
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Failed to update profile.");
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
-  /** Toggles the real daily check-in OS notification (recurring every day). */
-  const handleToggleDailyReminder = async () => {
-    const next = !reminderSettings.daily.enabled;
+  const handleToggleDailyReminder = useCallback(async () => {
+    const daily = reminderSettings.daily;
+    const next = !daily.enabled;
     try {
       if (next) {
         const granted = await PermissionManager.ensurePermission("notification");
@@ -151,36 +214,32 @@ function ProfilePage() {
           );
           return;
         }
-        const { hour, minute } = reminderSettings.daily;
-        await Notifications.scheduleDailyReminder(hour, minute);
+        await Notifications.scheduleDailyReminder(daily.hour, daily.minute);
         toast.success(
-          `Daily reminder ON — every day at ${hour.toString().padStart(2, "0")}:${minute
-            .toString()
-            .padStart(2, "0")}`,
+          `Daily reminder ON — every day at ${daily.hour.toString().padStart(2, "0")}:${daily.minute.toString().padStart(2, "0")}`,
         );
       } else {
         await Notifications.cancelDailyReminder();
         toast.success("Daily reminder turned off");
       }
-      setReminderSettings(readReminderSettings());
+      setReminderSettings(readReminderSettings);
     } catch {
       toast.error("Could not update reminder");
     }
-  };
+  }, [reminderSettings.daily]);
 
-  const handleToggleSetting = async (key: "compact_mode" | "animations_enabled") => {
-    if (!user) return;
-    const newVal = !user[key];
-    try {
-      await updateUserProfile(user.id, { [key]: newVal });
-      updateUserField(key, newVal);
-      toast.success("Preference updated");
-    } catch {
-      toast.error("Could not update preference");
+  const handleTimeChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const [h, m] = e.target.value.split(":").map(Number);
+    if (!Number.isNaN(h) && !Number.isNaN(m)) {
+      setReminderSettings((prev) => {
+        const next = { ...prev, daily: { ...prev.daily, hour: h, minute: m } };
+        if (next.daily.enabled) void Notifications.scheduleDailyReminder(h, m);
+        return next;
+      });
     }
-  };
+  }, []);
 
-  const handleDeleteAccount = async () => {
+  const handleDeleteAccount = useCallback(async () => {
     if (!user) return;
     setDeleting(true);
     try {
@@ -193,13 +252,23 @@ function ProfilePage() {
     } finally {
       setDeleting(false);
     }
-  };
+  }, [user, logout, navigate]);
 
-  const handleLogout = async () => {
+  const handleLogout = useCallback(async () => {
     await logout();
     toast.success("Logged out safely");
     navigate({ to: "/auth" });
-  };
+  }, [logout, navigate]);
+
+  const openEdit = useCallback(() => setEditModalOpen(true), []);
+  const openSettings = useCallback(() => setSettingsModalOpen(true), []);
+  const openHelp = useCallback(() => setHelpModalOpen(true), []);
+
+  const statsData = useCallback(
+    (val: number | string | undefined, fallback = "—") =>
+      statsLoading ? "..." : (val ?? fallback),
+    [statsLoading],
+  );
 
   return (
     <Screen>
@@ -208,7 +277,7 @@ function ProfilePage() {
         showBack
         action={
           <button
-            onClick={() => setSettingsModalOpen(true)}
+            onClick={openSettings}
             className="tap flex size-9 items-center justify-center rounded-full bg-white text-[#12131A] shadow-xs border border-black/5"
             title="Settings"
           >
@@ -228,7 +297,7 @@ function ProfilePage() {
             initialsClassName="text-2xl"
           />
           <button
-            onClick={() => setEditModalOpen(true)}
+            onClick={openEdit}
             className="absolute bottom-0 right-0 flex size-7 items-center justify-center rounded-full bg-[#7C5CFC] text-white shadow-sm hover:scale-105"
             title="Edit avatar"
           >
@@ -241,168 +310,78 @@ function ProfilePage() {
         </h2>
         {user?.email ? <p className="text-xs font-semibold text-[#6B7280]">{user.email}</p> : null}
 
-        {/* Real Database Statistics Grid (6 Cards, No Hardcoding, Following Replaced) */}
+        {/* Real Database Statistics Grid */}
         <div className="mt-5 grid grid-cols-2 gap-2.5">
-          {/* 1. Workouts Completed */}
-          <div className="card-soft bg-white p-3.5 border border-black/5 shadow-xs text-left flex items-center gap-3">
-            <div className="flex size-9 items-center justify-center rounded-2xl bg-orange-500/10 text-orange-600 shrink-0">
-              <Dumbbell className="size-4.5" />
-            </div>
-            <div>
-              <span className="text-base font-black text-[#12131A]">
-                {statsLoading ? "..." : realStats ? realStats.totalWorkoutsCompleted : "—"}
-              </span>
-              <span className="block text-[11px] font-semibold text-[#6B7280]">Workouts</span>
-            </div>
-          </div>
-
-          {/* 2. Avg Task Completion % */}
-          <div className="card-soft bg-white p-3.5 border border-black/5 shadow-xs text-left flex items-center gap-3">
-            <div className="flex size-9 items-center justify-center rounded-2xl bg-emerald-500/10 text-emerald-600 shrink-0">
-              <CheckCircle2 className="size-4.5" />
-            </div>
-            <div>
-              <span className="text-base font-black text-[#12131A]">
-                {statsLoading ? "..." : realStats ? `${realStats.avgTaskCompletion}%` : "—"}
-              </span>
-              <span className="block text-[11px] font-semibold text-[#6B7280]">Avg Task Done</span>
-            </div>
-          </div>
-
-          {/* 3. Water Goal Streak */}
-          <div className="card-soft bg-white p-3.5 border border-black/5 shadow-xs text-left flex items-center gap-3">
-            <div className="flex size-9 items-center justify-center rounded-2xl bg-sky-500/10 text-sky-600 shrink-0">
-              <Droplets className="size-4.5" />
-            </div>
-            <div>
-              <span className="text-base font-black text-[#12131A]">
-                {statsLoading ? "..." : realStats ? `${realStats.waterGoalStreak}d` : "—"}
-              </span>
-              <span className="block text-[11px] font-semibold text-[#6B7280]">Water Streak</span>
-            </div>
-          </div>
-
-          {/* 4. Total Walking Distance */}
-          <div className="card-soft bg-white p-3.5 border border-black/5 shadow-xs text-left flex items-center gap-3">
-            <div className="flex size-9 items-center justify-center rounded-2xl bg-emerald-500/10 text-emerald-600 shrink-0">
-              <Footprints className="size-4.5" />
-            </div>
-            <div>
-              <span className="text-base font-black text-[#12131A]">
-                {statsLoading
-                  ? "..."
-                  : realStats
-                    ? `${(realStats.totalWalkingDistanceMeters / 1000).toFixed(2)}km`
-                    : "—"}
-              </span>
-              <span className="block text-[11px] font-semibold text-[#6B7280]">Walk Distance</span>
-            </div>
-          </div>
-
-          {/* 5. Total Appointments */}
-          <div className="card-soft bg-white p-3.5 border border-black/5 shadow-xs text-left flex items-center gap-3">
-            <div className="flex size-9 items-center justify-center rounded-2xl bg-purple-500/10 text-purple-600 shrink-0">
-              <Calendar className="size-4.5" />
-            </div>
-            <div>
-              <span className="text-base font-black text-[#12131A]">
-                {statsLoading ? "..." : realStats ? realStats.totalAppointments : "—"}
-              </span>
-              <span className="block text-[11px] font-semibold text-[#6B7280]">Appointments</span>
-            </div>
-          </div>
-
-          {/* 6. Current Achievement Level */}
-          <div className="card-soft bg-white p-3.5 border border-black/5 shadow-xs text-left flex items-center gap-3">
-            <div className="flex size-9 items-center justify-center rounded-2xl bg-amber-500/10 text-amber-600 shrink-0">
-              <Award className="size-4.5" />
-            </div>
-            <div>
+          <StatCard
+            icon={Dumbbell}
+            iconClassName="bg-orange-500/10 text-orange-600"
+            value={statsData(realStats?.totalWorkoutsCompleted)}
+            label="Workouts"
+          />
+          <StatCard
+            icon={CheckCircle2}
+            iconClassName="bg-emerald-500/10 text-emerald-600"
+            value={statsData(realStats ? `${realStats.avgTaskCompletion}%` : undefined)}
+            label="Avg Task Done"
+          />
+          <StatCard
+            icon={Droplets}
+            iconClassName="bg-sky-500/10 text-sky-600"
+            value={statsData(realStats ? `${realStats.waterGoalStreak}d` : undefined)}
+            label="Water Streak"
+          />
+          <StatCard
+            icon={Footprints}
+            iconClassName="bg-emerald-500/10 text-emerald-600"
+            value={
+              statsLoading
+                ? "..."
+                : realStats
+                  ? `${(realStats.totalWalkingDistanceMeters / 1000).toFixed(2)}km`
+                  : "—"
+            }
+            label="Walk Distance"
+          />
+          <StatCard
+            icon={Calendar}
+            iconClassName="bg-purple-500/10 text-purple-600"
+            value={statsData(realStats?.totalAppointments)}
+            label="Appointments"
+          />
+          <StatCard
+            icon={Award}
+            iconClassName="bg-amber-500/10 text-amber-600"
+            value={
               <span className="text-sm font-black text-[#12131A] truncate block max-w-[85px]">
-                {statsLoading ? "..." : realStats ? realStats.currentAchievementLevel : "—"}
+                {statsData(realStats?.currentAchievementLevel)}
               </span>
-              <span className="block text-[11px] font-semibold text-[#6B7280]">Level</span>
-            </div>
-          </div>
+            }
+            label="Level"
+            valueClassName="text-sm"
+          />
         </div>
       </section>
 
-      {/* Menu Options List matching Screen 12 */}
+      {/* Menu Options List */}
       <section className="mt-5 space-y-2">
-        <button
-          onClick={() => setEditModalOpen(true)}
-          className="tap card-soft w-full bg-white p-4 flex items-center justify-between border border-black/5 shadow-xs text-[#12131A] hover:shadow-md transition-all"
-        >
-          <div className="flex items-center gap-3">
-            <div className="flex size-9 items-center justify-center rounded-full bg-[#F0F0F5] text-[#12131A]">
-              <User className="size-4.5" />
-            </div>
-            <span className="text-sm font-extrabold">Personal Info</span>
-          </div>
-          <ChevronRight className="size-4 opacity-50" />
-        </button>
-
-        <button
+        <MenuButton icon={User} label="Personal Info" onClick={openEdit} />
+        <MenuButton
+          icon={Target}
+          label="Goals & Progress"
           onClick={() => navigate({ to: "/analytics" })}
-          className="tap card-soft w-full bg-white p-4 flex items-center justify-between border border-black/5 shadow-xs text-[#12131A] hover:shadow-md transition-all"
-        >
-          <div className="flex items-center gap-3">
-            <div className="flex size-9 items-center justify-center rounded-full bg-[#F0F0F5] text-[#12131A]">
-              <Target className="size-4.5" />
-            </div>
-            <span className="text-sm font-extrabold">Goals & Progress</span>
-          </div>
-          <ChevronRight className="size-4 opacity-50" />
-        </button>
-
-        <button
-          onClick={() => setSettingsModalOpen(true)}
-          className="tap card-soft w-full bg-white p-4 flex items-center justify-between border border-black/5 shadow-xs text-[#12131A] hover:shadow-md transition-all"
-        >
-          <div className="flex items-center gap-3">
-            <div className="flex size-9 items-center justify-center rounded-full bg-[#F0F0F5] text-[#12131A]">
-              <Bell className="size-4.5" />
-            </div>
-            <span className="text-sm font-extrabold">Notifications</span>
-          </div>
-          <ChevronRight className="size-4 opacity-50" />
-        </button>
-
-        <button
-          onClick={() => setHelpModalOpen(true)}
-          className="tap card-soft w-full bg-white p-4 flex items-center justify-between border border-black/5 shadow-xs text-[#12131A] hover:shadow-md transition-all"
-        >
-          <div className="flex items-center gap-3">
-            <div className="flex size-9 items-center justify-center rounded-full bg-[#F0F0F5] text-[#12131A]">
-              <Headset className="size-4.5" />
-            </div>
-            <span className="text-sm font-extrabold">Support / Help</span>
-          </div>
-          <ChevronRight className="size-4 opacity-50" />
-        </button>
-
-        <button
-          onClick={handleLogout}
-          className="tap card-soft w-full bg-white p-4 flex items-center justify-between border border-rose-100 shadow-xs text-rose-600 hover:bg-rose-50/50 transition-all mt-4"
-        >
-          <div className="flex items-center gap-3">
-            <div className="flex size-9 items-center justify-center rounded-full bg-rose-100 text-rose-600">
-              <LogOut className="size-4.5" />
-            </div>
-            <span className="text-sm font-extrabold">Log Out</span>
-          </div>
-          <ChevronRight className="size-4 opacity-50" />
-        </button>
+        />
+        <MenuButton icon={Bell} label="Notifications" onClick={openSettings} />
+        <MenuButton icon={Headset} label="Support / Help" onClick={openHelp} />
+        <MenuButton icon={LogOut} label="Log Out" onClick={handleLogout} variant="danger" />
       </section>
 
-      {/* Settings Modal — matches Document dialog layout & tokens */}
+      {/* Settings Modal */}
       <Modal
         open={settingsModalOpen}
         onClose={() => setSettingsModalOpen(false)}
         className="bg-card"
         backdropClassName="px-3"
       >
-        {/* Header */}
         <div className="flex items-center justify-between border-b border-border/40 pb-4">
           <h2 className="text-lg font-extrabold tracking-tight text-foreground">Settings</h2>
           <button
@@ -414,7 +393,6 @@ function ProfilePage() {
         </div>
 
         <div className="mt-4 space-y-4">
-          {/* General */}
           <div>
             <h4 className="mb-2.5 text-xs font-bold uppercase tracking-wider text-muted-foreground">
               General
@@ -429,7 +407,6 @@ function ProfilePage() {
             </div>
           </div>
 
-          {/* Preferences */}
           <div>
             <h4 className="mb-2.5 text-xs font-bold uppercase tracking-wider text-muted-foreground">
               Preferences
@@ -460,79 +437,50 @@ function ProfilePage() {
               </button>
 
               {Capacitor.isNativePlatform() && (
-                <>
-                  {/* Real daily check-in reminder (OS-level, recurring) */}
-                  <div className="flex items-center justify-between gap-3 rounded-xl bg-muted/30 p-3.5">
-                    <div className="flex min-w-0 items-center gap-3">
-                      <div className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary">
-                        <BellRing className="size-4" />
-                      </div>
-                      <div className="min-w-0">
-                        <span className="block truncate text-sm font-bold text-foreground">
-                          Daily Reminder
-                        </span>
-                        <span className="block truncate text-xs font-medium text-muted-foreground">
-                          {reminderSettings.daily.enabled
-                            ? `Every day at ${reminderSettings.daily.hour
-                                .toString()
-                                .padStart(2, "0")}:${reminderSettings.daily.minute
-                                .toString()
-                                .padStart(2, "0")}`
-                            : "Off — one check-in per day"}
-                        </span>
-                      </div>
+                <div className="flex items-center justify-between gap-3 rounded-xl bg-muted/30 p-3.5">
+                  <div className="flex min-w-0 items-center gap-3">
+                    <div className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary">
+                      <BellRing className="size-4" />
                     </div>
-                    <div className="flex shrink-0 items-center gap-2">
-                      <input
-                        type="time"
-                        value={`${reminderSettings.daily.hour
-                          .toString()
-                          .padStart(2, "0")}:${reminderSettings.daily.minute
-                          .toString()
-                          .padStart(2, "0")}`}
-                        onChange={(e) => {
-                          const [h, m] = e.target.value.split(":").map(Number);
-                          if (!Number.isNaN(h) && !Number.isNaN(m)) {
-                            setReminderSettings((prev) => {
-                              const next = {
-                                ...prev,
-                                daily: { ...prev.daily, hour: h, minute: m },
-                              };
-                              // Re-schedule immediately when already enabled
-                              if (next.daily.enabled) {
-                                void Notifications.scheduleDailyReminder(h, m);
-                              }
-                              return next;
-                            });
-                          }
-                        }}
-                        className="rounded-lg border border-input bg-card px-2.5 py-2 text-xs font-bold text-foreground outline-none"
-                      />
-                      <button
-                        role="switch"
-                        aria-checked={reminderSettings.daily.enabled}
-                        aria-label="Toggle daily reminder"
-                        onClick={handleToggleDailyReminder}
-                        className={`relative h-6 w-11 shrink-0 rounded-full transition-colors ${
-                          reminderSettings.daily.enabled
-                            ? "bg-emerald-500"
-                            : "bg-muted-foreground/30"
-                        }`}
-                      >
-                        <span
-                          className={`absolute top-0.5 size-5 rounded-full bg-card shadow transition-all ${
-                            reminderSettings.daily.enabled ? "left-[22px]" : "left-0.5"
-                          }`}
-                        />
-                      </button>
+                    <div className="min-w-0">
+                      <span className="block truncate text-sm font-bold text-foreground">
+                        Daily Reminder
+                      </span>
+                      <span className="block truncate text-xs font-medium text-muted-foreground">
+                        {reminderSettings.daily.enabled
+                          ? `Every day at ${reminderSettings.daily.hour.toString().padStart(2, "0")}:${reminderSettings.daily.minute.toString().padStart(2, "0")}`
+                          : "Off — one check-in per day"}
+                      </span>
                     </div>
                   </div>
-                </>
+                  <div className="flex shrink-0 items-center gap-2">
+                    <input
+                      type="time"
+                      value={`${reminderSettings.daily.hour.toString().padStart(2, "0")}:${reminderSettings.daily.minute.toString().padStart(2, "0")}`}
+                      onChange={handleTimeChange}
+                      className="rounded-lg border border-input bg-card px-2.5 py-2 text-xs font-bold text-foreground outline-none"
+                    />
+                    <button
+                      role="switch"
+                      aria-checked={reminderSettings.daily.enabled}
+                      aria-label="Toggle daily reminder"
+                      onClick={handleToggleDailyReminder}
+                      className={`relative h-6 w-11 shrink-0 rounded-full transition-colors ${
+                        reminderSettings.daily.enabled ? "bg-emerald-500" : "bg-muted-foreground/30"
+                      }`}
+                    >
+                      <span
+                        className={`absolute top-0.5 size-5 rounded-full bg-card shadow transition-all ${
+                          reminderSettings.daily.enabled ? "left-[22px]" : "left-0.5"
+                        }`}
+                      />
+                    </button>
+                  </div>
+                </div>
               )}
             </div>
           </div>
 
-          {/* About */}
           <div>
             <h4 className="mb-2.5 text-xs font-bold uppercase tracking-wider text-muted-foreground">
               About
@@ -545,9 +493,8 @@ function ProfilePage() {
         </div>
       </Modal>
 
-      {/* Help & Support dialog — developer info + social links */}
+      {/* Help & Support dialog */}
       <Modal open={helpModalOpen} onClose={() => setHelpModalOpen(false)} className="bg-card">
-        {/* Header */}
         <div className="flex items-center justify-between border-b border-border/40 pb-4">
           <h2 className="text-lg font-extrabold tracking-tight text-foreground">Help & Support</h2>
           <button
@@ -560,7 +507,6 @@ function ProfilePage() {
         </div>
 
         <div className="mt-5 space-y-4">
-          {/* Developer card */}
           <div className="flex flex-col items-center gap-2 rounded-2xl bg-muted/30 px-5 py-6 text-center">
             <div className="flex size-12 items-center justify-center rounded-full bg-primary/10 text-primary">
               <ShieldCheck className="size-5" />
@@ -573,7 +519,6 @@ function ProfilePage() {
             </p>
           </div>
 
-          {/* Social links */}
           <div className="space-y-2.5">
             <a
               href="https://www.instagram.com/didohm_/"
@@ -612,10 +557,9 @@ function ProfilePage() {
         </div>
       </Modal>
 
-      {/* Edit Profile Modal — matches Document dialog layout & tokens */}
+      {/* Edit Profile Modal */}
       <Modal open={editModalOpen} onClose={() => setEditModalOpen(false)} className="bg-card">
         <form onSubmit={handleUpdateProfile} className="mt-4 space-y-3">
-          {/* Header */}
           <div className="flex items-center justify-between border-b border-border/40 pb-3">
             <h2 className="text-lg font-extrabold text-foreground">Edit Personal Info</h2>
             <button
@@ -626,15 +570,12 @@ function ProfilePage() {
             </button>
           </div>
 
-          {/* Avatar section — centered */}
           <div className="relative flex flex-col items-center overflow-hidden rounded-xl border border-border/40 bg-muted/30 px-5 py-6">
-            {/* Soft ambient glow behind avatar */}
             <div
               aria-hidden
               className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_50%_60%_at_50%_30%,oklch(0.75_0.09_292/0.1),transparent_70%)]"
             />
             <div className="relative">
-              {/* Outer ring */}
               <div className="rounded-full bg-card p-1.5 shadow-md">
                 <UserAvatar
                   name={user?.full_name}
@@ -644,7 +585,6 @@ function ProfilePage() {
                   initialsClassName="text-2xl"
                 />
               </div>
-              {/* Camera button */}
               <button
                 type="button"
                 onClick={() => fileInputRef.current?.click()}
@@ -655,7 +595,6 @@ function ProfilePage() {
               </button>
             </div>
 
-            {/* Action buttons */}
             <div className="mt-4 flex items-center gap-2.5">
               <button
                 type="button"
@@ -687,7 +626,6 @@ function ProfilePage() {
             />
           </div>
 
-          {/* Form fields */}
           <div>
             <label className="text-xs font-bold text-foreground">Full Name</label>
             <div className="relative mt-1">
@@ -703,7 +641,6 @@ function ProfilePage() {
             </div>
           </div>
 
-          {/* Date of Birth — read-only with inline age badge */}
           {dob ? (
             <div>
               <label className="text-xs font-bold text-foreground">Date of Birth</label>
@@ -715,7 +652,6 @@ function ProfilePage() {
                   value={dob}
                   className="w-full cursor-not-allowed rounded-xl border border-input bg-muted/50 py-2.5 pl-9 pr-4 text-sm font-semibold text-foreground/60 outline-none"
                 />
-                {/* Lock indicator */}
                 <div className="pointer-events-none absolute right-3 top-1/2 flex -translate-y-1/2 items-center gap-1 text-[10px] font-bold text-muted-foreground">
                   <ShieldCheck className="size-3" /> Locked
                 </div>
@@ -731,7 +667,6 @@ function ProfilePage() {
             </div>
           ) : null}
 
-          {/* Footer — clear primary/secondary hierarchy */}
           <div className="flex gap-2 pt-3">
             <button
               type="button"

@@ -32,10 +32,10 @@ export const isFirebaseConfigured =
 // Initialize Firebase App singleton only if keys are present (or fallback to dummy to prevent crash on require)
 const app = !getApps().length
   ? initializeApp(
-    isFirebaseConfigured
-      ? firebaseConfig
-      : { ...firebaseConfig, apiKey: "AIzaSyDummyKeyPlaceholderToPreventCrash" },
-  )
+      isFirebaseConfigured
+        ? firebaseConfig
+        : { ...firebaseConfig, apiKey: "AIzaSyDummyKeyPlaceholderToPreventCrash" },
+    )
   : getApp();
 
 // Initialize Firebase Authentication

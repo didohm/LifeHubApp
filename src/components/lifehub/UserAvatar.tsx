@@ -52,7 +52,6 @@ function UserAvatarImpl({ name, src, alt, className, initialsClassName }: UserAv
         className={cn("rounded-full object-cover", className)}
         onError={() => setImageFailed(true)}
         loading="eager"
-        // @ts-ignore — fetchPriority attribute
         fetchPriority="high"
         decoding="async"
         draggable={false}

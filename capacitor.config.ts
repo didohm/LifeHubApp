@@ -17,7 +17,6 @@ const config: CapacitorConfig = {
       smallIcon: "ic_stat_lifehub",
       iconColor: "#7C5CFC",
       sound: "beep.wav",
-      allowWhileIdle: true,
     },
   },
 };

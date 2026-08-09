@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo } from "react";
+import { useEffect, useState, useMemo, useCallback } from "react";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { sounds } from "@/lib/sound";
 import {
@@ -21,6 +21,7 @@ import {
   Dumbbell,
   Footprints,
   Stethoscope,
+  ChevronLeft,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Screen } from "@/components/lifehub/Screen";
@@ -28,7 +29,7 @@ import { UserAvatar } from "@/components/lifehub/UserAvatar";
 import { useAuth } from "@/hooks/use-auth";
 import { useData } from "@/lib/data-context";
 import { useHydration } from "@/lib/use-hydration";
-import { getActivityTimeline, ActivityEntry } from "@/lib/api";
+import { getActivityTimeline, ActivityEntry, todayLocalDate } from "@/lib/api";
 import { GlobalSearchModal } from "@/components/lifehub/GlobalSearchModal";
 import { DashboardSkeleton } from "@/components/lifehub/SkeletonLoader";
 
@@ -79,7 +80,77 @@ function Index() {
   const [activityTimeline, setActivityTimeline] = useState<ActivityEntry[]>([]);
   const [extraLoading, setExtraLoading] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
-  const [selectedDayIndex, setSelectedDayIndex] = useState(new Date().getDay());
+
+  // Dynamic week strip: track the base date (start of current week) and selected date
+  const [weekBase, setWeekBase] = useState(() => {
+    const today = new Date();
+    const base = new Date(today);
+    base.setDate(today.getDate() - today.getDay());
+    base.setHours(0, 0, 0, 0);
+    return base;
+  });
+  const [selectedDate, setSelectedDate] = useState(() => todayLocalDate());
+
+  // Keep weekBase in sync with actual current date (midnight rollover, visibility)
+  const refreshWeekBase = useCallback(() => {
+    const today = new Date();
+    const base = new Date(today);
+    base.setDate(today.getDate() - today.getDay());
+    base.setHours(0, 0, 0, 0);
+    setWeekBase(base);
+    // If selected date is no longer in the current week, snap to today
+    const sel = new Date(selectedDate);
+    if (sel < base || sel >= new Date(base.getTime() + 7 * 86400000)) {
+      setSelectedDate(todayLocalDate());
+    }
+  }, [selectedDate]);
+
+  useEffect(() => {
+    refreshWeekBase();
+    const onVis = () => {
+      if (document.visibilityState === "visible") refreshWeekBase();
+    };
+    document.addEventListener("visibilitychange", onVis);
+    const iv = window.setInterval(refreshWeekBase, 60000);
+    return () => {
+      document.removeEventListener("visibilitychange", onVis);
+      window.clearInterval(iv);
+    };
+  }, [refreshWeekBase]);
+
+  const weekStrip = useMemo(() => {
+    return Array.from({ length: 7 }, (_, i) => {
+      const d = new Date(weekBase);
+      d.setDate(weekBase.getDate() + i);
+      const key = todayLocalDate(d);
+      return {
+        day: daysOfWeek[d.getDay()],
+        date: d.getDate(),
+        dayIndex: d.getDay(),
+        key,
+        isToday: key === todayLocalDate(),
+      };
+    });
+  }, [weekBase]);
+
+  const goPrevWeek = useCallback(() => {
+    const prev = new Date(weekBase);
+    prev.setDate(weekBase.getDate() - 7);
+    setWeekBase(prev);
+    sounds.playNavClick();
+  }, [weekBase]);
+
+  const goNextWeek = useCallback(() => {
+    const next = new Date(weekBase);
+    next.setDate(weekBase.getDate() + 7);
+    setWeekBase(next);
+    sounds.playNavClick();
+  }, [weekBase]);
+
+  const handleDaySelect = useCallback((key: string) => {
+    setSelectedDate(key);
+    sounds.playNavClick();
+  }, []);
 
   useEffect(() => {
     if (!authLoading && !user) {
@@ -117,20 +188,6 @@ function Index() {
     [medications],
   );
 
-  // 7-day strip based on current date
-  const weekStrip = useMemo(() => {
-    const today = new Date();
-    return Array.from({ length: 7 }, (_, i) => {
-      const d = new Date(today);
-      d.setDate(today.getDate() - today.getDay() + i);
-      return {
-        day: daysOfWeek[d.getDay()],
-        date: d.getDate(),
-        dayIndex: d.getDay(),
-      };
-    });
-  }, []);
-
   return (
     <Screen>
       {/* Top Header */}
@@ -157,7 +214,10 @@ function Index() {
           </div>
         </Link>
         <button
-          onClick={() => { sounds.playNavClick(); setSearchOpen(true); }}
+          onClick={() => {
+            sounds.playNavClick();
+            setSearchOpen(true);
+          }}
           aria-label="Search"
           title="Search features and items"
           className="tap flex size-10 items-center justify-center rounded-full bg-white shadow-xs border border-black/5 hover:bg-black/5 active:scale-95"
@@ -202,25 +262,50 @@ function Index() {
         />
       </section>
 
-      {/* 7-Day Date Selector Strip */}
-      <section className="mt-4 flex items-center justify-between gap-1.5">
-        {weekStrip.map(({ day, date, dayIndex }) => {
-          const isSelected = dayIndex === selectedDayIndex;
-          return (
-            <button
-              key={dayIndex}
-              onClick={() => { sounds.playNavClick(); setSelectedDayIndex(dayIndex); }}
-              className={`tap flex flex-col items-center justify-center py-2.5 px-3 rounded-full transition-all ${
-                isSelected
-                  ? "bg-[#12131A] text-white shadow-md font-bold scale-105"
-                  : "bg-white text-[#6B7280] border border-black/5 hover:bg-black/5 font-semibold"
-              }`}
-            >
-              <span className="text-[10px] uppercase tracking-wider">{day}</span>
-              <span className="text-sm font-extrabold mt-0.5">{date}</span>
-            </button>
-          );
-        })}
+      {/* 7-Day Date Selector Strip — dynamic, real dates, week navigation */}
+      <section className="mt-4">
+        <div className="flex items-center justify-between gap-2 mb-2">
+          <button
+            onClick={goPrevWeek}
+            className="tap flex size-8 items-center justify-center rounded-full bg-white text-[#12131A] shadow-xs border border-black/5 hover:bg-black/5"
+            aria-label="Previous week"
+          >
+            <ChevronLeft className="size-4.5" />
+          </button>
+          <span className="text-xs font-extrabold text-[#6B7280] flex-1 text-center">
+            {weekStrip[0]
+              ? `${weekStrip[0].day} ${weekStrip[0].date} – ${weekStrip[6].day} ${weekStrip[6].date}`
+              : "Week"}
+          </span>
+          <button
+            onClick={goNextWeek}
+            className="tap flex size-8 items-center justify-center rounded-full bg-white text-[#12131A] shadow-xs border border-black/5 hover:bg-black/5"
+            aria-label="Next week"
+          >
+            <ChevronRight className="size-4.5" />
+          </button>
+        </div>
+        <div className="flex items-center justify-between gap-1.5 overflow-x-auto pb-2 -mx-5 px-5">
+          {weekStrip.map(({ day, date, key, isToday }) => {
+            const isSelected = key === selectedDate;
+            return (
+              <button
+                key={key}
+                onClick={() => handleDaySelect(key)}
+                className={`tap flex-shrink-0 flex flex-col items-center justify-center py-2.5 px-3 rounded-full transition-all min-w-[44px] ${
+                  isSelected
+                    ? "bg-[#12131A] text-white shadow-md font-bold scale-105"
+                    : isToday
+                      ? "bg-[#E8E2FF] text-[#7C5CFC] border-2 border-[#7C5CFC]/30 font-bold"
+                      : "bg-white text-[#6B7280] border border-black/5 hover:bg-black/5 font-semibold"
+                }`}
+              >
+                <span className="text-[10px] uppercase tracking-wider">{day}</span>
+                <span className="text-sm font-extrabold mt-0.5">{date}</span>
+              </button>
+            );
+          })}
+        </div>
       </section>
 
       {/* "Your plan" Grid Section with REAL USER DATA */}
@@ -452,7 +537,10 @@ function Index() {
           <div className="mt-3 flex items-center justify-center gap-3">
             <button
               type="button"
-              onClick={() => { sounds.playActionClick(); removeWater(); }}
+              onClick={() => {
+                sounds.playActionClick();
+                removeWater();
+              }}
               disabled={waterBusy || waterGlasses <= 0}
               aria-label="Remove a glass of water"
               title="Remove a glass"
@@ -465,7 +553,10 @@ function Index() {
             </span>
             <button
               type="button"
-              onClick={() => { sounds.playActionClick(); addWater(); }}
+              onClick={() => {
+                sounds.playActionClick();
+                addWater();
+              }}
               disabled={waterBusy}
               aria-label="Add a glass of water"
               title="Add a glass"

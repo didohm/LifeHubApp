@@ -10,6 +10,7 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as AdhkarRouteImport } from './routes/adhkar'
 import { Route as AiRouteImport } from './routes/ai'
 import { Route as AnalyticsRouteImport } from './routes/analytics'
 import { Route as AppointmentsRouteImport } from './routes/appointments'
@@ -17,7 +18,6 @@ import { Route as AuthRouteImport } from './routes/auth'
 import { Route as BillsRouteImport } from './routes/bills'
 import { Route as BirthdaysRouteImport } from './routes/birthdays'
 import { Route as DocumentsRouteImport } from './routes/documents'
-import { Route as FoodRouteImport } from './routes/food'
 import { Route as MedicationsRouteImport } from './routes/medications'
 import { Route as OnboardingRouteImport } from './routes/onboarding'
 import { Route as ProfileRouteImport } from './routes/profile'
@@ -32,6 +32,11 @@ import { Route as ApiAssistantRouteImport } from './routes/api/assistant'
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AdhkarRoute = AdhkarRouteImport.update({
+  id: '/adhkar',
+  path: '/adhkar',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AiRoute = AiRouteImport.update({
@@ -67,11 +72,6 @@ const BirthdaysRoute = BirthdaysRouteImport.update({
 const DocumentsRoute = DocumentsRouteImport.update({
   id: '/documents',
   path: '/documents',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const FoodRoute = FoodRouteImport.update({
-  id: '/food',
-  path: '/food',
   getParentRoute: () => rootRouteImport,
 } as any)
 const MedicationsRoute = MedicationsRouteImport.update({
@@ -127,6 +127,7 @@ const ApiAssistantRoute = ApiAssistantRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/adhkar': typeof AdhkarRoute
   '/ai': typeof AiRoute
   '/analytics': typeof AnalyticsRoute
   '/appointments': typeof AppointmentsRoute
@@ -134,7 +135,6 @@ export interface FileRoutesByFullPath {
   '/bills': typeof BillsRoute
   '/birthdays': typeof BirthdaysRoute
   '/documents': typeof DocumentsRoute
-  '/food': typeof FoodRoute
   '/medications': typeof MedicationsRoute
   '/onboarding': typeof OnboardingRoute
   '/profile': typeof ProfileRoute
@@ -148,6 +148,7 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/adhkar': typeof AdhkarRoute
   '/ai': typeof AiRoute
   '/analytics': typeof AnalyticsRoute
   '/appointments': typeof AppointmentsRoute
@@ -155,7 +156,6 @@ export interface FileRoutesByTo {
   '/bills': typeof BillsRoute
   '/birthdays': typeof BirthdaysRoute
   '/documents': typeof DocumentsRoute
-  '/food': typeof FoodRoute
   '/medications': typeof MedicationsRoute
   '/onboarding': typeof OnboardingRoute
   '/profile': typeof ProfileRoute
@@ -170,6 +170,7 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/adhkar': typeof AdhkarRoute
   '/ai': typeof AiRoute
   '/analytics': typeof AnalyticsRoute
   '/appointments': typeof AppointmentsRoute
@@ -177,7 +178,6 @@ export interface FileRoutesById {
   '/bills': typeof BillsRoute
   '/birthdays': typeof BirthdaysRoute
   '/documents': typeof DocumentsRoute
-  '/food': typeof FoodRoute
   '/medications': typeof MedicationsRoute
   '/onboarding': typeof OnboardingRoute
   '/profile': typeof ProfileRoute
@@ -193,6 +193,7 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/adhkar'
     | '/ai'
     | '/analytics'
     | '/appointments'
@@ -200,7 +201,6 @@ export interface FileRouteTypes {
     | '/bills'
     | '/birthdays'
     | '/documents'
-    | '/food'
     | '/medications'
     | '/onboarding'
     | '/profile'
@@ -214,6 +214,7 @@ export interface FileRouteTypes {
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
+    | '/adhkar'
     | '/ai'
     | '/analytics'
     | '/appointments'
@@ -221,7 +222,6 @@ export interface FileRouteTypes {
     | '/bills'
     | '/birthdays'
     | '/documents'
-    | '/food'
     | '/medications'
     | '/onboarding'
     | '/profile'
@@ -235,6 +235,7 @@ export interface FileRouteTypes {
   id:
     | '__root__'
     | '/'
+    | '/adhkar'
     | '/ai'
     | '/analytics'
     | '/appointments'
@@ -242,7 +243,6 @@ export interface FileRouteTypes {
     | '/bills'
     | '/birthdays'
     | '/documents'
-    | '/food'
     | '/medications'
     | '/onboarding'
     | '/profile'
@@ -257,6 +257,7 @@ export interface FileRouteTypes {
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  AdhkarRoute: typeof AdhkarRoute
   AiRoute: typeof AiRoute
   AnalyticsRoute: typeof AnalyticsRoute
   AppointmentsRoute: typeof AppointmentsRoute
@@ -264,7 +265,6 @@ export interface RootRouteChildren {
   BillsRoute: typeof BillsRoute
   BirthdaysRoute: typeof BirthdaysRoute
   DocumentsRoute: typeof DocumentsRoute
-  FoodRoute: typeof FoodRoute
   MedicationsRoute: typeof MedicationsRoute
   OnboardingRoute: typeof OnboardingRoute
   ProfileRoute: typeof ProfileRoute
@@ -284,6 +284,13 @@ declare module '@tanstack/react-router' {
       path: '/'
       fullPath: '/'
       preLoaderRoute: typeof IndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/adhkar': {
+      id: '/adhkar'
+      path: '/adhkar'
+      fullPath: '/adhkar'
+      preLoaderRoute: typeof AdhkarRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/ai': {
@@ -333,13 +340,6 @@ declare module '@tanstack/react-router' {
       path: '/documents'
       fullPath: '/documents'
       preLoaderRoute: typeof DocumentsRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/food': {
-      id: '/food'
-      path: '/food'
-      fullPath: '/food'
-      preLoaderRoute: typeof FoodRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/medications': {
@@ -417,6 +417,7 @@ declare module '@tanstack/react-router' {
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  AdhkarRoute: AdhkarRoute,
   AiRoute: AiRoute,
   AnalyticsRoute: AnalyticsRoute,
   AppointmentsRoute: AppointmentsRoute,
@@ -424,7 +425,6 @@ const rootRouteChildren: RootRouteChildren = {
   BillsRoute: BillsRoute,
   BirthdaysRoute: BirthdaysRoute,
   DocumentsRoute: DocumentsRoute,
-  FoodRoute: FoodRoute,
   MedicationsRoute: MedicationsRoute,
   OnboardingRoute: OnboardingRoute,
   ProfileRoute: ProfileRoute,

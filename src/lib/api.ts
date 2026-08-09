@@ -88,6 +88,8 @@ export async function createAppointment(
     priority: data.priority || "medium",
     status: data.status || "upcoming",
     reminder: data.reminder !== undefined ? data.reminder : true,
+    reminder_offset_minutes:
+      data.reminder_offset_minutes !== undefined ? data.reminder_offset_minutes : 30,
     notes: data.notes || "",
     created_at: now(),
     updated_at: now(),
@@ -117,6 +119,9 @@ export async function updateAppointment(
   if (data.priority !== undefined) updates.priority = data.priority;
   if (data.status !== undefined) updates.status = data.status;
   if (data.reminder !== undefined) updates.reminder = data.reminder;
+  if (data.reminder_offset_minutes !== undefined) {
+    updates.reminder_offset_minutes = data.reminder_offset_minutes;
+  }
   if (data.notes !== undefined) updates.notes = data.notes;
 
   await updateDoc(docRef, updates);

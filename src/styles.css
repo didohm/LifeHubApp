@@ -6,6 +6,7 @@
 
 @theme {
   --font-sans: "Plus Jakarta Sans", "Nunito", ui-rounded, system-ui, sans-serif;
+  --font-arabic: "Amiri", "Noto Naskh Arabic", "Times New Roman", serif;
   --color-lavender: oklch(0.65 0.21 282);
   --color-lavender-soft: oklch(0.94 0.04 285);
   --color-tangerine: oklch(0.83 0.14 65);

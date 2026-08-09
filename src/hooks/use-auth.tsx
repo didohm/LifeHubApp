@@ -218,7 +218,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // Native flow (Android/iOS): Google Sign-In runs outside the WebView via
       // Google Play services through @capacitor-firebase/authentication. The
       // Firebase JS SDK popup/redirect flows are unusable inside a WebView.
-      console.log("[Auth] Starting native Google Sign-In...");
       let result;
       try {
         result = await FirebaseAuthentication.signInWithGoogle();

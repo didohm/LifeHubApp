@@ -45,6 +45,7 @@ export interface Appointment {
   priority: "high" | "medium" | "light";
   status: "upcoming" | "completed" | "cancelled";
   reminder: boolean;
+  reminder_offset_minutes?: number | null;
   notes?: string | null;
   created_at: string;
   updated_at: string;
