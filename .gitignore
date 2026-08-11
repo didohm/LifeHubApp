@@ -91,6 +91,9 @@ Thumbs.db
 .AppleDouble
 .LSOverride
 
+# AI assistant
+.kilo
+
 # Temporary files
 *.tmp
 *.temp
