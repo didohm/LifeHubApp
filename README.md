@@ -128,4 +128,4 @@ npm run format           # prettier
 
 ## License / Ownership
 
-Built with [Lovable](https://lovable.dev) — this code is yours.
+Built with [TanStack Start](https://tanstack.com/start), Firebase, and Capacitor — this code is yours.

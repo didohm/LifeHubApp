@@ -13,7 +13,6 @@ import { useEffect, type ReactNode } from "react";
 import { Toaster } from "sonner";
 
 import appCss from "../styles.css?url";
-import { reportLovableError } from "../lib/lovable-error-reporting";
 import { AuthProvider, useAuth } from "../hooks/use-auth";
 import { DataProvider } from "../lib/data-context";
 import { PermissionManager } from "../lib/permissions";
@@ -53,8 +52,6 @@ function ErrorComponent({ error, reset }: { error: Error; reset: () => void }) {
   const router = useRouter();
 
   useEffect(() => {
-    reportLovableError(error, { boundary: "tanstack_root_error_component" });
-
     if (consecutiveStartupErrors < 3) {
       consecutiveStartupErrors += 1;
       // Auto-recover silently — never let a transient startup error flash an
@@ -117,7 +114,7 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
       { property: "og:description", content: "All your daily life services, in one place." },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary_large_image" },
-      { name: "twitter:site", content: "@Lovable" },
+      { name: "twitter:site", content: "@lifehubapp" },
     ],
     links: [
       { rel: "preconnect", href: "https://fonts.googleapis.com" },
