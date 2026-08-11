@@ -19,8 +19,9 @@ export default defineConfig({
         },
       },
     }),
-    // Build for a plain Node.js server (node-server preset).
-    nitro({ preset: "node-server" }),
+    // Build for a plain Node.js server (node-server preset), or Vercel's
+    // native serverless output when deployed through Vercel (VERCEL=1).
+    nitro({ preset: process.env.VERCEL ? "vercel" : "node-server" }),
     react(),
   ],
   envPrefix: ["VITE_", "ASSISTANT_"],
