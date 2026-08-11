@@ -1,7 +1,12 @@
 # LifeHub
 
-A personal life-management app (appointments, medications, bills, tasks, fitness,
-health tracking, and an AI assistant) built with TanStack Start + Firebase.
+A personal life-management app built with TanStack Start + Firebase:
+
+- **Schedule & finance** — appointments, medications, bills, tasks, birthdays, documents
+- **Fitness** — walking sessions with GPS tracking (offline SQLite), workout programs
+- **Wellbeing** — daily azkar (Adhkar) with streak tracking, health reminders
+- **AI assistant** — in-app assistant with a server-side OpenRouter proxy
+- **Native Android** — packaged with Capacitor, includes background walk tracking and notifications
 
 ## Development
 
@@ -44,8 +49,10 @@ in your host's environment. Without it the external model is skipped and the
 built-in engine is used.
 
 **Security note:** a previous version of this repo contained a live OpenRouter
-API key in git history (`.env`). That key must be revoked at
-https://openrouter.ai/settings/keys. `.env` is now gitignored and untracked.
+API key in git history (`.env`). The history has since been scrubbed with
+`git filter-repo`, but the key must still be revoked at
+https://openrouter.ai/settings/keys and replaced with a new one in `.env`.
+`.env` is gitignored and untracked.
 
 ## Mobile (Android APK via Capacitor)
 
@@ -96,7 +103,16 @@ the APK; without the endpoint the assistant uses the built-in engine.
   `@capacitor-firebase/authentication` plugin (recommended) or a
   redirect-based flow. Validate on a real device or emulator.
 - Web content is served from `https://localhost` in the WebView; keep Firebase
-auth domain/reCAPTCHA settings compatible with that origin.
+  auth domain/reCAPTCHA settings compatible with that origin.
+- **Android walk tracking** uses a foreground service (`WalkService`) with a
+  local SQLite database; it requires the `POST_NOTIFICATIONS` runtime
+  permission on Android 13+.
+
+## Azkar (Adhkar)
+
+Daily zikr is served from `azkar.json` (server- and client-side data) with a
+per-day progress/streak tracker and optional local notifications scheduled by
+`src/lib/notifications.ts`. Data is persisted per user in Firebase.
 
 ## Scripts
 
