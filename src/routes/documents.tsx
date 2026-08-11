@@ -1,5 +1,5 @@
-import { useState, useEffect, useCallback, useRef } from "react";
-import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { useState, useEffect, useCallback } from "react";
+import { createFileRoute } from "@tanstack/react-router";
 import {
   FolderClosed,
   FileText,
@@ -11,54 +11,55 @@ import {
   Edit2,
   X,
   Loader2,
+  ExternalLink,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Screen } from "@/components/lifehub/Screen";
 import { Modal } from "@/components/lifehub/Modal";
 import { useAuth } from "@/hooks/use-auth";
+import { useAuthGuard } from "@/hooks/use-auth-guard";
+import { useDeleteWithGuard } from "@/hooks/use-delete-with-guard";
 import { getDocuments, createDocument, updateDocument, deleteDocument } from "@/lib/api";
 import { DocumentItem } from "@/lib/types";
 import { generateAssistantReply } from "@/lib/ai-provider";
+import { useData } from "@/lib/data-context";
 import { ListSkeleton } from "@/components/lifehub/SkeletonLoader";
+import {
+  uploadDocument,
+  validateFileType,
+  validateFileSize,
+  formatFileSize,
+} from "@/lib/cloudinary";
 
-const MAX_UPLOAD_BYTES = 600 * 1024;
+// Increased limit from 600KB to 10MB for Cloudinary uploads
+const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
 const ALLOWED_UPLOAD_MIME_PREFIXES = ["image/", "application/pdf", "text/"];
-
-function formatFileSize(bytes: number): string {
-  if (bytes === 0) return "0 B";
-  const k = 1024;
-  const sizes = ["B", "KB", "MB", "GB"];
-  const i = Math.floor(Math.log(bytes) / Math.log(k));
-  return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + " " + sizes[i];
-}
 
 async function processFileUpload(
   file: File,
+  onProgress?: (progress: number) => void,
 ): Promise<{ file_url: string; file_size: string; file_type: string }> {
-  const isAllowedType = ALLOWED_UPLOAD_MIME_PREFIXES.some((prefix) => file.type.startsWith(prefix));
-  if (!isAllowedType) {
+  // Validate file type
+  if (!validateFileType(file, ALLOWED_UPLOAD_MIME_PREFIXES)) {
     throw new Error("Unsupported file type. Please upload a PDF, image, or text file.");
   }
 
-  if (file.size > MAX_UPLOAD_BYTES) {
-    throw new Error("File is too large. Please upload a file smaller than 600KB.");
+  // Validate file size
+  if (!validateFileSize(file, MAX_UPLOAD_BYTES)) {
+    throw new Error("File is too large. Please upload a file smaller than 10MB.");
   }
 
   const fileSize = formatFileSize(file.size);
   const fileType = file.type || "application/octet-stream";
 
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => {
-      resolve({
-        file_url: reader.result as string,
-        file_size: fileSize,
-        file_type: fileType,
-      });
-    };
-    reader.onerror = () => reject(new Error("Failed to read file"));
-    reader.readAsDataURL(file);
-  });
+  // Upload to Cloudinary
+  const result = await uploadDocument(file, onProgress);
+
+  return {
+    file_url: result.secure_url,
+    file_size: fileSize,
+    file_type: fileType,
+  };
 }
 
 export const Route = createFileRoute("/documents")({
@@ -70,12 +71,12 @@ export const Route = createFileRoute("/documents")({
 
 function DocumentsPage() {
   const { user, loading: authLoading } = useAuth();
-  const navigate = useNavigate();
+  useAuthGuard(user, authLoading);
 
-  const [documents, setDocuments] = useState<DocumentItem[]>([]);
+  const { documents, docLoading: loading } = useData();
+
   const [categoryFilter, setCategoryFilter] = useState("all");
   const [searchTerm, setSearchTerm] = useState("");
-  const [loading, setLoading] = useState(true);
 
   // Modals
   const [uploadModalOpen, setUploadModalOpen] = useState(false);
@@ -88,30 +89,9 @@ function DocumentsPage() {
   const [category, setCategory] = useState("Medical");
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
 
-  useEffect(() => {
-    if (!authLoading && !user) {
-      navigate({ to: "/auth" });
-    }
-  }, [user, authLoading, navigate]);
-
-  const loadDocs = useCallback(async () => {
-    if (!user) return;
-    setLoading(true);
-    try {
-      const data = await getDocuments(user.id);
-      setDocuments(data);
-    } catch (e) {
-      console.error(e);
-      toast.error("Failed to load documents.");
-    } finally {
-      setLoading(false);
-    }
-  }, [user]);
-
-  useEffect(() => {
-    if (user) loadDocs();
-  }, [user, loadDocs]);
+  const { deleteWithGuard } = useDeleteWithGuard();
 
   const openUploadModal = () => {
     setEditingDoc(null);
@@ -132,10 +112,11 @@ function DocumentsPage() {
     e.preventDefault();
     if (!user) return;
     setSubmitting(true);
+    setUploadProgress(0);
 
     try {
       if (editingDoc) {
-        const updatedDoc = await updateDocument(editingDoc.id, user.id, {
+        await updateDocument(editingDoc.id, user.id, {
           name: docName,
           category,
           file_url: editingDoc.file_url,
@@ -143,7 +124,6 @@ function DocumentsPage() {
           file_type: editingDoc.file_type,
           summary: editingDoc.summary,
         });
-        setDocuments((prev) => prev.map((d) => (d.id === editingDoc.id ? updatedDoc : d)));
         toast.success("Document metadata updated!");
       } else {
         let fileUrl = "";
@@ -151,13 +131,15 @@ function DocumentsPage() {
         let fileType = "";
 
         if (selectedFile) {
-          const res = await processFileUpload(selectedFile);
+          const res = await processFileUpload(selectedFile, (progress) => {
+            setUploadProgress(progress);
+          });
           fileUrl = res.file_url;
           fileSize = res.file_size;
           fileType = res.file_type;
         }
 
-        const newDoc = await createDocument(user.id, {
+        await createDocument(user.id, {
           name: docName || selectedFile?.name || "Uploaded Document",
           category,
           file_url: fileUrl,
@@ -166,57 +148,56 @@ function DocumentsPage() {
           summary: "",
         });
 
-        setDocuments((prev) => [newDoc, ...prev]);
-        toast.success("Document uploaded to Vault!");
+        toast.success("Document uploaded to Cloudinary!");
       }
       setUploadModalOpen(false);
+      setUploadProgress(0);
     } catch (err: any) {
       console.error(err);
-      toast.error("Failed to upload document.");
+      toast.error(err.message || "Failed to upload document.");
     } finally {
       setSubmitting(false);
     }
   };
 
-  // Guards against repeated taps on the same Delete button: repeat taps on
-  // an item that is already being deleted are ignored, and the success toast
-  // uses a per-item id so only ONE "deleted" notification is ever shown.
-  const deletingIds = useRef<Set<string>>(new Set());
   const handleDelete = async (id: string) => {
     if (!user) return;
-    if (deletingIds.current.has(id)) return; // already deleting this item
-    deletingIds.current.add(id);
-    try {
+    await deleteWithGuard(id, async () => {
       await deleteDocument(id, user.id);
-      setDocuments((prev) => prev.filter((d) => d.id !== id));
       toast.success("Document deleted.", { id: `doc-deleted-${id}` });
-    } catch (err) {
+    })().catch(() => {
       toast.error("Failed to delete document.", { id: `doc-delete-error-${id}` });
-    } finally {
-      deletingIds.current.delete(id);
-    }
+    });
   };
 
   const handleAiSummarize = async (docItem: DocumentItem) => {
     if (!user) return;
 
     setSummarizing(true);
-    toast.info(`Summarizing ${docItem.name}...`);
+    toast.info(`Generating AI insights for ${docItem.name}...`);
     try {
+      // Note: This generates AI insights based on document metadata (name, category, upload date)
+      // For full content analysis, implement OCR/text extraction from docItem.file_url
       const summary = await generateAssistantReply({
-        prompt: `Summarise this document for me: ${docItem.name} (${docItem.category}). What are the key takeaways, any important dates, names, or numbers I should know about?`,
+        prompt: `Based on this document metadata, provide helpful context and reminders: 
+        - Document name: ${docItem.name}
+        - Category: ${docItem.category}
+        - Upload date: ${docItem.upload_date || 'N/A'}
+        
+        Generate a brief helpful summary about what this type of document typically contains and what the user should remember about it.`,
         userId: user.id,
       });
+      await updateDocument(docItem.id, user.id, { summary });
       setSummaryModalText(summary);
-      toast.success("Summary ready!");
+      toast.success("AI insights ready!");
     } catch {
-      toast.error("Could not generate summary.");
+      toast.error("Could not generate AI insights.");
     } finally {
       setSummarizing(false);
     }
   };
 
-  const filteredDocs = documents.filter((d) => {
+  const filteredDocs = documents.filter((d: DocumentItem) => {
     const matchesCat = categoryFilter === "all" ? true : d.category === categoryFilter;
     const matchesSearch = d.name.toLowerCase().includes(searchTerm.toLowerCase());
     return matchesCat && matchesSearch;
@@ -279,7 +260,7 @@ function DocumentsPage() {
             <p className="mt-2 text-sm font-bold text-foreground">No documents in vault</p>
           </div>
         ) : (
-          filteredDocs.map((docItem) => (
+          filteredDocs.map((docItem: DocumentItem) => (
             <div
               key={docItem.id}
               className="card-soft bg-card p-4 border border-border/40 shadow-sm flex items-center justify-between transition-all hover:shadow-md"
@@ -388,6 +369,20 @@ function DocumentsPage() {
                 onChange={(e) => setSelectedFile(e.target.files?.[0] || null)}
                 className="mt-1 w-full rounded-xl border border-input bg-muted/30 p-2 text-xs"
               />
+              {submitting && uploadProgress > 0 && (
+                <div className="mt-2">
+                  <div className="flex items-center justify-between text-xs text-muted-foreground mb-1">
+                    <span>Uploading to Cloudinary...</span>
+                    <span>{uploadProgress}%</span>
+                  </div>
+                  <div className="w-full h-1.5 bg-muted rounded-full overflow-hidden">
+                    <div
+                      className="h-full bg-primary transition-all duration-300"
+                      style={{ width: `${uploadProgress}%` }}
+                    />
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
@@ -424,18 +419,41 @@ function DocumentsPage() {
             </button>
           </div>
           <div className="mt-4 flex flex-col items-center">
-            {previewDoc.file_url.startsWith("data:image/") ? (
-              <img
-                src={previewDoc.file_url}
-                alt="Document preview"
-                className="max-h-64 rounded-xl object-contain shadow-md"
-              />
+            {previewDoc.file_url ? (
+              previewDoc.file_url.startsWith("data:image/") ||
+              previewDoc.file_url.match(/\.(jpg|jpeg|png|gif|webp)(\?.*)?$/i) ? (
+                <img
+                  src={previewDoc.file_url}
+                  alt="Document preview"
+                  className="max-h-64 rounded-xl object-contain shadow-md"
+                />
+              ) : previewDoc.file_url.match(/\.pdf(\?.*)?$/i) ? (
+                <iframe
+                  src={previewDoc.file_url}
+                  title="PDF Preview"
+                  className="w-full h-64 rounded-xl border border-border"
+                />
+              ) : (
+                <FileText className="size-20 text-muted-foreground/60" />
+              )
             ) : (
               <FileText className="size-20 text-muted-foreground/60" />
             )}
-            <p className="mt-3 text-xs text-muted-foreground leading-relaxed text-center">
-              {previewDoc.summary}
-            </p>
+            {previewDoc.summary ? (
+              <p className="mt-3 text-xs text-muted-foreground leading-relaxed text-center">
+                {previewDoc.summary}
+              </p>
+            ) : null}
+            {previewDoc.file_url ? (
+              <a
+                href={previewDoc.file_url}
+                target="_blank"
+                rel="noreferrer"
+                className="mt-4 inline-flex items-center gap-1.5 rounded-xl bg-accent px-3.5 py-2 text-xs font-bold text-foreground hover:bg-accent/80 transition-colors"
+              >
+                <ExternalLink className="size-3.5" /> View / Download Document
+              </a>
+            ) : null}
           </div>
         </Modal>
       )}

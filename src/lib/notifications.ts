@@ -373,7 +373,9 @@ export class NotificationService {
       const { PermissionManager } = await import("./permissions");
       const granted = await PermissionManager.ensurePermission("notification");
       if (!granted) {
-        console.info("[notifications] schedulePlans: notification permission not granted, nothing armed");
+        console.info(
+          "[notifications] schedulePlans: notification permission not granted, nothing armed",
+        );
         return [];
       }
     } catch (err) {

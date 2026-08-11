@@ -5,7 +5,17 @@ import {
   WALK_FALLBACK_CHANNEL,
   type PlannedNotification,
 } from "./notifications";
-import { Appointment, Medication, Bill, Birthday, Workout, Todo } from "./types";
+import {
+  Appointment,
+  Medication,
+  Bill,
+  Birthday,
+  Workout,
+  Todo,
+  WorkoutProgram,
+  DayKey,
+} from "./types";
+import { DAY_LABELS } from "./api";
 
 /* ────────────────────────────────────────────────────────────────────────────
  * Native bridge to the Android walk foreground service.
@@ -13,6 +23,7 @@ import { Appointment, Medication, Bill, Birthday, Workout, Todo } from "./types"
 
 export interface WalkStatusUpdate {
   tracking: boolean;
+  paused?: boolean;
   distanceKm: number;
   steps: number;
   durationSec: number;
@@ -24,8 +35,22 @@ export interface WalkStatusUpdate {
   longitude?: number;
   accuracy?: number;
   speed?: number;
-  /** Sent when the user taps Pause/Finish on the native notification. */
-  action?: "pause" | "finish";
+  /** Firestore session id the native service is persisting route points under. */
+  sessionId?: string;
+  /** True when the native service detected vehicle-speed motion (flag only). */
+  isVehicleFlagged?: boolean;
+  /** Sent when the user taps Pause/Resume/Finish on the native notification. */
+  action?: "pause" | "resume" | "finish";
+}
+
+export interface WalkRoutePoint {
+  lat: number;
+  lng: number;
+  /** Epoch ms — required so the saved session path keeps the WalkSession shape. */
+  ts: number;
+  altitude?: number;
+  accuracy?: number;
+  speed?: number;
 }
 
 export interface WalkServicePluginInterface {
@@ -35,6 +60,10 @@ export interface WalkServicePluginInterface {
     durationSec: number;
     calories: number;
     paceMinPerKm: number;
+    /** Firestore session id — native SQLite route points are stored under it. */
+    sessionId?: string;
+    /** User body weight in kg — drives the native calorie math. */
+    weightKg?: number;
   }): Promise<{ started: boolean; error?: string }>;
   updateService(args: {
     distanceKm: number;
@@ -42,6 +71,7 @@ export interface WalkServicePluginInterface {
     durationSec: number;
     calories: number;
     paceMinPerKm: number;
+    weightKg?: number;
   }): Promise<{ updated: boolean }>;
   pauseService(): Promise<{ paused: boolean }>;
   resumeService(args: {
@@ -50,10 +80,17 @@ export interface WalkServicePluginInterface {
     durationSec: number;
     calories: number;
     paceMinPerKm: number;
+    weightKg?: number;
   }): Promise<{ resumed: boolean }>;
   stopService(): Promise<{ stopped: boolean }>;
   /** Live snapshot of the native walking foreground service. */
   getStatus(): Promise<WalkStatusUpdate>;
+  /** Route points persisted by the native service for a session (SQLite). */
+  getRoutePoints(args?: {
+    sessionId?: string;
+  }): Promise<{ sessionId: string; isVehicleFlagged: boolean; points: string }>;
+  /** Deletes the native SQLite route points for a session. */
+  clearRoutePoints(args?: { sessionId?: string }): Promise<{ cleared: boolean }>;
   /** Pushed on every native location fix / step while the service tracks. */
   addListener(
     eventName: "walkUpdate",
@@ -71,17 +108,15 @@ export const WalkServicePlugin = registerPlugin<WalkServicePluginInterface>("Wal
  * the wrong calendar day. These helpers treat the input as LOCAL time.
  * ──────────────────────────────────────────────────────────────────────────── */
 
+import { parseLocalDate as parseDateUtil } from "./date-utils";
+
 function parseLocalDate(value?: string | null): Date | null {
   if (!value) return null;
-  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value.trim());
-  if (!m) return null;
-  const year = Number(m[1]);
-  const month = Number(m[2]);
-  const day = Number(m[3]);
-  if (month < 1 || month > 12 || day < 1 || day > 31) return null;
-  const d = new Date(year, month - 1, day);
-  if (d.getFullYear() !== year || d.getMonth() !== month - 1 || d.getDate() !== day) return null;
-  return d;
+  try {
+    return parseDateUtil(value);
+  } catch {
+    return null;
+  }
 }
 
 function parseTime(value?: string | null, fallbackHour = 9, fallbackMinute = 0): [number, number] {
@@ -120,6 +155,7 @@ export const KEY_PREFIXES = [
   "bill_",
   "bday_",
   "wkout_",
+  "wktmr_",
   "daily_",
 ] as const;
 
@@ -254,6 +290,14 @@ function billPlans(bill: Bill): PlannedNotification[] {
 const BIRTHDAY_HOUR = 17;
 const BIRTHDAY_MINUTE = 0;
 
+/* ────────────────────────────────────────────────────────────────────────────
+ * Daily adhkar reminders (always-on, no user data).
+ * ──────────────────────────────────────────────────────────────────────────── */
+const ADHKAR_MORNING_HOUR = 6;
+const ADHKAR_MORNING_MINUTE = 0;
+const ADHKAR_EVENING_HOUR = 12;
+const ADHKAR_EVENING_MINUTE = 0;
+
 /** Next calendar occurrence of a birthday (month/day) at 17:00 local time. */
 function nextBirthdayAt(month0: number, day: number): Date {
   const now = new Date();
@@ -319,6 +363,74 @@ function workoutPlans(wk: Workout): PlannedNotification[] {
 }
 
 /* ────────────────────────────────────────────────────────────────────────────
+ * Daily "tomorrow's workout" reminder (18:00).
+ *
+ * A static daily recurrence can't know which day is next, so this arms one
+ * one-shot per upcoming day (18:00 local) previewing the FOLLOWING day's
+ * session — only when that day is a training day, so rest days never nag.
+ * Keys are date-based (`wktmr_YYYY-MM-DD`), which makes every resync
+ * idempotent: unchanged days re-arm with fresh content, passed days and
+ * removed programs drop out via reconcile.
+ * ──────────────────────────────────────────────────────────────────────────── */
+const TOMORROW_WORKOUT_HOUR = 18;
+const TOMORROW_WORKOUT_MINUTE = 0;
+/** How many upcoming 18:00 slots stay armed. */
+const TOMORROW_WORKOUT_WINDOW_DAYS = 14;
+
+const WORKOUT_DAY_KEYS: DayKey[] = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
+
+function workoutDayKeyOf(d: Date): DayKey {
+  return WORKOUT_DAY_KEYS[d.getDay()];
+}
+
+function workoutFocusForDay(program: WorkoutProgram, day: DayKey): string {
+  if (program.workout_type === "Cardio") {
+    const structured = program.training_days;
+    if (structured && structured.length > 0) {
+      return structured.includes(day) ? "Cardio" : "Rest";
+    }
+    const focus = (program.weekly_plan || []).find((x) => x.day === day)?.focus || "";
+    return focus.toLowerCase() !== "rest" ? "Cardio" : "Rest";
+  }
+  return (program.weekly_plan || []).find((x) => x.day === day)?.focus || "Rest";
+}
+
+function localDateKey(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+function workoutTomorrowPlans(program: WorkoutProgram | null | undefined): PlannedNotification[] {
+  if (!program) return [];
+  const plans: PlannedNotification[] = [];
+  const now = new Date();
+  for (let i = 0; i < TOMORROW_WORKOUT_WINDOW_DAYS; i++) {
+    const fireDate = new Date(now);
+    fireDate.setDate(now.getDate() + i);
+    const fireAt = atLocalDate(fireDate, TOMORROW_WORKOUT_HOUR, TOMORROW_WORKOUT_MINUTE);
+    if (fireAt.getTime() <= Date.now()) continue;
+
+    const subject = new Date(fireDate);
+    subject.setDate(fireDate.getDate() + 1);
+    const subjectDayKey = workoutDayKeyOf(subject);
+    const focus = workoutFocusForDay(program, subjectDayKey);
+    if (focus.toLowerCase() === "rest") continue;
+
+    plans.push({
+      key: `wktmr_${localDateKey(fireDate)}`,
+      title: `Tomorrow's workout: ${focus}`,
+      body: `${DAY_LABELS[subjectDayKey]} · ${focus} — get ready!`,
+      at: fireAt,
+      channelId: REMINDER_CHANNEL,
+      extra: { screen: "/workouts" },
+    });
+  }
+  return plans;
+}
+
+/* ────────────────────────────────────────────────────────────────────────────
  * Integration API used by the routes / data context.
  * ──────────────────────────────────────────────────────────────────────────── */
 
@@ -380,6 +492,14 @@ export const Notifications = {
     return NotificationService.cancel(`wkout_${wkId}`);
   },
 
+  /* ─── Tomorrow's workout reminder (daily 18:00) ──────────────────────── */
+  scheduleWorkoutTomorrowReminders(program: WorkoutProgram | null | undefined) {
+    return NotificationService.schedulePlans(workoutTomorrowPlans(program));
+  },
+  cancelWorkoutTomorrowReminders() {
+    return NotificationService.cancelByPrefix("wktmr_");
+  },
+
   /* ─── Walking Tracking Notification (Foreground Service) ─────────────── */
   async startWalkForeground(
     distanceKm = 0,
@@ -387,6 +507,8 @@ export const Notifications = {
     durationSec = 0,
     calories = 0,
     paceMinPerKm = 0,
+    weightKg = 70,
+    sessionId?: string,
   ) {
     if (!isNative()) return;
     try {
@@ -397,12 +519,14 @@ export const Notifications = {
         durationSec,
         calories,
         paceMinPerKm,
+        weightKg,
+        sessionId,
       });
       if (!result.started) {
         walkFallbackActive = true;
         this.scheduleWalkReminder(
-          "🚶 Walking session started",
-          `Tracking walk: ${distanceKm.toFixed(2)} km`,
+          "🚶 Walking session in progress",
+          "Tracking your walk in the background.",
         );
       } else {
         walkFallbackActive = false;
@@ -410,22 +534,22 @@ export const Notifications = {
     } catch (e) {
       walkFallbackActive = true;
       this.scheduleWalkReminder(
-        "🚶 Walking session started",
-        `Tracking walk: ${distanceKm.toFixed(2)} km`,
+        "🚶 Walking session in progress",
+        "Tracking your walk in the background.",
       );
     }
   },
 
   /**
-   * Pushes the app's current live metrics into the native walk notification.
+   * Pushes the app's current live metrics into the native walk service.
    *
    * The native service is the authoritative source while it produces fixes,
    * but when it runs without motion data (no GPS lock, no step sensor) the
-   * app keeps counting in JS while the native notification stays stuck at
-   * 0.00 km. This feeds the JS values into the native service (monotonic
-   * merge) so the notification mirrors the app's counter in real time. When
-   * the native service could not start and the JS fallback notification is
-   * showing instead, it refreshes that notification with the same numbers.
+   * app keeps counting in JS while the native counters stay idle. This feeds
+   * the JS values into the native service (monotonic merge) so the counters
+   * mirror the app in real time. When the native service could not start and
+   * the JS fallback notification is showing instead, it refreshes that
+   * notification with the same numbers.
    */
   async updateWalkForeground(
     distanceKm = 0,
@@ -433,6 +557,7 @@ export const Notifications = {
     durationSec = 0,
     calories = 0,
     paceMinPerKm = 0,
+    weightKg = 70,
   ) {
     if (!isNative()) return;
     try {
@@ -443,14 +568,15 @@ export const Notifications = {
         durationSec,
         calories,
         paceMinPerKm,
+        weightKg,
       });
     } catch (e) {
       /* silent */
     }
     if (walkFallbackActive) {
       await this.scheduleWalkReminder(
-        "🚶 Walking session started",
-        `Tracking walk: ${distanceKm.toFixed(2)} km`,
+        "🚶 Walking session in progress",
+        "Tracking your walk in the background.",
       );
     }
   },
@@ -470,6 +596,7 @@ export const Notifications = {
     durationSec: number,
     calories: number,
     paceMinPerKm: number,
+    weightKg = 70,
   ) {
     if (!isNative()) return;
     try {
@@ -479,6 +606,7 @@ export const Notifications = {
         durationSec,
         calories,
         paceMinPerKm,
+        weightKg,
       });
     } catch (e) {
       /* silent */
@@ -547,6 +675,39 @@ export const Notifications = {
     return Promise.resolve();
   },
 
+  /* ─── Daily adhkar reminders ─────────────────────────────────────────── */
+  async resyncAzkarReminders() {
+    if (!isNative()) return;
+    // Respect permission WITHOUT prompting (unlike ensurePermission, which
+    // re-shows the OS dialog). The one-time install prompt already happened
+    // in RootComponent; granting later triggers PERMISSIONS_CHANGED_EVENT,
+    // which re-runs this resync.
+    try {
+      const { PermissionManager } = await import("./permissions");
+      if (!(await PermissionManager.check("notification"))) return;
+    } catch {
+      return;
+    }
+    await NotificationService.schedulePlans([
+      {
+        key: "azkar_morning",
+        title: "Morning Adhkar",
+        body: "It's time for today's morning adhkar — أذكار الصباح",
+        on: { hour: ADHKAR_MORNING_HOUR, minute: ADHKAR_MORNING_MINUTE, second: 0 },
+        channelId: REMINDER_CHANNEL,
+        extra: { screen: "/adhkar" },
+      },
+      {
+        key: "azkar_evening",
+        title: "Evening Adhkar",
+        body: "It's time for today's evening adhkar — أذكار المساء",
+        on: { hour: ADHKAR_EVENING_HOUR, minute: ADHKAR_EVENING_MINUTE, second: 0 },
+        channelId: REMINDER_CHANNEL,
+        extra: { screen: "/adhkar" },
+      },
+    ]);
+  },
+
   /**
    * Brings every OS reminder into sync with the supplied data.
    *
@@ -562,6 +723,7 @@ export const Notifications = {
     birthdays?: Birthday[];
     workouts?: Workout[];
     todos?: Todo[];
+    workoutPrograms?: WorkoutProgram[];
   }) {
     if (!isNative()) return;
     await runLegacyCleanup();
@@ -585,10 +747,20 @@ export const Notifications = {
     await reconcile("birthdays", (data.birthdays || []).flatMap(birthdayPlans), ["bday_"]);
     await reconcile("workouts", (data.workouts || []).flatMap(workoutPlans), ["wkout_"]);
     await reconcile("todos", (data.todos || []).flatMap(todoPlans), ["todo_"]);
+    const activeProgram =
+      data.workoutPrograms?.find((p) => p.is_active) || data.workoutPrograms?.[0];
+    await reconcile("tomorrow workouts", activeProgram ? workoutTomorrowPlans(activeProgram) : [], [
+      "wktmr_",
+    ]);
     try {
       await this.resyncRecurringReminders();
     } catch (err) {
       console.warn("[notifications] resync daily reminder: failed", err);
+    }
+    try {
+      await this.resyncAzkarReminders();
+    } catch (err) {
+      console.warn("[notifications] resync adhkar reminders: failed", err);
     }
   },
 };

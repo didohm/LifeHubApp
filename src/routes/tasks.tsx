@@ -1,5 +1,5 @@
-import { useState, useEffect, useCallback, useRef } from "react";
-import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { useState, useEffect, useCallback } from "react";
+import { createFileRoute } from "@tanstack/react-router";
 import {
   Plus,
   ListChecks,
@@ -16,10 +16,13 @@ import { toast } from "sonner";
 import { Screen } from "@/components/lifehub/Screen";
 import { Modal } from "@/components/lifehub/Modal";
 import { useAuth } from "@/hooks/use-auth";
-import { getTodos, createTodo, updateTodo, deleteTodo } from "@/lib/api";
+import { useAuthGuard } from "@/hooks/use-auth-guard";
+import { useDeleteWithGuard } from "@/hooks/use-delete-with-guard";
+import { getTodos, createTodo, updateTodo, deleteTodo, todayLocalDate } from "@/lib/api";
 import { Notifications } from "@/lib/notifications-integration";
 import { Todo } from "@/lib/types";
 import { ListSkeleton } from "@/components/lifehub/SkeletonLoader";
+import { parseLocalDate } from "@/lib/date-utils";
 
 export const Route = createFileRoute("/tasks")({
   head: () => ({
@@ -29,12 +32,6 @@ export const Route = createFileRoute("/tasks")({
 });
 
 type TaskStatus = "completed" | "in_progress" | "overdue";
-
-/** Parse a YYYY-MM-DD (or ISO) date string as a LOCAL mid-day date — tz-safe. */
-function parseLocalDate(value: string): Date {
-  const [y, m, d] = value.slice(0, 10).split("-").map(Number);
-  return new Date(y || 1970, (m || 0) - 1, d || 1, 12);
-}
 
 function getTaskStatus(t: Todo): TaskStatus {
   if (t.completed) return "completed";
@@ -80,7 +77,7 @@ function categoryBadgeClass(category: string): string {
 
 function TasksPage() {
   const { user, loading: authLoading } = useAuth();
-  const navigate = useNavigate();
+  useAuthGuard(user, authLoading);
 
   const [todos, setTodos] = useState<Todo[]>([]);
   const [categoryFilter, setCategoryFilter] = useState("all");
@@ -94,14 +91,10 @@ function TasksPage() {
   const [title, setTitle] = useState("");
   const [category, setCategory] = useState("Health");
   const [priority, setPriority] = useState<"high" | "medium" | "light">("medium");
-  const [dueDate, setDueDate] = useState(new Date().toISOString().split("T")[0]);
+  const [dueDate, setDueDate] = useState(todayLocalDate());
   const [submitting, setSubmitting] = useState(false);
 
-  useEffect(() => {
-    if (!authLoading && !user) {
-      navigate({ to: "/auth" });
-    }
-  }, [user, authLoading, navigate]);
+  const { deleteWithGuard } = useDeleteWithGuard();
 
   const loadTasks = useCallback(async () => {
     if (!user) return;
@@ -126,7 +119,7 @@ function TasksPage() {
     setTitle("");
     setCategory("Health");
     setPriority("medium");
-    setDueDate(new Date().toISOString().split("T")[0]);
+    setDueDate(todayLocalDate());
     setModalOpen(true);
   };
 
@@ -135,7 +128,7 @@ function TasksPage() {
     setTitle(task.title);
     setCategory(task.category);
     setPriority(task.priority);
-    setDueDate(task.due_date || new Date().toISOString().split("T")[0]);
+    setDueDate(task.due_date || todayLocalDate());
     setModalOpen(true);
   };
 
@@ -225,24 +218,16 @@ function TasksPage() {
     }
   };
 
-  // Guards against repeated taps on the same Delete button: repeat taps on
-  // an item that is already being deleted are ignored, and the success toast
-  // uses a per-item id so only ONE "deleted" notification is ever shown.
-  const deletingIds = useRef<Set<string>>(new Set());
   const handleDelete = async (id: string) => {
     if (!user) return;
-    if (deletingIds.current.has(id)) return; // already deleting this item
-    deletingIds.current.add(id);
-    try {
+    await deleteWithGuard(id, async () => {
       await deleteTodo(id, user.id);
       setTodos((prev) => prev.filter((t) => t.id !== id));
       Notifications.cancelTodo(id);
       toast.success("Task deleted.", { id: `task-deleted-${id}` });
-    } catch (err) {
+    })().catch(() => {
       toast.error("Failed to delete task.", { id: `task-delete-error-${id}` });
-    } finally {
-      deletingIds.current.delete(id);
-    }
+    });
   };
 
   const filteredTasks = todos.filter((t) => {

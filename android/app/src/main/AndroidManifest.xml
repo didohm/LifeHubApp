@@ -100,6 +100,12 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_HEALTH" />
 
+    <!-- Battery optimization exemption (Doze / OEM battery managers would
+         otherwise suspend the walk service's location + step streams minutes
+         into a walk, freezing steps/distance while the screen is off). The
+         app requests the exemption at walk start. -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+
     <!-- Declare the step-counter hardware so the OS/manufacturers know the
          app uses it (optional — the service degrades to GPS-only otherwise). -->
     <uses-feature

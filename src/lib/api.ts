@@ -82,7 +82,7 @@ export async function createAppointment(
     title: data.title || "",
     doctor_name: data.doctor_name || "",
     location: data.location || "",
-    appointment_date: data.appointment_date || new Date().toISOString().split("T")[0],
+    appointment_date: data.appointment_date || todayLocalDate(),
     start_time: data.start_time || "",
     end_time: data.end_time || "",
     priority: data.priority || "medium",
@@ -243,7 +243,7 @@ export async function createBill(userId: string, data: Partial<Bill>): Promise<B
     title: data.title || "",
     amount: data.amount || 0.0,
     category: data.category || "General",
-    due_date: data.due_date || new Date().toISOString().split("T")[0],
+    due_date: data.due_date || todayLocalDate(),
     status: data.status || "unpaid",
     created_at: now(),
     updated_at: now(),
@@ -380,7 +380,7 @@ export async function createTodo(userId: string, data: Partial<Todo>): Promise<T
     title: data.title || "",
     category: data.category || "",
     priority: data.priority || "medium",
-    due_date: data.due_date || new Date().toISOString().split("T")[0],
+    due_date: data.due_date || todayLocalDate(),
     completed: data.completed || false,
     progress: data.progress || 0,
     created_at: now(),
@@ -425,7 +425,7 @@ export async function createBirthday(userId: string, data: Partial<Birthday>): P
     user_id: userId,
     full_name: data.full_name || "",
     phone_number: data.phone_number || "",
-    birthday_date: data.birthday_date || new Date().toISOString().split("T")[0],
+    birthday_date: data.birthday_date || todayLocalDate(),
     created_at: now(),
     updated_at: now(),
   };
@@ -570,6 +570,13 @@ export function subscribeWorkoutPrograms(
   cb: (items: WorkoutProgram[]) => void,
 ): Unsubscribe {
   return subscribeCollection<WorkoutProgram>(userId, "workout_programs", cb, "created_at", "asc");
+}
+
+export function subscribeDocuments(
+  userId: string,
+  cb: (items: DocumentItem[]) => void,
+): Unsubscribe {
+  return subscribeCollection<DocumentItem>(userId, "documents", cb, "created_at", "desc");
 }
 
 export function subscribeWorkouts(userId: string, cb: (items: Workout[]) => void): Unsubscribe {
@@ -1120,8 +1127,20 @@ export async function updateWorkoutProgram(
 
 export async function deleteWorkoutProgram(id: string, userId: string): Promise<void> {
   const docRef = doc(db, "users", userId, "workout_programs", id);
+  const snap = await getDoc(docRef);
+  const wasActive = snap.exists() && snap.data()?.is_active === true;
+
   await deleteDoc(docRef);
   await addActivityLog(userId, "Deleted Program", "Removed a workout program");
+
+  if (wasActive) {
+    const ref = collection(db, "users", userId, "workout_programs");
+    const remainingSnap = await getDocs(ref);
+    if (!remainingSnap.empty) {
+      const nextActiveId = remainingSnap.docs[0].id;
+      await activateWorkoutProgram(nextActiveId, userId);
+    }
+  }
 }
 
 /**
@@ -1338,6 +1357,7 @@ export async function updateWalkSession(
     "steps",
     "finished_at",
     "path",
+    "vehicle",
   ] as const) {
     if (data[key] !== undefined) updates[key] = data[key];
   }

@@ -1,5 +1,5 @@
-import { useState, useEffect, useMemo, useCallback, useRef } from "react";
-import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { useState, useMemo } from "react";
+import { createFileRoute } from "@tanstack/react-router";
 import {
   Plus,
   Cake,
@@ -19,10 +19,14 @@ import { motion, AnimatePresence } from "framer-motion";
 import { Screen } from "@/components/lifehub/Screen";
 import { Modal } from "@/components/lifehub/Modal";
 import { useAuth } from "@/hooks/use-auth";
-import { getBirthdays, createBirthday, updateBirthday, deleteBirthday } from "@/lib/api";
+import { useAuthGuard } from "@/hooks/use-auth-guard";
+import { useDeleteWithGuard } from "@/hooks/use-delete-with-guard";
+import { useData } from "@/lib/data-context";
+import { createBirthday, updateBirthday, deleteBirthday } from "@/lib/api";
 import { Notifications } from "@/lib/notifications-integration";
 import { Birthday } from "@/lib/types";
 import { ListSkeleton } from "@/components/lifehub/SkeletonLoader";
+import { parseLocalDate } from "@/lib/date-utils";
 
 export const Route = createFileRoute("/birthdays")({
   head: () => ({
@@ -36,7 +40,7 @@ export const Route = createFileRoute("/birthdays")({
 /** Calculate the next birthday date (this year or next year) given a birthday date string. */
 function getNextBirthday(birthdayDate: string): Date {
   const today = new Date();
-  const bd = new Date(birthdayDate);
+  const bd = parseLocalDate(birthdayDate);
   const next = new Date(today.getFullYear(), bd.getMonth(), bd.getDate());
   // If already passed this year, set to next year
   if (next < new Date(today.getFullYear(), today.getMonth(), today.getDate())) {
@@ -57,13 +61,13 @@ function daysUntil(birthdayDate: string): number {
 /** Check if birthday is today. */
 function isToday(birthdayDate: string): boolean {
   const today = new Date();
-  const bd = new Date(birthdayDate);
+  const bd = parseLocalDate(birthdayDate);
   return today.getMonth() === bd.getMonth() && today.getDate() === bd.getDate();
 }
 
 /** Format a birthday date for display (e.g. "March 15"). */
 function formatBirthdayDisplay(dateStr: string): string {
-  const d = new Date(dateStr);
+  const d = parseLocalDate(dateStr);
   return d.toLocaleDateString("en-US", { month: "long", day: "numeric" });
 }
 
@@ -78,8 +82,7 @@ function sortByUpcoming(birthdays: Birthday[]): Birthday[] {
 
 /** Get the age a person will turn on their next birthday. */
 function getNextAge(birthdayDate: string): number {
-  const today = new Date();
-  const bd = new Date(birthdayDate);
+  const bd = parseLocalDate(birthdayDate);
   const next = getNextBirthday(birthdayDate);
   return next.getFullYear() - bd.getFullYear();
 }
@@ -88,10 +91,11 @@ function getNextAge(birthdayDate: string): number {
 
 function BirthdaysPage() {
   const { user, loading: authLoading } = useAuth();
-  const navigate = useNavigate();
+  useAuthGuard(user, authLoading);
 
-  const [birthdays, setBirthdays] = useState<Birthday[]>([]);
-  const [loading, setLoading] = useState(true);
+  const { birthdays, refreshAll } = useData();
+
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   // Modal State
@@ -104,30 +108,7 @@ function BirthdaysPage() {
   const [birthdayDate, setBirthdayDate] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
-  useEffect(() => {
-    if (!authLoading && !user) {
-      navigate({ to: "/auth" });
-    }
-  }, [user, authLoading, navigate]);
-
-  // Load birthdays
-  const loadBirthdays = useCallback(async () => {
-    if (!user) return;
-    setLoading(true);
-    setError(null);
-    try {
-      const data = await getBirthdays(user.id);
-      setBirthdays(data);
-    } catch (e: any) {
-      setError(e.message || "Failed to load birthdays");
-    } finally {
-      setLoading(false);
-    }
-  }, [user]);
-
-  useEffect(() => {
-    loadBirthdays();
-  }, [loadBirthdays]);
+  const { deleteWithGuard } = useDeleteWithGuard();
 
   // Sorted birthdays by upcoming
   const sortedBirthdays = useMemo(() => sortByUpcoming(birthdays), [birthdays]);
@@ -185,7 +166,6 @@ function BirthdaysPage() {
           phone_number: phoneNumber.trim() || "",
           birthday_date: birthdayDate,
         });
-        setBirthdays((prev) => prev.map((b) => (b.id === editingBirthday.id ? updated : b)));
         Notifications.cancelBirthday(editingBirthday.id);
         Notifications.scheduleBirthday(updated);
         toast.success("Birthday updated! 🎂");
@@ -195,7 +175,6 @@ function BirthdaysPage() {
           phone_number: phoneNumber.trim() || "",
           birthday_date: birthdayDate,
         });
-        setBirthdays((prev) => [...prev, created]);
         Notifications.scheduleBirthday(created);
         toast.success("Birthday saved! 🎉");
       }
@@ -207,24 +186,15 @@ function BirthdaysPage() {
     }
   };
 
-  // Guards against repeated taps on the same Delete button: repeat taps on
-  // an item that is already being deleted are ignored, and the success toast
-  // uses a per-item id so only ONE "deleted" notification is ever shown.
-  const deletingIds = useRef<Set<string>>(new Set());
   const handleDelete = async (id: string) => {
     if (!user) return;
-    if (deletingIds.current.has(id)) return; // already deleting this item
-    deletingIds.current.add(id);
-    try {
+    await deleteWithGuard(id, async () => {
       await deleteBirthday(id, user.id);
-      setBirthdays((prev) => prev.filter((b) => b.id !== id));
       Notifications.cancelBirthday(id);
       toast.success("Birthday deleted.", { id: `bday-deleted-${id}` });
-    } catch (err) {
+    })().catch(() => {
       toast.error("Failed to delete birthday.", { id: `bday-delete-error-${id}` });
-    } finally {
-      deletingIds.current.delete(id);
-    }
+    });
   };
 
   // ─── Render ────────────────────────────────────────────────────
@@ -249,7 +219,7 @@ function BirthdaysPage() {
           <p className="mt-2 text-sm font-bold text-foreground">Failed to load birthdays</p>
           <p className="text-xs text-muted-foreground mt-1">{error}</p>
           <button
-            onClick={loadBirthdays}
+            onClick={() => refreshAll()}
             className="mt-4 inline-flex items-center gap-1.5 rounded-full bg-ink px-4 py-2 text-xs font-bold text-card"
           >
             <Loader2 className="size-3.5 animate-spin" /> Retry

@@ -24,6 +24,29 @@ const FIREBASE_API_KEY = import.meta.env.VITE_FIREBASE_API_KEY ?? "";
 const FIREBASE_PROJECT_ID = import.meta.env.VITE_FIREBASE_PROJECT_ID ?? "";
 const DEFAULT_MODEL = "google/gemma-4-31b-it:free";
 
+// The native (Capacitor) APK is served from a WebView origin (http://localhost
+// on Android) and points at this route via VITE_ASSISTANT_ENDPOINT. CORS must
+// be open here so the phone can call the deployed backend. The route still
+// verifies the Firebase ID token before doing anything, so `*` is safe — no
+// cookies or credentials are involved.
+const CORS_HEADERS: Record<string, string> = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
+  "Access-Control-Allow-Headers": "Content-Type, Authorization",
+  "Access-Control-Max-Age": "86400",
+};
+
+function json(body: unknown, init?: ResponseInit): Response {
+  return new Response(JSON.stringify(body), {
+    ...init,
+    headers: {
+      "Content-Type": "application/json",
+      ...CORS_HEADERS,
+      ...(init?.headers || {}),
+    },
+  });
+}
+
 /** Reads a server-only env var: runtime binding first, build-time define second. */
 function serverEnv(name: string): string | undefined {
   const runtime = (process.env ?? {}) as Record<string, string | undefined>;
@@ -66,11 +89,12 @@ async function verifyIdToken(idToken: string): Promise<string | null> {
 export const Route = createFileRoute("/api/assistant")({
   server: {
     handlers: {
+      OPTIONS: async () => new Response(null, { status: 204, headers: CORS_HEADERS }),
       POST: async ({ request }) => {
         // 0) Server must have a key configured.
         const apiKey = serverEnv("ASSISTANT_API_KEY");
         if (!apiKey) {
-          return Response.json(
+          return json(
             { error: "Assistant model is not configured on the server." },
             { status: 503 },
           );
@@ -80,11 +104,11 @@ export const Route = createFileRoute("/api/assistant")({
         const authHeader = request.headers.get("authorization") ?? "";
         const idToken = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
         if (!idToken) {
-          return Response.json({ error: "Unauthorized." }, { status: 401 });
+          return json({ error: "Unauthorized." }, { status: 401 });
         }
         const uid = await verifyIdToken(idToken);
         if (!uid) {
-          return Response.json({ error: "Unauthorized." }, { status: 401 });
+          return json({ error: "Unauthorized." }, { status: 401 });
         }
 
         // 2) Parse body, then confirm the claimed userId matches the token.
@@ -92,13 +116,13 @@ export const Route = createFileRoute("/api/assistant")({
         try {
           body = (await request.json()) as typeof body;
         } catch {
-          return Response.json({ error: "Invalid request body." }, { status: 400 });
+          return json({ error: "Invalid request body." }, { status: 400 });
         }
         if (body.userId && body.userId !== uid) {
-          return Response.json({ error: "Forbidden." }, { status: 403 });
+          return json({ error: "Forbidden." }, { status: 403 });
         }
         if (!Array.isArray(body.messages)) {
-          return Response.json({ error: "Invalid request body." }, { status: 400 });
+          return json({ error: "Invalid request body." }, { status: 400 });
         }
 
         // 3) Forward to the external model with the server-only key.
@@ -117,7 +141,7 @@ export const Route = createFileRoute("/api/assistant")({
         if (!upstream.ok) {
           const detail = await upstream.text().catch(() => "");
           console.error(`[assistant] upstream error ${upstream.status}: ${detail.slice(0, 500)}`);
-          return Response.json({ error: "Assistant model request failed." }, { status: 502 });
+          return json({ error: "Assistant model request failed." }, { status: 502 });
         }
         const data = (await upstream.json()) as {
           choices?: { message?: { content?: string } }[];
@@ -125,9 +149,9 @@ export const Route = createFileRoute("/api/assistant")({
         };
         const reply = data.choices?.[0]?.message?.content ?? data.content ?? "";
         if (!reply.trim()) {
-          return Response.json({ error: "Assistant returned an empty reply." }, { status: 502 });
+          return json({ error: "Assistant returned an empty reply." }, { status: 502 });
         }
-        return Response.json({ content: reply });
+        return json({ content: reply });
       },
     },
   },

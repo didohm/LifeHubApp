@@ -1,5 +1,5 @@
-import { useState, useEffect, useRef } from "react";
-import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { useState, useEffect } from "react";
+import { createFileRoute } from "@tanstack/react-router";
 import {
   Plus,
   Pill,
@@ -18,6 +18,8 @@ import { toast } from "sonner";
 import { Screen, ScreenHeader } from "@/components/lifehub/Screen";
 import { Modal } from "@/components/lifehub/Modal";
 import { useAuth } from "@/hooks/use-auth";
+import { useAuthGuard } from "@/hooks/use-auth-guard";
+import { useDeleteWithGuard } from "@/hooks/use-delete-with-guard";
 import { useData } from "@/lib/data-context";
 import { useHydration } from "@/lib/use-hydration";
 import { Medication } from "@/lib/types";
@@ -34,7 +36,7 @@ export const Route = createFileRoute("/medications")({
 
 function MedicationsPage() {
   const { user, loading: authLoading } = useAuth();
-  const navigate = useNavigate();
+  useAuthGuard(user, authLoading);
 
   const {
     medications,
@@ -70,11 +72,7 @@ function MedicationsPage() {
   const [notes, setNotes] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
-  useEffect(() => {
-    if (!authLoading && !user) {
-      navigate({ to: "/auth" });
-    }
-  }, [user, authLoading, navigate]);
+  const { deleteWithGuard } = useDeleteWithGuard();
 
   const openAddModal = () => {
     setEditingMed(null);
@@ -143,22 +141,14 @@ function MedicationsPage() {
     }
   };
 
-  // Guards against repeated taps on the same Remove button: repeat taps on
-  // an item that is already being removed are ignored, and the success toast
-  // uses a per-item id so only ONE "removed" notification is ever shown.
-  const deletingIds = useRef<Set<string>>(new Set());
   const handleDelete = async (id: string) => {
     if (!user) return;
-    if (deletingIds.current.has(id)) return; // already removing this item
-    deletingIds.current.add(id);
-    try {
+    await deleteWithGuard(id, async () => {
       await removeMedication(id);
       toast.success("Item deleted.", { id: `med-removed-${id}` });
-    } catch (err) {
+    })().catch(() => {
       toast.error("Failed to delete.", { id: `med-delete-error-${id}` });
-    } finally {
-      deletingIds.current.delete(id);
-    }
+    });
   };
 
   const handleAddWater = async () => {
@@ -278,6 +268,9 @@ function MedicationsPage() {
         <img
           src="/illustration/health-reminders.png"
           alt="Health Reminders"
+          onError={(e) => {
+            e.currentTarget.style.display = 'none';
+          }}
           className="h-20 w-24 object-contain shrink-0 drop-shadow-[0_6px_12px_rgba(255,105,180,0.25)]"
         />
       </section>
@@ -291,6 +284,9 @@ function MedicationsPage() {
               <img
                 src="/illustration/empty-medications.png"
                 alt="No Medications"
+                onError={(e) => {
+                  e.currentTarget.style.display = 'none';
+                }}
                 className="h-full w-full object-contain drop-shadow-[0_10px_20px_rgba(0,0,0,0.08)]"
               />
             </div>

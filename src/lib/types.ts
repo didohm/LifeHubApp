@@ -246,6 +246,8 @@ export interface WalkSession {
   finished_at?: string | null;
   /** array of {lat,lng,ts} points captured via GPS */
   path?: { lat: number; lng: number; ts: number }[] | null;
+  /** True when the native service flagged vehicle-speed motion (flag only, no auto-pause). */
+  vehicle?: boolean;
   created_at: string;
   updated_at: string;
 }

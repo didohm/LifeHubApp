@@ -1,10 +1,13 @@
-import { useState, useEffect, useRef } from "react";
-import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { useState, useEffect } from "react";
+import { createFileRoute } from "@tanstack/react-router";
 import { Plus, Target, Edit2, Trash2, X, Loader2, Calendar } from "lucide-react";
 import { toast } from "sonner";
 import { Screen, ScreenHeader } from "@/components/lifehub/Screen";
 import { Modal } from "@/components/lifehub/Modal";
+import { WeeklySplitGrid, todayDayKey } from "@/components/lifehub/WeeklySplitGrid";
 import { useAuth } from "@/hooks/use-auth";
+import { useAuthGuard } from "@/hooks/use-auth-guard";
+import { useDeleteWithGuard } from "@/hooks/use-delete-with-guard";
 import { useData } from "@/lib/data-context";
 import {
   createWorkoutProgram,
@@ -17,6 +20,7 @@ import {
 import { WorkoutProgram, WorkoutType, DayKey, ProgramDayPlan } from "@/lib/types";
 import { Checkbox } from "@/components/ui/checkbox";
 import { ListSkeleton } from "@/components/lifehub/SkeletonLoader";
+import { focusForDay } from "@/lib/workout-utils";
 
 export const Route = createFileRoute("/workout-programs")({
   head: () => ({
@@ -37,25 +41,15 @@ const DEFAULT_WEEKLY_PLAN: ProgramDayPlan[] = [
   { day: "sun", focus: "Rest" },
 ];
 
-/** Focus label shown for a day, honoring structured cardio data. */
-function programDayFocus(program: WorkoutProgram, dayKey: DayKey): string {
-  if (program.workout_type === "Cardio") {
-    const structured = program.training_days;
-    if (structured && structured.length > 0) {
-      return structured.includes(dayKey) ? "Cardio" : "Rest";
-    }
-    const plan = (program.weekly_plan || []).find((p) => p.day === dayKey);
-    return plan && plan.focus && plan.focus.toLowerCase() !== "rest" ? "Cardio" : "Rest";
-  }
-  const plan = (program.weekly_plan || []).find((p) => p.day === dayKey);
-  return plan?.focus || "Rest";
-}
+
 
 function WorkoutProgramsPage() {
   const { user, loading: authLoading } = useAuth();
-  const navigate = useNavigate();
+  useAuthGuard(user, authLoading);
 
   const { workoutPrograms, fitnessLoading, refreshFitness } = useData();
+
+  const todayKey = todayDayKey();
 
   const [modalOpen, setModalOpen] = useState(false);
   const [editingProgram, setEditingProgram] = useState<WorkoutProgram | null>(null);
@@ -67,11 +61,7 @@ function WorkoutProgramsPage() {
   const [notes, setNotes] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
-  useEffect(() => {
-    if (!authLoading && !user) {
-      navigate({ to: "/auth" });
-    }
-  }, [user, authLoading, navigate]);
+  const { deleteWithGuard } = useDeleteWithGuard();
 
   const resetForm = () => {
     setName("");
@@ -204,23 +194,15 @@ function WorkoutProgramsPage() {
     }
   };
 
-  // Guards against repeated taps on the same Remove button: repeat taps on
-  // an item that is already being removed are ignored, and the success toast
-  // uses a per-item id so only ONE "removed" notification is ever shown.
-  const deletingIds = useRef<Set<string>>(new Set());
   const handleDelete = async (id: string) => {
     if (!user) return;
-    if (deletingIds.current.has(id)) return; // already removing this item
-    deletingIds.current.add(id);
-    try {
+    await deleteWithGuard(id, async () => {
       await deleteWorkoutProgram(id, user.id);
       await refreshFitness();
       toast.success("Program removed.", { id: `program-removed-${id}` });
-    } catch {
+    })().catch(() => {
       toast.error("Could not delete program.", { id: `program-delete-error-${id}` });
-    } finally {
-      deletingIds.current.delete(id);
-    }
+    });
   };
 
   const handleSetActive = async (id: string) => {
@@ -323,28 +305,13 @@ function WorkoutProgramsPage() {
                 <span className="text-[10px] font-extrabold uppercase text-[#6B7280] tracking-wider block mb-2">
                   Weekly Split
                 </span>
-                <div className="grid grid-cols-7 gap-1 text-center">
-                  {DAY_KEY_ORDER.map((dayKey) => {
-                    const focusLabel = programDayFocus(program, dayKey);
-                    const isRest = focusLabel.toLowerCase() === "rest";
-
-                    return (
-                      <div
-                        key={dayKey}
-                        className={`rounded-xl p-1.5 flex flex-col justify-between min-h-[52px] ${
-                          isRest ? "bg-black/5 text-[#6B7280]" : "bg-slate-900 text-white shadow-sm"
-                        }`}
-                      >
-                        <span className="text-[9px] font-extrabold uppercase">
-                          {DAY_LABELS[dayKey].slice(0, 3)}
-                        </span>
-                        <span className="text-[10px] font-black truncate leading-tight mt-1">
-                          {focusLabel}
-                        </span>
-                      </div>
-                    );
-                  })}
-                </div>
+                <WeeklySplitGrid
+                  days={DAY_KEY_ORDER.map((dayKey) => ({
+                    key: dayKey,
+                    focus: focusForDay(program, dayKey),
+                    isToday: dayKey === todayKey,
+                  }))}
+                />
               </div>
 
               {program.notes && <p className="text-xs text-[#6B7280] italic">💡 {program.notes}</p>}

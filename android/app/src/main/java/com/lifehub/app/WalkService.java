@@ -6,8 +6,10 @@ import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.app.Service;
+import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
+import android.content.IntentFilter;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.hardware.Sensor;
@@ -17,17 +19,27 @@ import android.hardware.SensorManager;
 import android.location.Location;
 import android.location.LocationListener;
 import android.location.LocationManager;
+import android.net.Uri;
 import android.os.Binder;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.IBinder;
 import android.os.PowerManager;
 import android.os.SystemClock;
+import android.provider.Settings;
+import android.util.Log;
 
 import androidx.core.app.NotificationCompat;
 import androidx.core.content.ContextCompat;
 
-import java.util.Locale;
+import com.google.android.gms.common.ConnectionResult;
+import com.google.android.gms.common.GoogleApiAvailability;
+import com.google.android.gms.location.FusedLocationProviderClient;
+import com.google.android.gms.location.LocationCallback;
+import com.google.android.gms.location.LocationRequest;
+import com.google.android.gms.location.LocationResult;
+import com.google.android.gms.location.LocationServices;
+import com.google.android.gms.location.Priority;
 
 /**
  * Foreground Service for active walking tracking in LifeHub.
@@ -69,14 +81,19 @@ public class WalkService extends Service implements LocationListener, SensorEven
     public static final String EXTRA_DURATION_SEC = "extra_duration_sec";
     public static final String EXTRA_CALORIES = "extra_calories";
     public static final String EXTRA_PACE = "extra_pace";
+    public static final String EXTRA_WEIGHT_KG = "extra_weight_kg";
+    public static final String EXTRA_SESSION_ID = "extra_session_id";
 
     /** Tapped from the foreground notification — tells the app to finish. */
     public static final String ACTION_FINISH = "com.lifehub.app.walk.FINISH";
     /** Tapped from the foreground notification — tells the app to pause. */
     public static final String ACTION_PAUSE_TAP = "com.lifehub.app.walk.PAUSE_TAP";
+    /** Tapped from the foreground notification — tells the app to resume. */
+    public static final String ACTION_RESUME_TAP = "com.lifehub.app.walk.RESUME_TAP";
 
     private static final String PREFS = "lifehub_walk_state";
     private static final String KEY_TRACKING = "tracking";
+    private static final String KEY_PAUSED = "paused";
     private static final String KEY_DISTANCE = "distance_km";
     private static final String KEY_STEPS = "steps";
     private static final String KEY_DURATION = "duration_sec";
@@ -88,28 +105,65 @@ public class WalkService extends Service implements LocationListener, SensorEven
     private static final String KEY_LNG = "lng";
     private static final String KEY_ACC = "acc";
     private static final String KEY_UPDATES = "updates";
+    private static final String KEY_STEP_INITIAL = "step_initial";
+    private static final String KEY_STEP_TOTAL = "step_total";
+    private static final String KEY_WEIGHT = "weight_kg";
+    private static final String KEY_GPS_KM = "gps_km";
+    private static final String KEY_SESSION_ID = "session_id";
+    private static final String KEY_VEHICLE_FLAGGED = "vehicle_flagged";
 
-    // Average human step length in meters. When GPS fixes are unavailable
-    // (no permission, poor signal, device indoors) but the step detector is
-    // counting, steps are the ONLY motion signal we have — without this
-    // fallback distance would sit at 0.00 km the whole walk.
-    private static final double STEP_LENGTH_METERS = 0.70;
-    // Max step-based distance rate (steps/second). Prevents sensor glitches
-    // from inflating the distance (roughly a fast running cadence).
-    private static final double MAX_STEPS_PER_SECOND = 4.0;
+    // Average adult step length in meters (standard average stride — the app
+    // has no height/gender profile data, so this fixed constant is the only
+    // calibration available). Distance is derived from the CURRENT step total
+    // (steps × stride) on every recompute, so it can never stall at 0.00 km
+    // while the step counter is counting, and can never drift out of sync
+    // with the step counter by being accumulated separately.
+    private static final double STRIDE_METERS = 0.762;
+    // MET value for moderate walking pace (kcal per kg per hour). Drives the
+    // calorie formula: MET × weight × duration_hours.
+    private static final double MET_WALKING = 3.5;
+    private static final String TAG = "LifeHubWalk";
 
-    private long lastStepDistanceMark = 0L;
     private int stepsAtLastMark = 0;
-    // Wall-clock epoch ms of the most recent native location fix, used to bound
-    // how old a fix we trust (discard fixes older than 10s).
-    private long lastFixWallMs = 0L;
+    // SystemClock.elapsedRealtime() of the last accepted fix — feeds the GPS
+    // speed gate that rejects jittery (implausibly fast) fix-to-fix jumps.
+    private long lastFixElapsedRealtime = 0L;
+    // Wall-clock epoch ms of the last ACCEPTED GPS fix. Falls back to the
+    // step-derived distance when GPS goes stale (indoor / tunnel / signal loss).
+    private long lastGpsFixWallMs = 0L;
+    // Wall-clock epoch ms of the last STEP event (detector or counter). While
+    // fresh, the step counter is the cadence ground truth for distance
+    // arbitration; when stale (screen-off stalls, no sensor), GPS takes over.
+    private long lastStepEventWallMs = 0L;
 
     private final IBinder binder = new LocalBinder();
     private NotificationManager notificationManager;
     private LocationManager locationManager;
+    /**
+     * Modern fused location provider (Google Play Services). Preferred over
+     * LocationManager when Play Services is available: it fuses GPS + network
+     * + sensor hints with far better battery efficiency while keeping
+     * high-accuracy walking fixes. Falls back to LocationManager otherwise.
+     */
+    private FusedLocationProviderClient fusedLocationClient;
+    private LocationCallback fusedLocationCallback;
     private SensorManager sensorManager;
     private Sensor stepDetectorSensor;
+    private Sensor stepCounterSensor;
+    private int initialStepCounterValue = -1;
+    // Last hardware TYPE_STEP_COUNTER accumulator value received. Persisted so
+    // a process death (OOM, swipe-away) can resume the walk against the SAME
+    // hardware baseline — otherwise the counter is re-based on the stale
+    // persisted step count and every step taken while dead is discarded, which
+    // permanently freezes the step counter.
+    private long lastCounterTotal = -1L;
     private PowerManager.WakeLock wakeLock;
+    private NotificationCompat.Builder notificationBuilder;
+    private boolean isInForeground = false;
+    private boolean lastNotifiedPauseState = false;
+    private WalkDatabaseHelper dbHelper;
+    private int stepsAtLastVehicleCheck = 0;
+    private long lastVehicleCheckWallMs = 0L;
 
     public class LocalBinder extends Binder {
         public WalkService getService() {
@@ -123,8 +177,24 @@ public class WalkService extends Service implements LocationListener, SensorEven
         notificationManager = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
         locationManager = (LocationManager) getSystemService(Context.LOCATION_SERVICE);
         sensorManager = (SensorManager) getSystemService(Context.SENSOR_SERVICE);
+        dbHelper = WalkDatabaseHelper.getInstance(this);
+        // Fused location provider when Google Play Services is present. The
+        // request callback delegates to the SAME onLocationChanged() pipeline
+        // (filtering, distance, route points) as the LocationManager fallback,
+        // so there is exactly one canonical GPS ingestion path.
+        fusedLocationClient = LocationServices.getFusedLocationProviderClient(this);
+        fusedLocationCallback = new LocationCallback() {
+            @Override
+            public void onLocationResult(LocationResult locationResult) {
+                if (locationResult == null || !isTracking || paused) return;
+                for (Location location : locationResult.getLocations()) {
+                    onLocationChanged(location);
+                }
+            }
+        };
         if (sensorManager != null) {
             stepDetectorSensor = sensorManager.getDefaultSensor(Sensor.TYPE_STEP_DETECTOR);
+            stepCounterSensor = sensorManager.getDefaultSensor(Sensor.TYPE_STEP_COUNTER);
         }
         createNotificationChannel();
         restoreState();
@@ -141,6 +211,7 @@ public class WalkService extends Service implements LocationListener, SensorEven
         prefs()
             .edit()
             .putBoolean(KEY_TRACKING, isTracking)
+            .putBoolean(KEY_PAUSED, paused)
             .putFloat(KEY_DISTANCE, (float) currentDistanceKm)
             .putInt(KEY_STEPS, currentSteps)
             .putLong(KEY_DURATION, durationSec)
@@ -152,12 +223,19 @@ public class WalkService extends Service implements LocationListener, SensorEven
             .putFloat(KEY_LNG, lastLocation != null ? (float) lastLocation.getLongitude() : 0f)
             .putFloat(KEY_ACC, lastLocation != null && lastLocation.hasAccuracy() ? lastLocation.getAccuracy() : 0f)
             .putInt(KEY_UPDATES, updateCount)
+            .putInt(KEY_STEP_INITIAL, initialStepCounterValue)
+            .putLong(KEY_STEP_TOTAL, lastCounterTotal)
+            .putFloat(KEY_WEIGHT, (float) userWeightKg)
+            .putFloat(KEY_GPS_KM, (float) gpsDistanceKm)
+            .putString(KEY_SESSION_ID, activeSessionId)
+            .putBoolean(KEY_VEHICLE_FLAGGED, isVehicleFlagged)
             .apply();
     }
 
     private void restoreState() {
         SharedPreferences p = prefs();
         isTracking = p.getBoolean(KEY_TRACKING, false);
+        paused = p.getBoolean(KEY_PAUSED, false);
         currentDistanceKm = p.getFloat(KEY_DISTANCE, 0f);
         currentSteps = p.getInt(KEY_STEPS, 0);
         durationSec = p.getLong(KEY_DURATION, 0);
@@ -166,6 +244,19 @@ public class WalkService extends Service implements LocationListener, SensorEven
         startedAtMs = p.getLong(KEY_STARTED_AT, 0);
         accumulatedMs = p.getLong(KEY_ACCUMULATED, 0);
         updateCount = p.getInt(KEY_UPDATES, 0);
+        initialStepCounterValue = p.getInt(KEY_STEP_INITIAL, -1);
+        lastCounterTotal = p.getLong(KEY_STEP_TOTAL, -1L);
+        gpsDistanceKm = p.getFloat(KEY_GPS_KM, 0f);
+        activeSessionId = p.getString(KEY_SESSION_ID, "current_session");
+        isVehicleFlagged = p.getBoolean(KEY_VEHICLE_FLAGGED, false);
+        float weight = p.getFloat(KEY_WEIGHT, 0f);
+        if (weight > 0f) userWeightKg = weight;
+
+        long nowElapsed = SystemClock.elapsedRealtime();
+        if (startedAtMs > nowElapsed || startedAtMs <= 0) {
+            startedAtMs = nowElapsed - durationSec * 1000L;
+        }
+
         float lat = p.getFloat(KEY_LAT, 0f);
         float lng = p.getFloat(KEY_LNG, 0f);
         float acc = p.getFloat(KEY_ACC, 0f);
@@ -185,11 +276,17 @@ public class WalkService extends Service implements LocationListener, SensorEven
             String action = intent.getAction();
             switch (action) {
                 case ACTION_START: {
+                    String sessId = intent.getStringExtra(EXTRA_SESSION_ID);
+                    if (sessId != null && !sessId.isEmpty()) {
+                        activeSessionId = sessId;
+                    }
                     double km = intent.getDoubleExtra(EXTRA_DISTANCE_KM, 0.0);
                     int steps = intent.getIntExtra(EXTRA_STEPS, 0);
                     long dur = intent.getLongExtra(EXTRA_DURATION_SEC, 0);
                     double cal = intent.getDoubleExtra(EXTRA_CALORIES, 0.0);
                     double pace = intent.getDoubleExtra(EXTRA_PACE, 0.0);
+                    double weight = intent.getDoubleExtra(EXTRA_WEIGHT_KG, 0.0);
+                    if (weight > 0.0) userWeightKg = weight;
                     startForegroundTracking(km, steps, dur, cal, pace);
                     break;
                 }
@@ -202,11 +299,14 @@ public class WalkService extends Service implements LocationListener, SensorEven
                     long dur = intent.getLongExtra(EXTRA_DURATION_SEC, -1L);
                     double cal = intent.getDoubleExtra(EXTRA_CALORIES, -1.0);
                     double pace = intent.getDoubleExtra(EXTRA_PACE, -1.0);
+                    double weight = intent.getDoubleExtra(EXTRA_WEIGHT_KG, 0.0);
+                    if (weight > 0.0) userWeightKg = weight;
                     if (km >= 0.0) currentDistanceKm = Math.max(currentDistanceKm, km);
                     if (steps >= 0) currentSteps = Math.max(currentSteps, steps);
                     if (dur >= 0L) durationSec = Math.max(durationSec, dur);
                     if (cal >= 0.0) currentCalories = Math.max(currentCalories, cal);
                     if (pace >= 0.0) currentPace = Math.max(currentPace, pace);
+                    resumeTrackingEnginesIfNeeded();
                     updateNotification();
                     publishUpdate();
                     persistState();
@@ -214,6 +314,7 @@ public class WalkService extends Service implements LocationListener, SensorEven
                 }
                 case ACTION_PAUSE: {
                     paused = true;
+                    resumeTrackingEnginesIfNeeded();
                     updateNotification();
                     publishUpdate();
                     persistState();
@@ -226,6 +327,8 @@ public class WalkService extends Service implements LocationListener, SensorEven
                     long dur = intent.getLongExtra(EXTRA_DURATION_SEC, -1L);
                     double cal = intent.getDoubleExtra(EXTRA_CALORIES, -1.0);
                     double pace = intent.getDoubleExtra(EXTRA_PACE, -1.0);
+                    double weight = intent.getDoubleExtra(EXTRA_WEIGHT_KG, 0.0);
+                    if (weight > 0.0) userWeightKg = weight;
                     if (km >= 0.0) currentDistanceKm = Math.max(currentDistanceKm, km);
                     if (steps >= 0) currentSteps = Math.max(currentSteps, steps);
                     if (dur >= 0L) durationSec = Math.max(durationSec, dur);
@@ -236,6 +339,7 @@ public class WalkService extends Service implements LocationListener, SensorEven
                     // from the (merged) baseline instead of counting the pause.
                     startedAtMs = SystemClock.elapsedRealtime() - durationSec * 1000L;
                     accumulatedMs = durationSec * 1000L;
+                    resumeTrackingEnginesIfNeeded();
                     updateNotification();
                     publishUpdate();
                     persistState();
@@ -254,6 +358,9 @@ public class WalkService extends Service implements LocationListener, SensorEven
                 case ACTION_PAUSE_TAP:
                     publishUpdate("pause");
                     break;
+                case ACTION_RESUME_TAP:
+                    publishUpdate("resume");
+                    break;
                 default:
                     break;
             }
@@ -261,21 +368,39 @@ public class WalkService extends Service implements LocationListener, SensorEven
             // Re-created after a process death with no intent: re-enter the
             // foreground so the persisted walk keeps going instead of silently
             // disappearing. stopWithTask="false" keeps us alive across swipes.
-            enterForeground();
-            // The process was re-created, so the wake lock, location updates
-            // and step listeners are ALL gone — without them the restored walk
-            // shows a notification but never produces fixes/steps again
-            // (distance stuck at 0.00). Re-register everything and reset the
-            // GPS/step fallback marks so distance keeps advancing.
-            acquireWakeLock();
-            registerLocationUpdates();
-            registerStepListeners();
-            lastFixWallMs = 0L;
-            lastStepDistanceMark = 0L;
-            stepsAtLastMark = currentSteps;
-            publishUpdate(); // UI learns the restored native state immediately
+            resumeTrackingEnginesIfNeeded();
         }
         return START_STICKY;
+    }
+
+    /**
+     * The walk clock is wall-clock based, so a service instance that was
+     * (re)created by startService()/startForegroundService() — e.g. the app
+     * sends ACTION_RESUME after the original process died (OOM, swipe-away
+     * while the task was killed) — would keep ticking the duration while its
+     * GPS fixes and step sensors stay UNREGISTERED: distance/steps would
+     * freeze at 0.00 km no matter how far the user walks. This re-registers
+     * the entire tracking stack (wake lock, screen-on recovery, location
+     * updates, step listeners) and re-enters the foreground when the instance
+     * is not already live. On a healthy instance it is a cheap no-op.
+     */
+    private void resumeTrackingEnginesIfNeeded() {
+        // Already live: wake lock held + foreground notification shown means
+        // the sensors were registered at start — do not double-register.
+        if (isInForeground && wakeLock != null && wakeLock.isHeld()) return;
+
+        enterForeground();
+        acquireWakeLock();
+        registerScreenOnReceiver();
+        registerLocationUpdates();
+        registerStepListeners();
+        // Reset the step/gps marks so the restored walk earns new distance
+        // from the first fresh fix/step instead of re-crediting the persisted
+        // totals. The step-counter baseline was persisted, so the hardware
+        // accumulator resumes seamlessly.
+        stepsAtLastMark = currentSteps;
+        // UI learns the restored native state immediately.
+        publishUpdate();
     }
 
     private void createNotificationChannel() {
@@ -295,7 +420,13 @@ public class WalkService extends Service implements LocationListener, SensorEven
         }
     }
 
-    private Notification buildNotification() {
+    /**
+     * Creates the NotificationCompat.Builder with all static configuration
+     * (PendingIntents, icons, color, actions, etc.). Called once when entering
+     * foreground and when the pause state changes (to update action button labels).
+     * Dynamic content (title, text) are updated via updateNotificationContent().
+     */
+    private void createNotificationBuilder() {
         Intent launchIntent = new Intent(this, MainActivity.class);
         launchIntent.setFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_CLEAR_TOP);
         // Surface the correct screen when the user taps the body of the notice.
@@ -308,10 +439,19 @@ public class WalkService extends Service implements LocationListener, SensorEven
                         | (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M ? PendingIntent.FLAG_IMMUTABLE : 0)
         );
 
-        // "Pause" and "Finish" action buttons drive the React app through the
+        notificationBuilder = new NotificationCompat.Builder(this, CHANNEL_ID)
+                .setSmallIcon(R.drawable.ic_stat_lifehub)
+                .setColor(0xFF7C5CFC)
+                .setOngoing(true)
+                .setOnlyAlertOnce(true)
+                .setContentIntent(pendingIntent)
+                .setPriority(NotificationCompat.PRIORITY_LOW)
+                .setCategory(NotificationCompat.CATEGORY_SERVICE);
+
+        // "Pause/Resume" and "Finish" action buttons drive the React app through the
         // walkUpdate event (the app owns the actual session lifecycle).
         Intent pauseIntent = new Intent(this, WalkService.class);
-        pauseIntent.setAction(ACTION_PAUSE_TAP);
+        pauseIntent.setAction(paused ? ACTION_RESUME_TAP : ACTION_PAUSE_TAP);
         PendingIntent pausePi = PendingIntent.getService(
                 this,
                 1,
@@ -330,51 +470,83 @@ public class WalkService extends Service implements LocationListener, SensorEven
                         | (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M ? PendingIntent.FLAG_IMMUTABLE : 0)
         );
 
-        String title = paused ? "LifeHub Walking — Paused ⏸" : "LifeHub Walking Tracker 🚶";
-        String content = formatContent();
+        // Clear existing actions before adding to prevent duplicates
+        notificationBuilder.clearActions();
+        notificationBuilder.addAction(0, paused ? "Resume" : "Pause", pausePi);
+        notificationBuilder.addAction(0, "Finish", finishPi);
 
-        NotificationCompat.Builder builder = new NotificationCompat.Builder(this, CHANNEL_ID)
+        // Set initial content (title and text)
+        updateNotificationContent();
+    }
+
+    /**
+     * Updates only the dynamic content (title, text) on the cached notification
+     * builder. This avoids recreating the entire notification structure and prevents
+     * flickering when called every second from the ticker.
+     *
+     * The content carries the LIVE metrics (distance, duration, steps, kcal)
+     * updated by NATIVE code on every tick — the WebView is never involved, so
+     * it stays accurate even while the app is backgrounded or the screen is
+     * locked (JS throttling has no effect on native-side updates).
+     *
+     * Actions are NOT updated here — they're set once in createNotificationBuilder()
+     * and only recreated when the pause state actually changes.
+     */
+    private void updateNotificationContent() {
+        if (notificationBuilder == null) return;
+
+        String title = paused ? "⏸ Walking paused" : "🚶 Walking";
+        String content = formatNotificationMetrics();
+
+        notificationBuilder
                 .setContentTitle(title)
-                .setContentText(content)
-                .setStyle(new NotificationCompat.BigTextStyle().bigText(content))
-                .setSmallIcon(R.drawable.ic_stat_lifehub)
-                .setColor(0xFF7C5CFC)
-                .setOngoing(true)
-                .setOnlyAlertOnce(true)
-                .setContentIntent(pendingIntent)
-                .setPriority(NotificationCompat.PRIORITY_LOW)
-                .setCategory(NotificationCompat.CATEGORY_SERVICE);
-
-        builder.addAction(0, paused ? "Resume" : "Pause", pausePi);
-        builder.addAction(0, "Finish", finishPi);
-
-        return builder.build();
+                .setContentText(content);
     }
 
-    private String formatContent() {
-        final String dist = String.format(Locale.US, "%.2f km", currentDistanceKm);
-        final String steps = String.format(Locale.US, "%d steps", currentSteps);
-        final String dur = formatDuration(durationSec);
-        final String cal = String.format(Locale.US, "%.0f kcal", currentCalories);
-        return String.format(Locale.US, "%s · %s · %s · %s", dist, steps, dur, cal);
+    private String formatNotificationDuration(long totalSeconds) {
+        long hours = totalSeconds / 3600;
+        long minutes = (totalSeconds % 3600) / 60;
+        long seconds = totalSeconds % 60;
+        if (hours > 0) {
+            return String.format(java.util.Locale.US, "%d:%02d:%02d", hours, minutes, seconds);
+        }
+        return String.format(java.util.Locale.US, "%02d:%02d", minutes, seconds);
     }
 
-    private static String formatDuration(long totalSec) {
-        long s = totalSec % 60;
-        long m = (totalSec / 60) % 60;
-        long h = totalSec / 3600;
-        if (h > 0) return String.format(Locale.US, "%dh %02dm %02ds", h, m, s);
-        return String.format(Locale.US, "%dm %02ds", m, s);
+    /** "2.43 km · 24:18 · 3,421 steps · 146 kcal" — compact one-line live summary. */
+    private String formatNotificationMetrics() {
+        StringBuilder sb = new StringBuilder();
+        sb.append(String.format(java.util.Locale.US, "%.2f km", currentDistanceKm));
+        sb.append(" · ").append(formatNotificationDuration(durationSec));
+        sb.append(" · ").append(String.format(java.util.Locale.US, "%,d", currentSteps)).append(" steps");
+        sb.append(" · ").append(String.format(java.util.Locale.US, "%.0f", currentCalories)).append(" kcal");
+        return sb.toString();
     }
 
     private void enterForeground() {
-        Notification notification = buildNotification();
+        // Create the notification builder only once when entering foreground
+        if (notificationBuilder == null) {
+            createNotificationBuilder();
+            lastNotifiedPauseState = paused;
+        } else {
+            // If pause state changed, recreate the builder with updated actions
+            if (lastNotifiedPauseState != paused) {
+                createNotificationBuilder();
+                lastNotifiedPauseState = paused;
+            } else {
+                // If builder exists and pause state unchanged, just update content
+                updateNotificationContent();
+            }
+        }
+        
+        Notification notification = notificationBuilder.build();
         int fgsType = computeFgsType();
         if (fgsType == 0) {
             // No valid foreground-service type for the granted permissions: we
             // cannot legally start a foreground service, so we degrade to a
             // normal (non-ongoing) notification so tracking still surfaces.
             notificationManager.notify(NOTIFICATION_ID, notification);
+            isInForeground = true;
             return;
         }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
@@ -382,6 +554,7 @@ public class WalkService extends Service implements LocationListener, SensorEven
         } else {
             startForeground(NOTIFICATION_ID, notification);
         }
+        isInForeground = true;
     }
 
     /**
@@ -426,28 +599,68 @@ public class WalkService extends Service implements LocationListener, SensorEven
         accumulatedMs = this.durationSec * 1000L;
         lastLocation = null; // first fix after (re)start only sets the baseline
         stepsAtLastMark = currentSteps;
-        lastStepDistanceMark = 0L;
         updateCount = 0;
+        gpsDistanceKm = 0.0;
+        isVehicleFlagged = false;
+        lastVehicleCheckWallMs = 0L;
+        stepsAtLastVehicleCheck = 0;
+        lastGpsFixWallMs = 0L;
+        // Fresh walk: drop the previous session's step-counter baseline so the
+        // hardware accumulator is re-based on this walk's start point.
+        initialStepCounterValue = -1;
+        lastCounterTotal = -1L;
 
         acquireWakeLock();
-        enterForeground();
+        registerScreenOnReceiver();
+        enterForeground(); // This already displays the notification
         registerLocationUpdates();
         registerStepListeners();
+        // Doze/battery-saver would otherwise suspend the service's location and
+        // step streams minutes into a walk (steps freeze, distance stalls).
+        requestBatteryOptimizationExemption();
 
-        updateNotification();
         publishUpdate();
         persistState();
     }
 
+    /**
+     * Asks the OS to exempt LifeHub from battery optimization while a walk is
+     * active. Foreground services are normally prioritized, but aggressive
+     * OEM battery managers / Doze can still suspend the (non-wake-up) step
+     * sensor stream and stall GPS — which freezes steps/distance mid-walk.
+     * The system shows the standard "Allow background activity?" dialog once;
+     * this is a no-op when the app is already exempt.
+     */
+    private void requestBatteryOptimizationExemption() {
+        try {
+            PowerManager pm = (PowerManager) getSystemService(Context.POWER_SERVICE);
+            if (pm == null || pm.isIgnoringBatteryOptimizations(getPackageName())) return;
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                Intent intent = new Intent(
+                        Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                        Uri.parse("package:" + getPackageName())
+                );
+                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                startActivity(intent);
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "Battery optimization exemption dialog unavailable or already handled", e);
+        }
+    }
+
     private void acquireWakeLock() {
         try {
+            // Release any existing wake lock first to prevent leaks
+            releaseWakeLock();
             PowerManager pm = (PowerManager) getSystemService(Context.POWER_SERVICE);
             if (pm != null) {
                 wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "LifeHub::WalkTracking");
                 wakeLock.setReferenceCounted(false);
-                if (!wakeLock.isHeld()) wakeLock.acquire(6 * 60 * 60 * 1000L); // up to 6h
+                // 10 hour timeout with automatic re-acquisition via ticker
+                if (!wakeLock.isHeld()) wakeLock.acquire(10 * 60 * 60 * 1000L);
             }
-        } catch (Exception ignored) {
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to acquire wake lock", e);
             wakeLock = null;
         }
     }
@@ -456,72 +669,199 @@ public class WalkService extends Service implements LocationListener, SensorEven
         if (wakeLock != null && wakeLock.isHeld()) {
             try {
                 wakeLock.release();
-            } catch (Exception ignored) {
+            } catch (Exception e) {
+                Log.e(TAG, "Failed to release wake lock", e);
             }
         }
         wakeLock = null;
     }
 
+    /** True when Google Play Services (fused location provider) is available. */
+    private boolean isFusedLocationAvailable() {
+        try {
+            return GoogleApiAvailability.getInstance()
+                    .isGooglePlayServicesAvailable(this) == ConnectionResult.SUCCESS;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
     private void registerLocationUpdates() {
-        if (locationManager == null) return;
-        boolean hasPermission =
+        // Check for either FINE or COARSE location permission
+        boolean hasFineLocation =
                 ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION)
                         == PackageManager.PERMISSION_GRANTED;
-        if (!hasPermission) return;
+        boolean hasCoarseLocation =
+                ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION)
+                        == PackageManager.PERMISSION_GRANTED;
+
+        if (!hasFineLocation && !hasCoarseLocation) return;
+
+        // Preferred path: FusedLocationProviderClient (battery-efficient,
+        // sensor-fused GPS). Falls back to LocationManager when Play Services
+        // is missing or the request fails (device, test, or provider quirk).
+        if (fusedLocationClient != null && isFusedLocationAvailable()) {
+            try {
+                LocationRequest request = new LocationRequest.Builder(
+                        Priority.PRIORITY_HIGH_ACCURACY,
+                        2000L // 2s interval — responsive walking deltas
+                )
+                        .setMinUpdateIntervalMillis(1000L)
+                        .setMaxUpdateDelayMillis(5000L)
+                        .setMinUpdateDistanceMeters(0f) // all fixes — native filters
+                        .build();
+                fusedLocationClient.requestLocationUpdates(request, fusedLocationCallback, null);
+                return;
+            } catch (SecurityException e) {
+                Log.w(TAG, "SecurityException requesting fused location updates", e);
+            } catch (Exception e) {
+                Log.w(TAG, "Failed to register fused location updates, falling back to LocationManager", e);
+            }
+        }
+
+        if (locationManager == null) return;
 
         try {
             boolean anyProvider = false;
-            if (locationManager.isProviderEnabled(LocationManager.GPS_PROVIDER)) {
+
+            // GPS provider requires FINE location permission
+            if (hasFineLocation && locationManager.isProviderEnabled(LocationManager.GPS_PROVIDER)) {
                 locationManager.requestLocationUpdates(
                         LocationManager.GPS_PROVIDER,
                         2000, // 2s interval — responsive walking deltas
-                        2,    // 2m min distance
+                        0,    // No minDistance — get all updates for accurate tracking
                         this
                 );
                 anyProvider = true;
             }
-            if (locationManager.isProviderEnabled(LocationManager.NETWORK_PROVIDER)) {
+
+            // Network provider works with either FINE or COARSE
+            if ((hasFineLocation || hasCoarseLocation) &&
+                locationManager.isProviderEnabled(LocationManager.NETWORK_PROVIDER)) {
                 locationManager.requestLocationUpdates(
                         LocationManager.NETWORK_PROVIDER,
                         3000,
-                        5,
+                        0,
                         this
                 );
                 anyProvider = true;
             }
-            if (!anyProvider) {
+
+            // Fallback: if no provider enabled, try GPS anyway (with FINE permission)
+            if (!anyProvider && hasFineLocation) {
                 locationManager.requestLocationUpdates(
                         LocationManager.GPS_PROVIDER,
                         2000,
-                        2,
+                        0,
                         this
                 );
             }
-        } catch (SecurityException ignored) {
-            // Permission checked above
-        } catch (Exception ignored) {
-            // Provider toggles mid-call
+            } catch (SecurityException e) {
+                Log.w(TAG, "SecurityException requesting GPS location updates", e);
+            } catch (Exception e) {
+                Log.w(TAG, "Failed to register location updates", e);
+            }
+    }
+
+    /** Stops BOTH location sources (fused + legacy) — safe to call from any path. */
+    private void removeLocationUpdates() {
+        if (fusedLocationClient != null && fusedLocationCallback != null) {
+            try {
+                fusedLocationClient.removeLocationUpdates(fusedLocationCallback);
+            } catch (Exception e) {
+                Log.w(TAG, "Failed to remove fused location updates", e);
+            }
+        }
+        if (locationManager != null) {
+            try {
+                locationManager.removeUpdates(this);
+            } catch (SecurityException e) {
+                Log.w(TAG, "SecurityException removing location updates", e);
+            }
         }
     }
 
     private void registerStepListeners() {
-        if (sensorManager != null && stepDetectorSensor != null) {
-            sensorManager.registerListener(this, stepDetectorSensor, SensorManager.SENSOR_DELAY_UI);
+        if (sensorManager != null) {
+            if (stepDetectorSensor != null) {
+                sensorManager.registerListener(this, stepDetectorSensor, SensorManager.SENSOR_DELAY_UI);
+            }
+            if (stepCounterSensor != null) {
+                sensorManager.registerListener(this, stepCounterSensor, SensorManager.SENSOR_DELAY_UI);
+            }
+        }
+    }
+
+    /* ── Screen-on stream recovery ────────────────────────────────────────── */
+
+    /**
+     * TYPE_STEP_COUNTER / TYPE_STEP_DETECTOR are NON-wake-up sensors. On many
+     * devices the HAL suspends their event stream while the screen is off; the
+     * walk clock (wall-clock based) keeps advancing but steps freeze. When the
+     * screen wakes, re-registering the listeners (and re-holding the wake
+     * lock) restarts the stream instantly, and the STEP_COUNTER accumulator
+     * baseline lets the service catch up the exact steps taken meanwhile.
+     */
+    private final BroadcastReceiver screenOnReceiver = new BroadcastReceiver() {
+        @Override
+        public void onReceive(Context context, Intent intent) {
+            if (!isTracking || paused) return;
+            acquireWakeLock();
+            registerLocationUpdates();
+            registerStepListeners();
+            publishUpdate();
+            persistState();
+        }
+    };
+
+    private void registerScreenOnReceiver() {
+        try {
+            IntentFilter filter = new IntentFilter();
+            filter.addAction(Intent.ACTION_SCREEN_ON);
+            filter.addAction(Intent.ACTION_USER_PRESENT);
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                registerReceiver(screenOnReceiver, filter, Context.RECEIVER_NOT_EXPORTED);
+            } else {
+                registerReceiver(screenOnReceiver, filter);
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "Failed to register screen-on receiver (may already be registered)", e);
+        }
+    }
+
+    private void unregisterScreenOnReceiver() {
+        try {
+            unregisterReceiver(screenOnReceiver);
+        } catch (Exception e) {
+            Log.d(TAG, "Screen-on receiver not registered or already unregistered", e);
         }
     }
 
     private void updateNotification() {
         if (notificationManager == null) return;
-        Notification notification = buildNotification();
-        if (isTracking || paused) {
-            // Always refresh the same foreground notification object instead of
-            // recreating the service lifecycle. This keeps the live walk metrics
-            // visible while backgrounded without re-entering startForeground on
-            // every tick, which can cause stale or duplicated notification state.
-            notificationManager.notify(NOTIFICATION_ID, notification);
+        
+        // If not yet in foreground, enter foreground first (creates builder)
+        if (!isInForeground) {
+            enterForeground();
             return;
         }
-        notificationManager.notify(NOTIFICATION_ID, notification);
+        
+        // If pause state changed, we need to recreate the builder to update the
+        // action button label (Pause ↔ Resume). Otherwise just update the content.
+        if (lastNotifiedPauseState != paused) {
+            createNotificationBuilder();
+            lastNotifiedPauseState = paused;
+        } else {
+            // Only update title/text, don't touch actions (prevents flicker)
+            updateNotificationContent();
+        }
+        
+        // Notify with the updated notification - this does NOT recreate the
+        // service or call startForeground() again, just updates the existing
+        // notification with the same ID, preventing flicker.
+        if (isTracking || paused) {
+            notificationManager.notify(NOTIFICATION_ID, notificationBuilder.build());
+        }
     }
 
     private void publishUpdate() {
@@ -533,25 +873,30 @@ public class WalkService extends Service implements LocationListener, SensorEven
                 currentDistanceKm,
                 currentSteps,
                 lastLocation,
-                isTracking && !paused,
+                isTracking,
+                paused,
                 durationSec,
                 currentCalories,
                 currentPace,
                 updateCount,
                 System.currentTimeMillis(),
-                action
+                action,
+                activeSessionId,
+                isVehicleFlagged
         );
     }
 
     private void stopForegroundTracking() {
         isTracking = false;
         paused = false;
-        if (locationManager != null) {
-            try {
-                locationManager.removeUpdates(this);
-            } catch (SecurityException ignored) {
-            }
-        }
+        isInForeground = false;
+        notificationBuilder = null;
+        initialStepCounterValue = -1;
+        lastCounterTotal = -1L;
+        gpsDistanceKm = 0.0;
+        isVehicleFlagged = false;
+        unregisterScreenOnReceiver();
+        removeLocationUpdates();
         if (sensorManager != null) {
             sensorManager.unregisterListener(this);
         }
@@ -561,6 +906,12 @@ public class WalkService extends Service implements LocationListener, SensorEven
         }
         // Reset persisted state so a crash-restart does not resume a dead walk.
         prefs().edit().clear().apply();
+        // Free the SQLite route storage for the finished session (the app has
+        // already copied the points into the session record).
+        if (dbHelper != null && activeSessionId != null) {
+            dbHelper.clearPointsForSession(activeSessionId);
+        }
+        activeSessionId = "current_session";
         stopForeground(true);
         updateCount = 0;
     }
@@ -573,6 +924,10 @@ public class WalkService extends Service implements LocationListener, SensorEven
     @Override
     public void onDestroy() {
         stopForegroundTracking();
+        // Remove the ticker callback to prevent leaks
+        if (ticker != null) {
+            ticker.removeCallbacks(tick);
+        }
         super.onDestroy();
     }
 
@@ -587,6 +942,28 @@ public class WalkService extends Service implements LocationListener, SensorEven
     public static volatile boolean paused = false;
     public static volatile Location lastLocation = null;
     public static volatile int updateCount = 0;
+    /**
+     * GPS-accumulated distance (km). Only ACCEPTED, plausible fix-to-fix
+     * deltas are added here; the final reported distance is the larger of
+     * this and the step-derived distance (steps × STRIDE_METERS), so distance
+     * is monotonic, never stalls while steps flow, and never double-counts
+     * (both estimate the same ground).
+     */
+    public static volatile double gpsDistanceKm = 0.0;
+    /** User's body weight (kg) for calorie math, pushed from the app. */
+    public static volatile double userWeightKg = 70.0;
+    /**
+     * Firestore session id the SQLite route points are stored under. Set from
+     * the app at walk start so the route can be fetched and persisted into the
+     * session record at finish — even after a process death / app swipe.
+     */
+    public static volatile String activeSessionId = "current_session";
+    /**
+     * Validation-only flag: set when the GPS implies vehicle-speed motion
+     * (> 15 km/h) without matching step activity. NEVER auto-pauses — it only
+     * surfaces in the UI and is saved with the finished session.
+     */
+    public static volatile boolean isVehicleFlagged = false;
 
     // Wall-clock bookkeeping so elapsed time keeps advancing while the app is
     // backgrounded or the screen is locked (a JS setInterval freezes).
@@ -604,6 +981,10 @@ public class WalkService extends Service implements LocationListener, SensorEven
                 recomputeDerived();
                 updateNotification();
                 publishUpdate();
+                // Re-acquire wake lock if needed for long walks (every 9 hours)
+                if (wakeLock != null && !wakeLock.isHeld() && durationSec > 0) {
+                    acquireWakeLock();
+                }
             }
             ticker.postDelayed(this, 1000);
         }
@@ -615,14 +996,28 @@ public class WalkService extends Service implements LocationListener, SensorEven
     }
 
     private void recomputeDerived() {
+        // Distance (km) recomputed from the CURRENT step total on every
+        // tick/fix/step: steps × stride / 1000. It is never accumulated
+        // separately, so it can never drift out of sync with the step counter
+        // or sit at 0.00 km while steps are counting. GPS-accumulated distance
+        // only ever raises the estimate (larger of the two sources), and the
+        // whole value is monotonic (never decreases mid-session).
+        double stepKm = (currentSteps * STRIDE_METERS) / 1000.0;
+        currentDistanceKm = Math.max(currentDistanceKm, Math.max(stepKm, gpsDistanceKm));
+
         double km = currentDistanceKm;
         currentPace = (km > 0.001 && durationSec > 0) ? (durationSec / 60.0) / km : 0.0;
-        // Calories: distance (km * weight * 0.57) + steps (~0.04 kcal/step).
-        // Weight is not known natively, so use a 70kg reference and let the app
-        // overwrite with the user's real weight when it publishes UPDATEs.
-        if (currentCalories <= 0.0) {
-            currentCalories = km * 70 * 0.57 + currentSteps * 0.04;
-        }
+        // Calories (kcal): MET-based formula — MET_WALKING × weight ×
+        // duration_hours. Recomputed from CURRENT duration on every tick, so
+        // it can never stay at 0 while a walk is running.
+        currentCalories = MET_WALKING * userWeightKg * (durationSec / 3600.0);
+
+        Log.d(TAG, "recompute: steps=" + currentSteps
+                + " stepKm=" + String.format(java.util.Locale.US, "%.4f", stepKm)
+                + " gpsKm=" + String.format(java.util.Locale.US, "%.4f", gpsDistanceKm)
+                + " distanceKm=" + String.format(java.util.Locale.US, "%.4f", currentDistanceKm)
+                + " durationSec=" + durationSec
+                + " calories=" + String.format(java.util.Locale.US, "%.1f", currentCalories));
     }
 
     // LocationListener callbacks
@@ -631,22 +1026,116 @@ public class WalkService extends Service implements LocationListener, SensorEven
         if (location == null || !isTracking || paused) return;
         long nowWall = System.currentTimeMillis();
         if (Math.abs(nowWall - location.getTime()) > 10_000) return; // stale fix
-        if (location.getAccuracy() > 30) return;
+        // Tighter accuracy threshold: reject fixes with > 15m accuracy for Strava-level GPS route quality
+        if (location.getAccuracy() > 15.0f) return;
 
         if (lastLocation != null) {
             float distMeters = lastLocation.distanceTo(location);
-            // 0.5m delta: casual walking emits ~0.6m fixes at a 2s interval,
-            // which the old 1.2m gate dropped entirely. Cap stays at 25m.
-            if (distMeters >= 0.5f && distMeters <= 25.0f) {
-                currentDistanceKm += (distMeters / 1000.0);
-                // GPS is authoritative: reset the step-based fallback so it
-                // only fills the gap when no GPS fix arrives.
-                stepsAtLastMark = currentSteps;
-                lastStepDistanceMark = nowWall;
+            long nowElapsed = SystemClock.elapsedRealtime();
+            long dtMs = lastFixElapsedRealtime > 0L ? nowElapsed - lastFixElapsedRealtime : 0L;
+            float speedMs = location.hasSpeed() ? location.getSpeed() : (dtMs > 0L ? (distMeters * 1000f) / (float) dtMs : 0f);
+
+            // Minimum displacement gate: ignore points < 3m from previous point to eliminate stationary GPS jitter
+            boolean distancePlausible = distMeters >= 3.0f && distMeters <= 50.0f;
+            // Max speed gate: human walking/running max ~25.2 km/h (7.0 m/s). Rejects GPS teleport/jump spikes.
+            boolean speedPlausible = speedMs <= 7.0f;
+
+            // Vehicle detection flag: sustained speed > 15 km/h (4.16 m/s) with minimal step activity
+            // Only flag if: speed exceeds threshold AND less than 5 steps in 20 seconds
+            // This reduces false positives from brief GPS jumps or standing still at traffic lights
+            if (speedMs > 4.16f) {
+                if (nowWall - lastVehicleCheckWallMs > 20000L) {
+                    int stepsSinceLastCheck = currentSteps - stepsAtLastVehicleCheck;
+                    // Require sustained low step activity (< 5 steps in 20s = < 15 steps/min)
+                    // Normal walking is ~100-120 steps/min, so this clearly indicates vehicle use
+                    if (stepsSinceLastCheck < 5) {
+                        isVehicleFlagged = true;
+                        if (dbHelper != null) {
+                            dbHelper.setVehicleFlagged(activeSessionId, true, speedMs);
+                        }
+                        Log.w(TAG, "Vehicle motion detected: speed=" + speedMs + " m/s, steps=" + stepsSinceLastCheck + " in 20s");
+                    }
+                    lastVehicleCheckWallMs = nowWall;
+                    stepsAtLastVehicleCheck = currentSteps;
+                }
             }
+
+            boolean stepSensorFresh = (System.currentTimeMillis() - lastStepEventWallMs) <= 12_000L;
+            boolean cadenceConsistent = true;
+            if (stepSensorFresh) {
+                double impliedSteps = distMeters / STRIDE_METERS;
+                int countedSteps = Math.max(1, currentSteps - stepsAtLastMark);
+                // For short distances (< 10m / ~13 steps), use wider tolerance due to GPS quantization
+                // For longer distances, use tighter bounds to catch GPS drift
+                double toleranceFactor = distMeters < 10.0f ? 0.5 : 0.3; // ±50% for short, ±30% for long
+                double fixedTolerance = distMeters < 10.0f ? 3.0 : 1.0; // ±3 steps for short, ±1 for long
+                double lowerBound = countedSteps * (1.0 - toleranceFactor) - fixedTolerance;
+                double upperBound = countedSteps * (1.0 + toleranceFactor) + fixedTolerance;
+                cadenceConsistent = impliedSteps >= lowerBound && impliedSteps <= upperBound;
+                
+                if (!cadenceConsistent) {
+                    Log.d(TAG, "Cadence mismatch: implied=" + String.format("%.1f", impliedSteps) 
+                        + " counted=" + countedSteps 
+                        + " dist=" + String.format("%.1f", distMeters) + "m"
+                        + " bounds=[" + String.format("%.1f", lowerBound) + ", " + String.format("%.1f", upperBound) + "]");
+                }
+            }
+
+            boolean accepted = distancePlausible && speedPlausible && cadenceConsistent;
+            if (accepted) {
+                gpsDistanceKm += (distMeters / 1000.0);
+                stepsAtLastMark = currentSteps;
+                lastGpsFixWallMs = nowWall;
+
+                // Save accepted point to SQLite DB for persistent route rendering
+                if (dbHelper != null) {
+                    dbHelper.insertPoint(
+                            activeSessionId,
+                            location.getLatitude(),
+                            location.getLongitude(),
+                            location.hasAltitude() ? location.getAltitude() : 0.0,
+                            location.getAccuracy(),
+                            speedMs,
+                            location.getTime()
+                    );
+                }
+            }
+            lastFixElapsedRealtime = nowElapsed;
+
+            Log.d(TAG, "fix: lat=" + location.getLatitude()
+                    + " lng=" + location.getLongitude()
+                    + " acc=" + location.getAccuracy()
+                    + " distMeters=" + distMeters
+                    + " speedMs=" + speedMs
+                    + " accepted=" + accepted
+                    + " gpsKm=" + String.format(java.util.Locale.US, "%.4f", gpsDistanceKm));
+        } else {
+            // First fix after start: save starting point and establish baseline
+            lastLocation = location;
+            lastFixElapsedRealtime = SystemClock.elapsedRealtime();
+            lastGpsFixWallMs = nowWall;
+            updateCount++;
+
+            if (dbHelper != null) {
+                dbHelper.insertPoint(
+                        activeSessionId,
+                        location.getLatitude(),
+                        location.getLongitude(),
+                        location.hasAltitude() ? location.getAltitude() : 0.0,
+                        location.getAccuracy(),
+                        location.hasSpeed() ? location.getSpeed() : 0f,
+                        location.getTime()
+                );
+            }
+
+            recomputeDerived();
+            updateNotification();
+            publishUpdate();
+            persistState();
+            return;
         }
+        
         lastLocation = location;
-        lastFixWallMs = nowWall;
         updateCount++;
         recomputeDerived();
         updateNotification();
@@ -659,17 +1148,23 @@ public class WalkService extends Service implements LocationListener, SensorEven
         if (isTracking && !paused && locationManager != null
                 && LocationManager.GPS_PROVIDER.equals(provider)) {
             try {
-                if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION)
-                        == PackageManager.PERMISSION_GRANTED) {
-                    locationManager.requestLocationUpdates(LocationManager.GPS_PROVIDER, 2000, 2, this);
+                // Check for either FINE or COARSE location permission
+                boolean hasFineLocation = ContextCompat.checkSelfPermission(this, 
+                        Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED;
+                        
+                if (hasFineLocation) {
+                    locationManager.requestLocationUpdates(LocationManager.GPS_PROVIDER, 2000, 0, this);
                 }
-            } catch (Exception ignored) {
+            } catch (Exception e) {
+                Log.w(TAG, "Failed to re-register location updates on provider enabled", e);
             }
         }
     }
 
     @Override
+    @Deprecated
     public void onStatusChanged(String provider, int status, Bundle extras) {
+        // Deprecated since API 29, no action needed - onProviderEnabled/Disabled handle provider changes
     }
 
     @Override
@@ -679,48 +1174,101 @@ public class WalkService extends Service implements LocationListener, SensorEven
     // SensorEventListener callbacks
     @Override
     public void onSensorChanged(SensorEvent event) {
-        if (event.sensor.getType() == Sensor.TYPE_STEP_DETECTOR && isTracking && !paused) {
+        if (!isTracking || paused) return;
+
+        if (event.sensor.getType() == Sensor.TYPE_STEP_DETECTOR) {
+            // TYPE_STEP_DETECTOR: one event per physical step detected.
+            lastStepEventWallMs = System.currentTimeMillis();
             currentSteps++;
-            applyStepBasedDistanceFallback();
+            Log.d(TAG, "step: detector total=" + currentSteps);
             recomputeDerived();
             updateNotification();
             publishUpdate();
             persistState();
+        } else if (event.sensor.getType() == Sensor.TYPE_STEP_COUNTER) {
+            // TYPE_STEP_COUNTER: hardware accumulator since boot (or since the
+            // last reboot). The walk's count is total − baseline. `lastCounterTotal`
+            // is the last hardware value WE saw (persisted across process death);
+            // the difference total − lastCounterTotal is exactly the steps taken
+            // while the stream was dead (screen-off stall, killed process) and
+            // must be credited on the FIRST event after resume — the old code
+            // only advanced when `calculatedSteps > currentSteps`, which is false
+            // exactly when the counter is at the baseline, leaving the count
+            // frozen at its persisted value (e.g. 30) until a second event
+            // arrived (and permanently frozen if the stream died again first).
+            long total = (long) event.values[0];
+            lastStepEventWallMs = System.currentTimeMillis();
+            Log.d(TAG, "step: counter raw=" + total
+                    + " baseline=" + initialStepCounterValue
+                    + " lastTotal=" + lastCounterTotal
+                    + " currentSteps=" + currentSteps);
+
+            boolean changed = false;
+            boolean rebased = false;
+
+            // First event of this walk, or device rebooted (counter restarts near
+            // zero) — establish/re-establish the baseline from the walk's CURRENT
+            // step count so the walk is never double-counted on resume and never
+            // loses earned steps on reboot.
+            if (initialStepCounterValue < 0 || total < initialStepCounterValue) {
+                initialStepCounterValue = (int) (total - currentSteps);
+                lastCounterTotal = total;
+                rebased = true;
+                changed = true;
+                Log.d(TAG, "step: counter REBASED baseline=" + initialStepCounterValue + " at total=" + total);
+            } else {
+                // Baseline is valid: derive the authoritative step count from the
+                // hardware accumulator. This path handles both live counting and
+                // catch-up after stream suspension (screen-off, process death).
+                int calculatedSteps = (int) (total - initialStepCounterValue);
+                
+                // Only apply catch-up when step DETECTOR is absent (single-sensor
+                // devices). On dual-sensor devices the detector is authoritative
+                // and the counter only provides drift correction — applying catch-up
+                // here would double-count steps the detector already credited.
+                if (stepDetectorSensor == null) {
+                    // Counter-only device: credit any steps accumulated since the
+                    // last event (e.g., screen-off stall, process death). Guarded
+                    // by total > lastCounterTotal so a reboot can never subtract.
+                    if (lastCounterTotal >= 0L && total > lastCounterTotal) {
+                        int catchUpSteps = (int) (total - lastCounterTotal);
+                        currentSteps += catchUpSteps;
+                        lastCounterTotal = total;
+                        changed = true;
+                        Log.d(TAG, "step: counter CATCH-UP +" + catchUpSteps + " steps (total=" + currentSteps + ")");
+                    } else if (calculatedSteps > currentSteps) {
+                        // Baseline-derived count jumped ahead: apply it (handles
+                        // initial counting before lastCounterTotal is set).
+                        currentSteps = calculatedSteps;
+                        lastCounterTotal = total;
+                        changed = true;
+                        Log.d(TAG, "step: counter BASELINE-SYNC to " + currentSteps);
+                    }
+                } else {
+                    // Dual-sensor device: detector is authoritative for live counting,
+                    // counter only corrects drift. If counter is significantly ahead
+                    // (> 3 steps), trust it (handles detector misses / HAL bugs).
+                    if (calculatedSteps > currentSteps + 3) {
+                        currentSteps = calculatedSteps;
+                        lastCounterTotal = total;
+                        changed = true;
+                        Log.d(TAG, "step: counter DRIFT-CORRECTION to " + currentSteps);
+                    }
+                }
+            }
+
+            if (changed) {
+                Log.d(TAG, "step: counter newTotal=" + currentSteps);
+                recomputeDerived();
+                updateNotification();
+                publishUpdate();
+                persistState();
+            } else if (rebased) {
+                // Persist the fresh baseline immediately so a process death
+                // right after start can still resume against the same counter.
+                persistState();
+            }
         }
-    }
-
-    /**
-     * When no GPS fix has arrived, steps are the only motion signal. Convert
-     * accumulated steps into a distance estimate so the walk doesn't sit at
-     * 0.00 km. Capped by a max walking cadence to avoid sensor noise, and
-     * reset whenever a real GPS fix contributes distance.
-     */
-    private void applyStepBasedDistanceFallback() {
-        long now = System.currentTimeMillis();
-        // Don't lean on the step fallback once GPS has been supplying fixes
-        // (≈2 fix intervals at a 2s cadence; a single good fix used to silence
-        // step-derived distance for 8s even when fixes are sparse).
-        if (lastLocation != null && now - lastFixWallMs < 4000) return;
-
-        int uncounted = currentSteps - stepsAtLastMark;
-        if (uncounted <= 0) return;
-
-        if (lastStepDistanceMark == 0L) {
-            double d = Math.min(uncounted, MAX_STEPS_PER_SECOND) * STEP_LENGTH_METERS;
-            currentDistanceKm += d / 1000.0;
-            stepsAtLastMark = currentSteps;
-            lastStepDistanceMark = now;
-            return;
-        }
-
-        long elapsedMs = now - lastStepDistanceMark;
-        if (elapsedMs <= 0) return;
-
-        double maxSteps = (elapsedMs / 1000.0) * MAX_STEPS_PER_SECOND;
-        double credited = Math.min(uncounted, Math.max(1.0, maxSteps));
-        currentDistanceKm += (credited * STEP_LENGTH_METERS) / 1000.0;
-        stepsAtLastMark = currentSteps;
-        lastStepDistanceMark = now;
     }
 
     @Override

@@ -38,6 +38,7 @@ import { Notifications, readReminderSettings } from "@/lib/notifications-integra
 import { PermissionManager } from "@/lib/permissions";
 import { Capacitor } from "@capacitor/core";
 import { updateUserProfile, deleteUserAccount, getProfileStats, ProfileStats } from "@/lib/api";
+import { uploadAvatar, validateFileSize, formatFileSize } from "@/lib/cloudinary";
 
 export const Route = createFileRoute("/profile")({
   head: () => ({
@@ -131,6 +132,8 @@ function ProfilePage() {
   const [deleting, setDeleting] = useState(false);
   const [soundsEnabled, setSoundsEnabled] = useState(sounds.isEnabled());
   const [reminderSettings, setReminderSettings] = useState(readReminderSettings);
+  const [uploadProgress, setUploadProgress] = useState(0);
+  const [uploadingAvatar, setUploadingAvatar] = useState(false);
 
   const [realStats, setRealStats] = useState<ProfileStats | null>(null);
   const [statsLoading, setStatsLoading] = useState(true);
@@ -162,20 +165,39 @@ function ProfilePage() {
       });
   }, [user]);
 
-  const handleImageFileChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleImageFileChange = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
     if (!file.type.startsWith("image/")) {
       toast.error("Please select a valid image file.");
       return;
     }
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      const dataUrl = event.target?.result as string;
-      setAvatarPreview(dataUrl);
-      toast.success("Profile photo updated! Click Save to apply.");
-    };
-    reader.readAsDataURL(file);
+
+    // Validate file size (max 5MB for avatars)
+    const MAX_AVATAR_SIZE = 5 * 1024 * 1024;
+    if (!validateFileSize(file, MAX_AVATAR_SIZE)) {
+      toast.error(`Image is too large. Maximum size is ${formatFileSize(MAX_AVATAR_SIZE)}.`);
+      return;
+    }
+
+    setUploadingAvatar(true);
+    setUploadProgress(0);
+
+    try {
+      // Upload to Cloudinary
+      const result = await uploadAvatar(file, (progress) => {
+        setUploadProgress(progress);
+      });
+
+      setAvatarPreview(result.secure_url);
+      toast.success("Profile photo uploaded! Click Save to apply.");
+    } catch (error) {
+      console.error("Avatar upload failed:", error);
+      toast.error(error instanceof Error ? error.message : "Failed to upload avatar.");
+    } finally {
+      setUploadingAvatar(false);
+      setUploadProgress(0);
+    }
   }, []);
 
   const handleUpdateProfile = useCallback(
@@ -260,15 +282,12 @@ function ProfilePage() {
     navigate({ to: "/auth" });
   }, [logout, navigate]);
 
-  const openEdit = useCallback(() => setEditModalOpen(true), []);
-  const openSettings = useCallback(() => setSettingsModalOpen(true), []);
-  const openHelp = useCallback(() => setHelpModalOpen(true), []);
+  const openEdit = () => setEditModalOpen(true);
+  const openSettings = () => setSettingsModalOpen(true);
+  const openHelp = () => setHelpModalOpen(true);
 
-  const statsData = useCallback(
-    (val: number | string | undefined, fallback = "—") =>
-      statsLoading ? "..." : (val ?? fallback),
-    [statsLoading],
-  );
+  const statsData = (val: number | string | undefined, fallback = "—") =>
+    statsLoading ? "..." : (val ?? fallback);
 
   return (
     <Screen>
@@ -624,6 +643,21 @@ function ProfilePage() {
               onChange={handleImageFileChange}
               className="hidden"
             />
+
+            {uploadingAvatar && uploadProgress > 0 && (
+              <div className="mt-3 w-full">
+                <div className="flex items-center justify-between text-xs text-muted-foreground mb-1.5">
+                  <span>Uploading to Cloudinary...</span>
+                  <span className="font-bold">{uploadProgress}%</span>
+                </div>
+                <div className="w-full h-2 bg-muted rounded-full overflow-hidden">
+                  <div
+                    className="h-full bg-primary transition-all duration-300"
+                    style={{ width: `${uploadProgress}%` }}
+                  />
+                </div>
+              </div>
+            )}
           </div>
 
           <div>

@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from "react";
-import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { createFileRoute } from "@tanstack/react-router";
 import { ChevronDown, Flame, Activity, TrendingUp, Check } from "lucide-react";
 import {
   ResponsiveContainer,
@@ -14,9 +14,11 @@ import {
 } from "recharts";
 import { Screen, ScreenHeader } from "@/components/lifehub/Screen";
 import { useAuth } from "@/hooks/use-auth";
+import { useAuthGuard } from "@/hooks/use-auth-guard";
 import { useData } from "@/lib/data-context";
 import { DashboardSkeleton } from "@/components/lifehub/SkeletonLoader";
 import { DayKey, WorkoutProgram } from "@/lib/types";
+import { parseLocalDate } from "@/lib/date-utils";
 
 export const Route = createFileRoute("/analytics")({
   head: () => ({
@@ -37,9 +39,9 @@ function localDateStr(d: Date): string {
 }
 
 /** Parse a "YYYY-MM-DD" string as LOCAL midnight (never UTC). */
+// Now using shared utility from date-utils
 function parseDateOnly(s: string): Date {
-  const [y, m, d] = s.split("-").map(Number);
-  return new Date(y, (m || 1) - 1, d || 1);
+  return parseLocalDate(s);
 }
 
 /** Milliseconds of an ISO string, or null when invalid. */
@@ -134,7 +136,7 @@ const DUP_LOG_MARKERS = [
 
 function AnalyticsPage() {
   const { user, loading: authLoading } = useAuth();
-  const navigate = useNavigate();
+  useAuthGuard(user, authLoading);
 
   const {
     medications,
@@ -159,12 +161,6 @@ function AnalyticsPage() {
 
   const [timeFilter, setTimeFilter] = useState<TimeFilter>("This Week");
   const [filterOpen, setFilterOpen] = useState(false);
-
-  useEffect(() => {
-    if (!authLoading && !user) {
-      navigate({ to: "/auth" });
-    }
-  }, [user, authLoading, navigate]);
 
   // Show the skeleton only until the first realtime snapshot arrives.
   const [initialized, setInitialized] = useState(false);

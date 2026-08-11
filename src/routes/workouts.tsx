@@ -1,5 +1,5 @@
-import { useState, useEffect } from "react";
-import { createFileRoute, useNavigate, Link } from "@tanstack/react-router";
+import { useState } from "react";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import {
   Dumbbell,
   Zap,
@@ -9,17 +9,19 @@ import {
   Trophy,
   Moon,
   CalendarDays,
-  Check,
   Target,
   Plus,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Screen, ScreenHeader } from "@/components/lifehub/Screen";
+import { WeeklySplitGrid } from "@/components/lifehub/WeeklySplitGrid";
 import { useAuth } from "@/hooks/use-auth";
+import { useAuthGuard } from "@/hooks/use-auth-guard";
 import { useData } from "@/lib/data-context";
-import { completeDayWorkout, DAY_LABELS, DAY_SHORT } from "@/lib/api";
+import { completeDayWorkout, DAY_LABELS } from "@/lib/api";
 import { WorkoutProgram, DayKey } from "@/lib/types";
 import { ListSkeleton } from "@/components/lifehub/SkeletonLoader";
+import { focusForDay, isTrainingDay } from "@/lib/workout-utils";
 
 export const Route = createFileRoute("/workouts")({
   head: () => ({
@@ -41,45 +43,15 @@ function dayKeyOf(d: Date): DayKey {
   return DAY_KEYS[d.getDay()];
 }
 
-function isCardioProgram(p: WorkoutProgram): boolean {
-  return p.workout_type === "Cardio";
-}
 
-/** Structured training days for cardio programs (with legacy text-plan fallback). */
-function cardioTrainingDays(p: WorkoutProgram): DayKey[] {
-  const structured = p.training_days;
-  if (structured && structured.length > 0) return structured;
-  return DAY_KEYS.filter((dk) => {
-    const focus = (p.weekly_plan || []).find((x) => x.day === dk)?.focus || "";
-    return focus.toLowerCase() !== "rest";
-  });
-}
-
-function focusForDay(p: WorkoutProgram, day: DayKey): string {
-  if (isCardioProgram(p)) return cardioTrainingDays(p).includes(day) ? "Cardio" : "Rest";
-  const plan = (p.weekly_plan || []).find((item) => item.day === day);
-  if (plan?.focus) return plan.focus;
-  return "Rest";
-}
-
-function isTrainingDay(p: WorkoutProgram, day: DayKey): boolean {
-  if (isCardioProgram(p)) return cardioTrainingDays(p).includes(day);
-  return focusForDay(p, day).toLowerCase() !== "rest";
-}
 
 function WorkoutsPage() {
   const { user, loading: authLoading } = useAuth();
-  const navigate = useNavigate();
+  useAuthGuard(user, authLoading);
 
   const { workouts, workoutPrograms, fitnessLoading, refreshFitness } = useData();
 
   const [completing, setCompleting] = useState(false);
-
-  useEffect(() => {
-    if (!authLoading && !user) {
-      navigate({ to: "/auth" });
-    }
-  }, [user, authLoading, navigate]);
 
   // The page is fully driven by the active program — no manual selection.
   const activeProgram = workoutPrograms.find((p) => p.is_active) || workoutPrograms[0] || null;
@@ -283,7 +255,7 @@ function WorkoutsPage() {
 
       {/* Tomorrow Preview */}
       <div className="card-soft bg-white p-4 border border-black/5 shadow-xs flex items-center gap-3 mb-4">
-        <div className="flex size-10 items-center justify-center rounded-2xl bg-[#7C5CFC]/10 text-[#7C5CFC]">
+        <div className="flex size-10 items-center justify-center rounded-2xl bg-[#D4A574]/10 text-[#C49A6C]">
           <CalendarDays className="size-5" />
         </div>
         <div className="flex-1">
@@ -296,7 +268,7 @@ function WorkoutsPage() {
         </div>
         <span
           className={`rounded-full px-2.5 py-0.5 text-[10px] font-extrabold ${
-            tomorrowTraining ? "bg-[#7C5CFC]/10 text-[#7C5CFC]" : "bg-black/5 text-[#6B7280]"
+            tomorrowTraining ? "bg-[#D4A574]/10 text-[#C49A6C]" : "bg-black/5 text-[#6B7280]"
           }`}
         >
           {tomorrowTraining ? "Training" : "Rest"}
@@ -321,7 +293,7 @@ function WorkoutsPage() {
         </div>
         <div className="h-2 rounded-full bg-black/5 overflow-hidden">
           <div
-            className="h-full rounded-full bg-gradient-to-r from-[#7C5CFC] to-[#A78BFA] transition-all duration-500"
+            className="h-full rounded-full bg-gradient-to-r from-[#C49A6C] to-[#D4A574] transition-all duration-500"
             style={{ width: `${weekPct}%` }}
           />
         </div>
@@ -332,35 +304,14 @@ function WorkoutsPage() {
         <p className="text-[10px] font-extrabold uppercase tracking-widest text-[#6B7280] mb-2.5">
           Weekly Schedule
         </p>
-        <div className="grid grid-cols-7 gap-1 text-center">
-          {week.map((d) => {
-            const focus = activeProgram ? focusForDay(activeProgram, d.key) : "Rest";
-            return (
-              <div
-                key={d.key}
-                className={`relative rounded-xl p-1.5 flex flex-col justify-between min-h-[58px] transition-all ${
-                  d.isToday ? "ring-2 ring-[#7C5CFC] ring-offset-1" : ""
-                } ${
-                  d.training ? "bg-slate-900 text-white shadow-sm" : "bg-black/5 text-[#6B7280]"
-                }`}
-              >
-                <div className="flex items-center justify-between px-0.5">
-                  <span className="text-[9px] font-extrabold uppercase">
-                    {DAY_SHORT[d.key].slice(0, 3)}
-                  </span>
-                  {d.training && d.completed && (
-                    <span className="grid size-3.5 place-items-center rounded-full bg-emerald-500">
-                      <Check className="size-2.5 text-white" strokeWidth={3.5} />
-                    </span>
-                  )}
-                </div>
-                <span className="text-[9px] font-black truncate leading-tight mt-1">
-                  {d.training ? focus : "Rest"}
-                </span>
-              </div>
-            );
-          })}
-        </div>
+        <WeeklySplitGrid
+          days={week.map((d) => ({
+            key: d.key,
+            focus: activeProgram ? focusForDay(activeProgram, d.key) : "Rest",
+            isToday: d.isToday,
+            completed: d.training && d.completed,
+          }))}
+        />
       </div>
     </Screen>
   );

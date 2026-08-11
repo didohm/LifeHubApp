@@ -14,13 +14,31 @@
   --color-blush: oklch(0.87 0.09 345);
   --color-mint: oklch(0.92 0.08 150);
   --color-ink: oklch(0.14 0.02 265);
+  --color-priority-high: oklch(0.65 0.22 25);
+  --color-priority-high-soft: oklch(0.95 0.04 25);
+  --color-priority-medium: oklch(0.75 0.16 65);
+  --color-priority-medium-soft: oklch(0.95 0.04 65);
+  --color-priority-low: oklch(0.70 0.14 235);
+  --color-priority-low-soft: oklch(0.95 0.04 235);
   --shadow-soft: 0 12px 32px -12px oklch(0.14 0.02 265 / 0.12);
   --shadow-pill: 0 14px 34px -10px oklch(0.65 0.21 282 / 0.35);
 }
 
 @utility card-soft {
-  border-radius: 1.75rem;
+  border-radius: 1.25rem;
   box-shadow: var(--shadow-soft);
+}
+
+@utility priority-stripe-high {
+  border-left: 3.5px solid var(--color-priority-high);
+}
+
+@utility priority-stripe-medium {
+  border-left: 3.5px solid var(--color-priority-medium);
+}
+
+@utility priority-stripe-low {
+  border-left: 3.5px solid var(--color-priority-low);
 }
 
 @utility tap {

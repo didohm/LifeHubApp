@@ -6,6 +6,8 @@ import {
   useCallback,
   useMemo,
   ReactNode,
+  type Dispatch,
+  type SetStateAction,
 } from "react";
 import {
   getMedications,
@@ -27,6 +29,8 @@ import {
   getWorkoutPrograms,
   getWorkouts,
   getWalkSessions,
+  getDocuments,
+  getBirthdays,
   subscribeMedications,
   subscribeMedicationLogs,
   subscribeBills,
@@ -39,6 +43,7 @@ import {
   subscribeActivityLogs,
   subscribeTodos,
   subscribeWaterLogs,
+  subscribeDocuments,
 } from "./api";
 import {
   Medication,
@@ -53,6 +58,7 @@ import {
   ActivityLog,
   Todo,
   WaterLog,
+  DocumentItem,
 } from "./types";
 import { Notifications } from "./notifications-integration";
 import { PERMISSIONS_CHANGED_EVENT } from "./permissions";
@@ -67,6 +73,34 @@ function dedupeById<T extends { id: string }>(items: T[]): T[] {
     seen.add(item.id);
     return true;
   });
+}
+
+/**
+ * True when two snapshots are content-identical (same docs, same field
+ * values, same order). Firestore re-fires full snapshots on reconnect and
+ * app foreground even when nothing changed, so callers can return the
+ * previous state reference and let React skip the re-render entirely.
+ */
+function sameSnapshot<T>(next: T[], prev: T[]): boolean {
+  if (next === prev) return true;
+  if (next.length !== prev.length) return false;
+  for (let i = 0; i < next.length; i++) {
+    if (JSON.stringify(next[i]) !== JSON.stringify(prev[i])) return false;
+  }
+  return true;
+}
+
+/**
+ * Deduplicate a snapshot and commit it only when its content actually
+ * changed. Returning the previous array reference avoids redundant context
+ * updates (and the whole consumer re-render cascade) when nothing changed.
+ */
+function commitSnapshot<T extends { id: string }>(
+  setter: Dispatch<SetStateAction<T[]>>,
+  items: T[],
+): void {
+  const next = dedupeById(items);
+  setter((prev) => (sameSnapshot(next, prev) ? prev : next));
 }
 
 export interface DataContextValue {
@@ -92,11 +126,17 @@ export interface DataContextValue {
   payBill: (id: string, paymentMethod: string) => Promise<void>;
   refreshBills: () => Promise<void>;
 
-  // Appointments
+  // Appointments & Birthdays
   appointments: Appointment[];
+  birthdays: Birthday[];
   appLoading: boolean;
   appError: string | null;
   refreshAppointments: () => Promise<void>;
+
+  // Documents
+  documents: DocumentItem[];
+  docLoading: boolean;
+  refreshDocuments: () => Promise<void>;
 
   // Fitness & Workouts
   workoutPrograms: WorkoutProgram[];
@@ -158,6 +198,10 @@ export function DataProvider({ userId, children }: { userId: string | null; chil
   // Tasks State
   const [todos, setTodos] = useState<Todo[]>([]);
   const [todosLoading, setTodosLoading] = useState(false);
+
+  // Documents State
+  const [documents, setDocuments] = useState<DocumentItem[]>([]);
+  const [docLoading, setDocLoading] = useState(false);
 
   // Hydration State
   const [waterLogs, setWaterLogs] = useState<WaterLog[]>([]);
@@ -372,6 +416,20 @@ export function DataProvider({ userId, children }: { userId: string | null; chil
     }
   }, [userId]);
 
+  // ---------- Documents ----------
+  const refreshDocuments = useCallback(async () => {
+    if (!userId) return;
+    setDocLoading(true);
+    try {
+      const docs = await getDocuments(userId);
+      setDocuments(dedupeById(docs));
+    } catch (e: any) {
+      console.error("Failed to load documents:", e);
+    } finally {
+      setDocLoading(false);
+    }
+  }, [userId]);
+
   // ---------- Global refresh ----------
   const refreshAll = useCallback(async () => {
     await Promise.all([
@@ -379,8 +437,9 @@ export function DataProvider({ userId, children }: { userId: string | null; chil
       refreshBills(),
       refreshAppointments(),
       refreshFitness(),
+      refreshDocuments(),
     ]);
-  }, [refreshMedications, refreshBills, refreshAppointments, refreshFitness]);
+  }, [refreshMedications, refreshBills, refreshAppointments, refreshFitness, refreshDocuments]);
 
   // Reset when userId changes (login/logout)
   useEffect(() => {
@@ -411,58 +470,63 @@ export function DataProvider({ userId, children }: { userId: string | null; chil
     unsubscribes.push(
       subscribeMedications(userId, (items) => {
         if (!active) return;
-        setMedications(dedupeById(items));
+        commitSnapshot(setMedications, items);
         setMedLoading(false);
       }),
       subscribeMedicationLogs(userId, (items) => {
         if (!active) return;
-        setMedicationLogs(dedupeById(items));
+        commitSnapshot(setMedicationLogs, items);
       }),
       subscribeBills(userId, (items) => {
         if (!active) return;
-        setBills(dedupeById(items));
+        commitSnapshot(setBills, items);
         setBillLoading(false);
       }),
       subscribePayments(userId, (items) => {
         if (!active) return;
-        setPayments(dedupeById(items));
+        commitSnapshot(setPayments, items);
       }),
       subscribeAppointments(userId, (items) => {
         if (!active) return;
-        setAppointments(dedupeById(items));
+        commitSnapshot(setAppointments, items);
         setAppLoading(false);
       }),
       subscribeBirthdays(userId, (items) => {
         if (!active) return;
-        setBirthdays(dedupeById(items));
+        commitSnapshot(setBirthdays, items);
       }),
       subscribeWorkoutPrograms(userId, (items) => {
         if (!active) return;
-        setWorkoutPrograms(dedupeById(items));
+        commitSnapshot(setWorkoutPrograms, items);
       }),
       subscribeWorkouts(userId, (items) => {
         if (!active) return;
-        setWorkouts(dedupeById(items));
+        commitSnapshot(setWorkouts, items);
       }),
       subscribeWalkSessions(userId, (items) => {
         if (!active) return;
-        setWalkSessions(dedupeById(items));
+        commitSnapshot(setWalkSessions, items);
         setFitnessLoading(false);
       }),
       subscribeActivityLogs(userId, (items) => {
         if (!active) return;
-        setActivityLogs(dedupeById(items));
+        commitSnapshot(setActivityLogs, items);
         setActivityLoading(false);
       }),
       subscribeTodos(userId, (items) => {
         if (!active) return;
-        setTodos(dedupeById(items));
+        commitSnapshot(setTodos, items);
         setTodosLoading(false);
       }),
       subscribeWaterLogs(userId, (items) => {
         if (!active) return;
-        setWaterLogs(dedupeById(items));
+        commitSnapshot(setWaterLogs, items);
         setWaterLoading(false);
+      }),
+      subscribeDocuments(userId, (items) => {
+        if (!active) return;
+        commitSnapshot(setDocuments, items);
+        setDocLoading(false);
       }),
     );
 
@@ -477,37 +541,69 @@ export function DataProvider({ userId, children }: { userId: string | null; chil
   // every relevant data change, on app resume, and when notification
   // permission is granted — catching reminders the OS dropped while we were
   // away and dropping reminders for deleted/completed records.
-  const resyncNotifications = useCallback(() => {
-    if (!userId) return;
-    const hasData =
-      medications.length > 0 ||
-      appointments.length > 0 ||
-      bills.length > 0 ||
-      birthdays.length > 0 ||
-      workouts.length > 0 ||
-      todos.length > 0;
-    if (hasData) {
-      void Notifications.resyncAll({
+  //
+  // Signature guard: this callback is recreated whenever any reminder-relevant
+  // array changes identity (which is why it may be called often), but the
+  // full native resync (cancel + re-arm everything) only runs when the data
+  // CONTENT actually changed. Redundant Firestore re-fires and refresh()
+  // calls returning identical rows must never churn the notification bridge.
+  //
+  // Foreground / permission-grant events bypass the guard (`force = true`,
+  // still debounced below): a full re-arm on resume is deliberate — the OS
+  // may have dropped reminders while the app was away (e.g. device reboot).
+  const lastResyncedSignatureRef = useRef<string>("");
+  // A fresh user must not be skipped because the previous user happened to
+  // share the same data signature (e.g. two empty accounts).
+  useEffect(() => {
+    lastResyncedSignatureRef.current = "";
+  }, [userId]);
+
+  const resyncNotifications = useCallback(
+    (force = false) => {
+      if (!userId) return;
+      const signature = [
         medications,
         appointments,
         bills,
         birthdays,
         workouts,
         todos,
-      });
-    } else {
-      // A zero-data account still needs its daily check-in reminder armed.
-      void Notifications.resyncRecurringReminders().catch(() => {});
-    }
-  }, [
-    userId,
-    medications,
-    appointments,
-    bills,
-    birthdays,
-    workouts,
-    todos,
-  ]);
+        workoutPrograms,
+      ]
+        .map((items) => items.map((item) => JSON.stringify(item)).join("|"))
+        .join("~");
+      if (!force && lastResyncedSignatureRef.current === signature) return;
+      lastResyncedSignatureRef.current = signature;
+
+      const hasData =
+        medications.length > 0 ||
+        appointments.length > 0 ||
+        bills.length > 0 ||
+        birthdays.length > 0 ||
+        workouts.length > 0 ||
+        workoutPrograms.length > 0 ||
+        todos.length > 0;
+      if (hasData) {
+        void Notifications.resyncAll({
+          medications,
+          appointments,
+          bills,
+          birthdays,
+          workouts,
+          todos,
+          workoutPrograms,
+        });
+      } else {
+        // A zero-data account still needs its daily check-in reminder armed.
+        void Notifications.resyncRecurringReminders().catch(() => {});
+        // ...and the always-on daily adhkar reminders.
+        void Notifications.resyncAzkarReminders().catch(() => {});
+        // No workout programs → drop any stale tomorrow-workout reminders.
+        void Notifications.cancelWorkoutTomorrowReminders().catch(() => {});
+      }
+    },
+    [userId, medications, appointments, bills, birthdays, workouts, todos, workoutPrograms],
+  );
 
   useEffect(() => {
     if (!userId) return;
@@ -516,19 +612,21 @@ export function DataProvider({ userId, children }: { userId: string | null; chil
 
     // Re-sync on foregrounding and on permission grant. `resyncAll` is
     // idempotent, so frequent triggers are safe — but `visibilitychange`
-    // can fire in rapid succession on app switches, so debounce it.
+    // can fire in rapid succession on app switches, so debounce it. These
+    // run with `force` so reminders dropped while the app was away are
+    // re-armed even when no data changed.
     let debounceTimer: number | null = null;
-    const scheduleResync = () => {
+    const scheduleResync = (force = false) => {
       if (debounceTimer !== null) window.clearTimeout(debounceTimer);
       debounceTimer = window.setTimeout(() => {
         debounceTimer = null;
-        resyncNotifications();
+        resyncNotifications(force);
       }, 1500);
     };
     const onVisibility = () => {
-      if (document.visibilityState === "visible") scheduleResync();
+      if (document.visibilityState === "visible") scheduleResync(true);
     };
-    const onPermissionsChanged = () => scheduleResync();
+    const onPermissionsChanged = () => scheduleResync(true);
 
     document.addEventListener("visibilitychange", onVisibility);
     window.addEventListener("focus", onVisibility);
@@ -569,9 +667,13 @@ export function DataProvider({ userId, children }: { userId: string | null; chil
       payBill: payBillAction,
       refreshBills,
       appointments,
+      birthdays,
       appLoading,
       appError,
       refreshAppointments,
+      documents,
+      docLoading,
+      refreshDocuments,
       workoutPrograms,
       workouts,
       walkSessions,
@@ -605,9 +707,13 @@ export function DataProvider({ userId, children }: { userId: string | null; chil
       payBillAction,
       refreshBills,
       appointments,
+      birthdays,
       appLoading,
       appError,
       refreshAppointments,
+      documents,
+      docLoading,
+      refreshDocuments,
       workoutPrograms,
       workouts,
       walkSessions,

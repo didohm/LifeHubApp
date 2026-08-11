@@ -96,9 +96,14 @@ public class NativePermissionsPlugin extends Plugin {
                 : PermissionState.DENIED;
 
         boolean granted = state == PermissionState.GRANTED;
+        // permanentlyDenied is true when the user explicitly denied and checked "Don't ask again"
+        // PermissionState.DENIED indicates either temporary denial or permanent denial
+        // We can only detect permanent denial by attempting to request again (not done here)
+        boolean permanentlyDenied = !granted && state == PermissionState.DENIED;
+        
         JSObject ret = new JSObject();
         ret.put("granted", granted);
-        ret.put("permanentlyDenied", !granted && state == PermissionState.DENIED);
+        ret.put("permanentlyDenied", permanentlyDenied);
         pendingAlias = null;
         call.resolve(ret);
     }
@@ -111,7 +116,7 @@ public class NativePermissionsPlugin extends Plugin {
     @PluginMethod
     public void getLaunchNotification(PluginCall call) {
         JSObject ret = new JSObject();
-        ret.put("extra", JSObject.NULL);
+            ret.put("extra", JSObject.NULL);
         try {
             Intent intent = getActivity() != null ? getActivity().getIntent() : null;
             if (intent != null) {
@@ -124,7 +129,9 @@ public class NativePermissionsPlugin extends Plugin {
                     }
                 }
             }
-        } catch (Exception ignored) {}
+        } catch (Exception e) {
+            android.util.Log.w("NativePermissionsPlugin", "Failed to parse launch notification", e);
+        }
         call.resolve(ret);
     }
 }

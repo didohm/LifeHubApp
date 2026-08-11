@@ -1,4 +1,5 @@
-import { useState, useMemo, useEffect, useRef } from "react";
+import { useState, useMemo, useEffect, useRef, lazy, Suspense, useCallback } from "react";
+import { createPortal } from "react-dom";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { Capacitor } from "@capacitor/core";
 import {
@@ -8,23 +9,28 @@ import {
   Footprints,
   Clock,
   Flame,
-  Compass,
   MapPin,
   TrendingUp,
   History,
   Navigation,
-  Calendar,
+  X,
+  Car,
+  Gauge,
+  Satellite,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Screen, ScreenHeader } from "@/components/lifehub/Screen";
+import { registerOverlay } from "@/lib/overlay-registry";
 import { useAuth } from "@/hooks/use-auth";
 import { useData } from "@/lib/data-context";
 import { useWalk } from "@/hooks/use-walk";
 import { todayLocalDate } from "@/lib/api";
 import { sounds } from "@/lib/sound";
 import { PermissionManager } from "@/lib/permissions";
-import { WalkServicePlugin } from "@/lib/notifications-integration";
+import { WalkServicePlugin, WalkRoutePoint } from "@/lib/notifications-integration";
 import { WalkSession } from "@/lib/types";
+
+const RouteMap = lazy(() => import("@/components/lifehub/RouteMap"));
 
 export const Route = createFileRoute("/walk")({
   head: () => ({
@@ -48,12 +54,181 @@ function formatKm(meters: number): string {
   return (meters / 1000).toFixed(2);
 }
 
+/** Strava-style pace: min per km (0.0 = no distance yet). */
+function formatPace(durationSec: number, distanceMeters: number): string {
+  if (distanceMeters <= 0 || durationSec <= 0) return "--";
+  const minPerKm = durationSec / 60 / (distanceMeters / 1000);
+  const mins = Math.floor(minPerKm);
+  const secs = Math.round((minPerKm - mins) * 60);
+  return `${mins}'${secs.toString().padStart(2, "0")}"`;
+}
+
+/** Strava-style summary modal shown right after a walk/run finishes. */
+function WalkSummaryModal({ session, onClose }: { session: WalkSession; onClose: () => void }) {
+  const hasRoute = !!session.path && session.path.length >= 2;
+  const averagePace = formatPace(session.duration || 0, session.distance || 0);
+  const hadMetrics = (session.distance || 0) > 0 || (session.steps || 0) > 0;
+
+  useEffect(() => registerOverlay(), []);
+
+  const modal = (
+    <div
+      className="fixed inset-0 z-[80] flex items-end justify-center bg-black/60 backdrop-blur-sm p-0 sm:items-center sm:p-6"
+      onClick={onClose}
+    >
+      <div
+        role="dialog"
+        aria-modal="true"
+        className="w-full max-w-md min-h-0 max-h-full overflow-y-auto overscroll-contain rounded-t-3xl sm:rounded-3xl bg-white shadow-2xl animate-in fade-in slide-in-from-bottom-4 duration-200"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div className="bg-gradient-to-br from-[#12131A] via-[#1A1C28] to-[#2E3146] px-6 pt-6 pb-5 text-white relative">
+          <button
+            onClick={onClose}
+            className="absolute right-4 top-4 flex size-8 items-center justify-center rounded-full bg-white/10 text-white/80 hover:bg-white/20"
+            aria-label="Close summary"
+          >
+            <X className="size-4" />
+          </button>
+          <div className="flex items-center gap-2 text-emerald-400">
+            <Footprints className="size-5" />
+            <span className="text-xs font-black uppercase tracking-widest">Walk Complete</span>
+          </div>
+          <div className="mt-3 flex items-end gap-1.5">
+            <span className="text-5xl font-black tracking-tight">{formatKm(session.distance)}</span>
+            <span className="pb-1.5 text-lg font-bold text-white/60">km</span>
+          </div>
+          <p className="mt-1 text-[11px] font-semibold text-white/50">
+            {new Date(session.finished_at || session.started_at).toLocaleString([], {
+              dateStyle: "medium",
+              timeStyle: "short",
+            })}
+          </p>
+        </div>
+
+        {/* Stats grid (Strava-style) */}
+        <div className="grid grid-cols-3 divide-x divide-slate-100 border-b border-slate-100 bg-white">
+          <div className="px-3 py-4 text-center">
+            <Clock className="mx-auto size-4 text-[#7C5CFC]" />
+            <p className="mt-1 text-base font-black text-[#12131A]">
+              {formatDuration(session.duration)}
+            </p>
+            <p className="text-[10px] font-bold uppercase tracking-wide text-[#9CA3AF]">Elapsed</p>
+          </div>
+          <div className="px-3 py-4 text-center">
+            <Gauge className="mx-auto size-4 text-amber-500" />
+            <p className="mt-1 text-base font-black text-[#12131A]">{averagePace}</p>
+            <p className="text-[10px] font-bold uppercase tracking-wide text-[#9CA3AF]">Pace /km</p>
+          </div>
+          <div className="px-3 py-4 text-center">
+            <Footprints className="mx-auto size-4 text-emerald-500" />
+            <p className="mt-1 text-base font-black text-[#12131A]">
+              {session.steps?.toLocaleString() ?? 0}
+            </p>
+            <p className="text-[10px] font-bold uppercase tracking-wide text-[#9CA3AF]">Steps</p>
+          </div>
+        </div>
+
+        {/* Calories + vehicle flag */}
+        <div className="flex items-center justify-between px-6 py-3.5 bg-slate-50/70">
+          <div className="flex items-center gap-2 text-sm font-extrabold text-[#12131A]">
+            <Flame className="size-4 text-orange-500" />
+            {session.calories || 0} kcal burned
+          </div>
+          {session.vehicle && (
+            <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2.5 py-1 text-[10px] font-black text-amber-700">
+              <Car className="size-3" /> Vehicle detected
+            </span>
+          )}
+        </div>
+
+        {/* Route map */}
+        <div className="px-4 pb-5 pt-3">
+          {hasRoute ? (
+            <Suspense
+              fallback={
+                <div className="flex h-[260px] w-full items-center justify-center rounded-xl bg-slate-100 text-xs font-bold text-[#6B7280]">
+                  Loading route map…
+                </div>
+              }
+            >
+              <div className="overflow-hidden rounded-xl border border-slate-200">
+                <RouteMap points={(session.path as WalkRoutePoint[]) ?? []} height={260} />
+              </div>
+            </Suspense>
+          ) : (
+            <div className="flex h-[120px] w-full flex-col items-center justify-center gap-1 rounded-xl border border-dashed border-slate-200 bg-slate-50 text-center px-6">
+              <MapPin className="size-5 text-[#9CA3AF]" />
+              <p className="text-xs font-black text-[#6B7280]">No GPS route was recorded</p>
+              <p className="text-[11px] font-semibold text-[#9CA3AF]">
+                {hadMetrics
+                  ? "GPS signal was lost or too weak during this walk — your distance and steps were still counted."
+                  : "Location was unavailable or permission was denied, so no map trail was captured."}
+              </p>
+            </div>
+          )}
+          {hasRoute && (
+            <div className="mt-2 flex items-center justify-center gap-4 text-[10px] font-bold text-[#6B7280]">
+              <span className="flex items-center gap-1">
+                <span className="size-2 rounded-full bg-emerald-500" /> Start
+              </span>
+              <span className="flex items-center gap-1">
+                <span className="size-2 rounded-full bg-rose-500" /> Finish
+              </span>
+            </div>
+          )}
+        </div>
+
+        <button
+          onClick={onClose}
+          className="w-full py-4 text-sm font-black text-white bg-[#7C5CFC] hover:bg-[#6c4de8] active:scale-[0.99] transition-transform"
+        >
+          Done
+        </button>
+      </div>
+    </div>
+  );
+
+  // Render through a portal onto <body> so the overlay is positioned against
+  // the real viewport. The walk page container carries `will-change: transform`
+  // (page fade animation), which makes it the containing block for
+  // `position: fixed` descendants — without the portal the "Walk Complete"
+  // panel anchors to the bottom of the whole scrollable page, forcing the
+  // user to scroll down to see the summary.
+  return createPortal(modal, document.body);
+}
+
 function WalkPage() {
   const { user } = useAuth();
   const navigate = useNavigate();
   const { walkSessions, refreshFitness } = useData();
 
   const [statsPeriod, setStatsPeriod] = useState<"daily" | "weekly" | "monthly">("daily");
+
+  // Validate user weight for accurate calorie calculation. Defaults to 70kg
+  // if unavailable, but shows a warning so the user knows calories may be
+  // inaccurate. Weight should be set in the profile for correct tracking.
+  const userWeightKg = user?.weight && Number(user.weight) > 0 ? Number(user.weight) : 70;
+  const hasValidWeight = user?.weight && Number(user.weight) > 0;
+
+  // Finished session shown in the Strava-style summary modal (with route map).
+  const [completedSession, setCompletedSession] = useState<WalkSession | null>(null);
+
+  // Single completion experience: summary modal + chime, refreshed stats.
+  // Deliberately NO toast — the modal IS the completion feedback, so showing a
+  // "Walk finished!" banner at the top at the same time is duplicated UI.
+  // Used by BOTH the in-app Finish button and the native notification Finish
+  // action (routed through use-walk's onComplete callback).
+  const handleWalkComplete = useCallback(
+    (result: WalkSession) => {
+      if (!result) return;
+      sounds.playSuccess();
+      setCompletedSession(result);
+      refreshFitness();
+    },
+    [refreshFitness],
+  );
 
   const {
     status,
@@ -63,28 +238,22 @@ function WalkPage() {
     calories,
     steps,
     gpsAvailable,
+    vehicleFlagged,
     loading,
     startWalk,
     pauseWalk,
     resumeWalk,
     finishWalk,
-  } = useWalk(user?.id, user?.weight ? Number(user.weight) : 70);
+  } = useWalk(user?.id, userWeightKg, handleWalkComplete);
 
   // Native walk notification buttons (Pause/Finish) are handled inside use-walk
   // via the walkUpdate "action" field, which keeps the React session and the
-  // foreground service perfectly in sync.
+  // foreground service perfectly in sync. Notification "Finish" routes through
+  // the same handler above so the summary always appears.
 
   const handleFinish = async () => {
     const result = await finishWalk();
-    if (result) {
-      sounds.playSuccess();
-      toast.success(
-        `Walk finished! 🚶 ${formatKm(result.distance)} km · ${formatDuration(
-          result.duration,
-        )} · ${result.calories} kcal`,
-      );
-      await refreshFitness();
-    }
+    if (result) handleWalkComplete(result);
   };
 
   // Calculate stats based on real database records.
@@ -129,13 +298,13 @@ function WalkPage() {
     };
   }, [walkSessions, statsPeriod]);
 
-  // Today's walk history list — every finished session from the local day,
-  // in chronological order (oldest first).
-  const todayHistory = useMemo(() => {
-    const todayStr = todayLocalDate();
+  // Recent finished walks — every completed session, newest first. Each item
+  // opens the same summary modal (metrics + route map) when tapped.
+  const walkHistory = useMemo(() => {
     return walkSessions
-      .filter((s) => s.status === "finished" && s.day === todayStr)
-      .sort((a, b) => (a.started_at || a.created_at).localeCompare(b.started_at || b.created_at));
+      .filter((s) => s.status === "finished")
+      .sort((a, b) => (b.started_at || b.created_at).localeCompare(a.started_at || a.created_at))
+      .slice(0, 20);
   }, [walkSessions]);
 
   return (
@@ -160,13 +329,24 @@ function WalkPage() {
                 : "Ready to Walk"}
           </span>
 
-          <span className="text-[11px] font-semibold text-white/60 flex items-center gap-1">
-            <Compass className="size-3.5" />
-            {gpsAvailable === true
-              ? "Real GPS Location"
-              : gpsAvailable === false
-                ? "Sensor Estimate"
-                : "GPS Ready"}
+          <span
+            className={`text-[11px] font-semibold flex items-center gap-1 ${
+              gpsAvailable === false ? "text-amber-300/90" : "text-white/60"
+            }`}
+          >
+            <Satellite className="size-3.5" />
+            {status === "active" || status === "paused"
+              ? gpsAvailable === true
+                ? "GPS Tracking"
+                : gpsAvailable === false
+                  ? "GPS Lost — counting steps"
+                  : "GPS Searching…"
+              : "GPS Ready"}
+            {vehicleFlagged && (
+              <span className="ml-1 inline-flex items-center gap-1 rounded-full bg-amber-500/20 px-2 py-0.5 text-[10px] font-black text-amber-300">
+                <Car className="size-3" /> Vehicle
+              </span>
+            )}
           </span>
         </div>
 
@@ -210,6 +390,12 @@ function WalkPage() {
             <button
               onClick={async () => {
                 sounds.playActionClick();
+                // Warn user if weight is not set (calories will use default 70kg)
+                if (!hasValidWeight) {
+                  toast.warning(
+                    "Weight not set in profile — calorie estimates will use 70 kg default. Update your profile for accurate tracking.",
+                  );
+                }
                 // Feature-time permissions: if denied earlier, ask again now
                 // that the user is actually using the walking feature.
                 await PermissionManager.ensurePermission("location");
@@ -340,26 +526,27 @@ function WalkPage() {
         </div>
       </div>
 
-      {/* Daily Walking History */}
+      {/* Walking History */}
       <div className="flex items-center justify-between mb-3">
         <h2 className="text-lg font-extrabold text-[#12131A] flex items-center gap-2">
-          <History className="size-4.5 text-[#7C5CFC]" /> Today's Walking History
+          <History className="size-4.5 text-[#7C5CFC]" /> Walk History
         </h2>
-        <span className="text-xs font-bold text-[#6B7280]">{todayHistory.length} Walks</span>
+        <span className="text-xs font-bold text-[#6B7280]">{walkHistory.length} Walks</span>
       </div>
 
       <div className="space-y-2">
-        {todayHistory.length === 0 ? (
+        {walkHistory.length === 0 ? (
           <div className="rounded-2xl border border-dashed border-slate-200/60 p-6 text-center bg-white">
             <Footprints className="mx-auto size-10 text-black/20" />
-            <p className="mt-2 text-xs font-bold text-[#12131A]">No walks logged today yet</p>
+            <p className="mt-2 text-xs font-bold text-[#12131A]">No walks completed yet</p>
             <p className="text-[11px] text-[#6B7280]">Tap "Start Walk" above to begin tracking!</p>
           </div>
         ) : (
-          todayHistory.map((s) => (
-            <div
+          walkHistory.map((s) => (
+            <button
               key={s.id}
-              className="card-soft bg-white p-3.5 border border-black/5 shadow-xs flex items-center justify-between"
+              onClick={() => setCompletedSession(s)}
+              className="card-soft bg-white p-3.5 border border-black/5 shadow-xs flex items-center justify-between w-full text-left active:scale-[0.98] transition-transform"
             >
               <div className="flex items-center gap-3">
                 <div className="flex size-10 items-center justify-center rounded-2xl bg-emerald-500/10 text-emerald-600">
@@ -370,21 +557,43 @@ function WalkPage() {
                     {formatKm(s.distance)} km Walk
                   </h4>
                   <p className="text-[11px] font-semibold text-[#6B7280]">
-                    {formatDuration(s.duration)} · {s.calories} kcal · {s.steps} steps
+                    {new Date(s.finished_at || s.started_at).toLocaleDateString([], {
+                      month: "short",
+                      day: "numeric",
+                    })}{" "}
+                    · {formatDuration(s.duration)} · {s.calories} kcal · {s.steps} steps
+                    {s.vehicle && " · 🚗"}
                   </p>
                 </div>
               </div>
 
-              <span className="text-[10px] font-bold text-[#6B7280] bg-black/5 rounded-full px-2.5 py-1">
-                {new Date(s.finished_at || s.started_at).toLocaleTimeString([], {
-                  hour: "2-digit",
-                  minute: "2-digit",
-                })}
+              <span className="flex flex-col items-end gap-1">
+                <span className="text-[10px] font-bold text-[#6B7280] bg-black/5 rounded-full px-2.5 py-1">
+                  {new Date(s.finished_at || s.started_at).toLocaleTimeString([], {
+                    hour: "2-digit",
+                    minute: "2-digit",
+                  })}
+                </span>
+                <span
+                  className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[9px] font-black ${
+                    s.path && s.path.length >= 2
+                      ? "bg-emerald-50 text-emerald-600"
+                      : "bg-slate-100 text-slate-400"
+                  }`}
+                >
+                  <MapPin className="size-2.5" />
+                  {s.path && s.path.length >= 2 ? "Route" : "No route"}
+                </span>
               </span>
-            </div>
+            </button>
           ))
         )}
       </div>
+
+      {/* Strava-style completion summary with the exact GPS route */}
+      {completedSession && (
+        <WalkSummaryModal session={completedSession} onClose={() => setCompletedSession(null)} />
+      )}
     </Screen>
   );
 }

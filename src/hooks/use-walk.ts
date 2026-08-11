@@ -14,7 +14,9 @@ import {
   Notifications,
   WalkServicePlugin,
   WalkStatusUpdate,
+  WalkRoutePoint,
 } from "@/lib/notifications-integration";
+import { ramerDouglasPeucker } from "@/lib/rdp";
 
 export interface StepCounterPluginInterface {
   isAvailable(): Promise<{ available: boolean; hasCounter: boolean; hasDetector: boolean }>;
@@ -43,7 +45,11 @@ function haversineDistance(lat1: number, lon1: number, lat2: number, lon2: numbe
   return R * c;
 }
 
-export function useWalk(userId: string | null | undefined, userWeightKg: number = 70) {
+export function useWalk(
+  userId: string | null | undefined,
+  userWeightKg: number = 70,
+  onComplete?: (session: WalkSession) => void,
+) {
   const [activeSession, setActiveSession] = useState<WalkSession | null>(null);
   const [status, setStatus] = useState<"idle" | "active" | "paused" | "finished">("idle");
   const [duration, setDuration] = useState(0); // in seconds
@@ -55,11 +61,25 @@ export function useWalk(userId: string | null | undefined, userWeightKg: number 
   const [loading, setLoading] = useState(false);
   const [isAutoPaused, setIsAutoPaused] = useState(false);
   const [nativeTracking, setNativeTracking] = useState(false);
+  const [vehicleFlagged, setVehicleFlagged] = useState(false);
 
   const watchIdRef = useRef<number | null>(null);
   const timerRef = useRef<number | null>(null);
   const lastCoordsRef = useRef<{ lat: number; lng: number } | null>(null);
   lastCoordsRef.current = lastCoords;
+
+  // JS-side fallback trackers. These ONLY fill the gap before the native
+  // service reports its first real progress (or on platforms without the
+  // native service). Once the native service is live it owns distance/steps,
+  // and these refs are never pushed into native state.
+  const jsTrailRef = useRef<WalkRoutePoint[]>([]);
+  const jsStepsRef = useRef(0);
+  const gpsDistanceRef = useRef(0);
+  // Cleanup for the JS step-sensor fallback listener (StepCounter/devicemotion),
+  // so applyNativeStatus can tear it down the moment native tracking is live.
+  const stepCleanupRef = useRef<(() => void) | null>(null);
+  const onCompleteRef = useRef(onComplete);
+  onCompleteRef.current = onComplete;
 
   const userActedRef = useRef(false);
   const lastMotionTimeRef = useRef<number>(Date.now());
@@ -74,24 +94,27 @@ export function useWalk(userId: string | null | undefined, userWeightKg: number 
   // Latest pause/finish callbacks, so the native walkUpdate "action" handler
   // (which lives in a stable useCallback) can drive the current session.
   const pauseWalkRef = useRef<(() => void) | null>(null);
-  const finishWalkRef = useRef<(() => void) | null>(null);
+  const resumeWalkRef = useRef<(() => void) | null>(null);
+  const finishWalkRef = useRef<(() => Promise<WalkSession | null>) | null>(null);
   const isAutoPausedRef = useRef(isAutoPaused);
   isAutoPausedRef.current = isAutoPaused;
   const isNative = Capacitor.isNativePlatform();
 
-  // Calculate real calories based on distance, steps, and weight
+  // Calculate real calories based on elapsed time (MET-based formula).
+  // MET_WALKING (3.5) × weight × duration_hours — recomputed from the current
+  // duration on every tick, so it can never stay at 0 while a walk runs and
+  // never drifts out of sync with the native service (which uses the same
+  // formula on the same inputs).
   useEffect(() => {
-    if (distance === 0 && steps === 0) {
+    if (duration === 0) {
       setCalories(0);
       return;
     }
-    // ACSM formula for walking energy expenditure:
-    // Calories from distance (km * weight * 0.57) + Calories per step (~0.04 kcal/step)
-    const km = distance / 1000;
-    const distanceCal = km * userWeightKg * 0.57;
-    const stepCal = steps * 0.04;
-    setCalories(Math.round(distanceCal + stepCal));
-  }, [distance, steps, userWeightKg]);
+    const met = 3.5;
+    const weightKg = userWeightKg || 70;
+    const kcal = met * weightKg * (duration / 3600);
+    setCalories((prev) => Math.max(prev, Math.round(kcal)));
+  }, [duration, userWeightKg]);
 
   // Restore in-progress walk after reload
   useEffect(() => {
@@ -161,30 +184,64 @@ export function useWalk(userId: string | null | undefined, userWeightKg: number 
   const applyNativeStatus = useCallback((data: WalkStatusUpdate) => {
     if (!data || typeof data.distanceKm !== "number") return;
 
-    // The native foreground notification exposes Pause/Finish action buttons.
+    // The native foreground notification exposes Pause/Resume/Finish action buttons.
     // The service republishes a walkUpdate carrying `action` when the user
     // taps one, so the React session reacts in lock-step with the native
     // service (single source of truth — no duplicate/divergent state).
-    if (data.action === "finish" && statusRef.current === "active") {
-      finishWalkRef.current?.();
+    if (
+      data.action === "finish" &&
+      (statusRef.current === "active" || statusRef.current === "paused")
+    ) {
+      // Route the native notification Finish through the SAME completion flow
+      // as the in-app Finish button (summary modal + sound + stats refresh),
+      // so finishing from the lock screen/notification never ends silently.
+      finishWalkRef.current?.().then((session) => {
+        if (session) onCompleteRef.current?.(session);
+      });
       return;
     }
     if (data.action === "pause" && statusRef.current === "active") {
       pauseWalkRef.current?.();
       return;
     }
+    if (data.action === "resume" && statusRef.current === "paused") {
+      resumeWalkRef.current?.();
+      return;
+    }
 
     // The native service is the single source of truth the moment it reports
     // ANY real progress — a GPS fix (updateCount > 0), a step (steps > 0), or
-    // accumulated distance (distanceKm > 0). Previously we required
-    // updateCount > 0, so without a GPS lock steps were detected natively but
-    // the UI stayed stuck at 0.00 km.
+    // accumulated distance (distanceKm > 0).
     const hasProgress = data.updateCount > 0 || data.steps > 0 || data.distanceKm > 0;
 
+    if (typeof data.isVehicleFlagged === "boolean") {
+      setVehicleFlagged(data.isVehicleFlagged);
+    }
+
     if (data.tracking && (hasProgress || data.updateCount > 0)) {
+      const becameNativeActive = !nativeActiveRef.current;
       nativeActiveRef.current = true;
       setNativeTracking(true);
       lastMotionTimeRef.current = Date.now();
+
+      // The native service owns step counting from here on. Tear down the JS
+      // StepCounter/devicemotion fallback listener so both never register the
+      // same sensors simultaneously (duplicate counting / sensor conflicts).
+      if (becameNativeActive) {
+        stepCleanupRef.current?.();
+        stepCleanupRef.current = null;
+      }
+
+      // Align React session status with native service status
+      if (data.paused) {
+        if (statusRef.current === "active") {
+          setStatus("paused");
+        }
+      } else {
+        if (statusRef.current === "idle" || statusRef.current === "paused") {
+          setStatus("active");
+        }
+      }
 
       setDistance((prev) => {
         // Monotonic merge — native distance is authoritative, but never move
@@ -228,6 +285,16 @@ export function useWalk(userId: string | null | undefined, userWeightKg: number 
           const d = haversineDistance(prev.lat, prev.lng, coords.lat, coords.lng);
           return d >= 1.2 ? coords : prev;
         });
+        // Mirror the accepted fix into the JS trail so the route survives even
+        // if the native SQLite copy is unavailable at finish time.
+        const trail = jsTrailRef.current;
+        const lastTrail = trail.length > 0 ? trail[trail.length - 1] : null;
+        if (
+          !lastTrail ||
+          haversineDistance(lastTrail.lat, lastTrail.lng, coords.lat, coords.lng) >= 1.2
+        ) {
+          trail.push({ lat: coords.lat, lng: coords.lng, ts: Date.now() });
+        }
       }
     }
 
@@ -305,22 +372,15 @@ export function useWalk(userId: string | null | undefined, userWeightKg: number 
   }, [isNative, applyNativeStatus]);
 
   // Live notification sync. The native foreground service updates its own
-  // notification on every fix/step/tick, but when it runs without motion
-  // data (no GPS lock, no step sensor) the app keeps counting in JS while
-  // the native counter would sit at 0.00 km. While the JS fallback is the
-  // active source, push the app's counters into the native service every
-  // second (monotonic merge) and refresh the JS fallback notification, so
-  // the OS notification always mirrors what the app shows.
-  useEffect(() => {
-    if (!isNative || status !== "active") return;
-    const push = () => {
-      if (nativeActiveRef.current) return;
-      Notifications.updateWalkForeground(distance / 1000, steps, duration, calories, 0);
-    };
-    push();
-    const id = window.setInterval(push, 1000);
-    return () => clearInterval(id);
-  }, [isNative, status, distance, steps, duration, calories]);
+  // notification on every fix/step/tick and is the authoritative source.
+  //
+  // REMOVED: The old code pushed JS values to native every second, which
+  // created a race condition at startup where stale (zero) values overwrote
+  // the native GPS/step counters, causing distance to stick at 0.00 km.
+  //
+  // The native service now owns all counters from the moment it starts, and
+  // the JS fallback notification (walkFallbackActive) is only used when the
+  // native service fails to start entirely (no permissions, etc.).
 
   // Auto-pause and auto-resume monitoring loop.
   // While the native service is live we do NOT auto-pause on stale JS events:
@@ -361,7 +421,14 @@ export function useWalk(userId: string | null | undefined, userWeightKg: number 
             const listener = await StepCounter.addListener("stepEvent", (data) => {
               lastMotionTimeRef.current = Date.now();
               if (nativeActiveRef.current) return; // native steps are authoritative
-              setSteps((prev) => prev + data.increment);
+              jsStepsRef.current += data.increment;
+              setSteps(jsStepsRef.current);
+              // Step-derived distance floor — mirrors the native rule
+              // (distance = max(GPS distance, steps × stride)) so a walk with
+              // poor GPS never reports 0.00 km while steps are counting.
+              if (!nativeActiveRef.current) {
+                setDistance((prev) => Math.max(prev, Math.round(jsStepsRef.current * 0.762)));
+              }
               if (isAutoPausedRef.current) {
                 setStatus("active");
                 setIsAutoPaused(false);
@@ -371,6 +438,7 @@ export function useWalk(userId: string | null | undefined, userWeightKg: number 
               listener.remove();
               StepCounter.stopStepping().catch(() => {});
             };
+            stepCleanupRef.current = cleanupListener;
             return;
           }
         } catch (err) {
@@ -392,7 +460,11 @@ export function useWalk(userId: string | null | undefined, userWeightKg: number 
         if (mag > 11.8 && now - lastStepTimeRef.current > 320) {
           lastStepTimeRef.current = now;
           lastMotionTimeRef.current = now;
-          setSteps((prev) => prev + 1);
+          jsStepsRef.current += 1;
+          setSteps(jsStepsRef.current);
+          if (!nativeActiveRef.current) {
+            setDistance((prev) => Math.max(prev, Math.round(jsStepsRef.current * 0.762)));
+          }
           if (isAutoPausedRef.current) {
             setStatus("active");
             setIsAutoPaused(false);
@@ -405,6 +477,7 @@ export function useWalk(userId: string | null | undefined, userWeightKg: number 
         cleanupListener = () => {
           if (devicemotionHandler) window.removeEventListener("devicemotion", devicemotionHandler);
         };
+        stepCleanupRef.current = cleanupListener;
       }
     };
 
@@ -412,6 +485,7 @@ export function useWalk(userId: string | null | undefined, userWeightKg: number 
 
     return () => {
       if (cleanupListener) cleanupListener();
+      if (stepCleanupRef.current === cleanupListener) stepCleanupRef.current = null;
     };
     // NOTE: isAutoPaused intentionally NOT in the dependency array — toggling
     // it must not re-register the native step sensor (which would reset the
@@ -442,8 +516,18 @@ export function useWalk(userId: string | null | undefined, userWeightKg: number 
               // the WebView fallback only fills in before the first native
               // report (or on platforms without the native service).
               if (!nativeActiveRef.current) {
-                setDistance((prev) => Math.round(prev + distDelta));
+                gpsDistanceRef.current += distDelta;
+                setDistance((prev) =>
+                  Math.max(
+                    prev,
+                    Math.round(gpsDistanceRef.current),
+                    Math.round(jsStepsRef.current * 0.762),
+                  ),
+                );
               }
+              // Keep the JS fallback trail in memory so the finished session
+              // still gets a real route when native SQLite is unavailable.
+              jsTrailRef.current.push({ lat, lng, ts: Date.now() });
               if (isAutoPausedRef.current) {
                 setStatus("active");
                 setIsAutoPaused(false);
@@ -452,7 +536,11 @@ export function useWalk(userId: string | null | undefined, userWeightKg: number 
           }
           setLastCoords({ lat, lng });
 
-          if (activeSession && userId) {
+          // Per-fix Firestore appends are only needed on the web fallback
+          // (no native SQLite to fall back on there). On Android the native
+          // service persists every accepted fix in SQLite and the final path
+          // is merged + saved once at finish — avoiding ~1 write per 2s.
+          if (activeSession && userId && !isNative) {
             appendWalkPoint(activeSession.id, userId, { lat, lng, ts: Date.now() }).catch(() => {});
           }
         },
@@ -481,7 +569,7 @@ export function useWalk(userId: string | null | undefined, userWeightKg: number 
         navigator.geolocation.clearWatch(watchIdRef.current);
       }
     };
-  }, [status, activeSession, userId]);
+  }, [status, activeSession, userId, isNative]);
 
   // Start Walk Session
   const startWalk = useCallback(async () => {
@@ -504,17 +592,23 @@ export function useWalk(userId: string | null | undefined, userWeightKg: number 
       lastMotionTimeRef.current = Date.now();
       nativeActiveRef.current = false;
       setNativeTracking(false);
+      setVehicleFlagged(false);
       lastNativeUpdateCountRef.current = 0;
+      jsTrailRef.current = [];
+      jsStepsRef.current = 0;
+      gpsDistanceRef.current = 0;
       // Persistent OS-level foreground notification in Android Control Center.
       // The native WalkService becomes the source of truth from here on and
-      // streams "walkUpdate" events + poll snapshots back to this hook.
-      Notifications.startWalkForeground(0, 0, 0, 0, 0);
+      // streams "walkUpdate" events + poll snapshots back to this hook. The
+      // Firestore session id is passed along so native SQLite route points
+      // are stored under the same session that gets finalized later.
+      Notifications.startWalkForeground(0, 0, 0, 0, 0, userWeightKg, session.id);
     } catch (e) {
       console.error("Failed to start walk session:", e);
     } finally {
       setLoading(false);
     }
-  }, [userId]);
+  }, [userId, userWeightKg]);
 
   // Pause Walk Session
   const pauseWalk = useCallback(async () => {
@@ -553,13 +647,35 @@ export function useWalk(userId: string | null | undefined, userWeightKg: number 
     setLastCoords(null);
     // Pass the saved session baseline so the native service continues the
     // duration clock exactly where we left off.
-    Notifications.resumeWalkForeground(distance / 1000, steps, duration, calories, 0);
+    Notifications.resumeWalkForeground(distance / 1000, steps, duration, calories, 0, userWeightKg);
+    // Pull the native snapshot immediately: a service instance re-created
+    // after process death restores its persisted counters (distance/steps/
+    // duration) from SharedPreferences in onCreate, and if the walkUpdate
+    // listener was not yet attached (cold start) the next poll would leave a
+    // stale "0.00 km" window. Applying the snapshot now cleans that up.
+    if (isNative) {
+      WalkServicePlugin.getStatus()
+        .then((data) => {
+          if (data) applyNativeStatus(data);
+        })
+        .catch(() => {});
+    }
     try {
       await updateWalkSession(activeSession.id, userId, { status: "active" });
     } catch (e) {
       console.error("Failed to resume walk session:", e);
     }
-  }, [activeSession, userId, distance, steps, duration, calories]);
+  }, [
+    activeSession,
+    userId,
+    distance,
+    steps,
+    duration,
+    calories,
+    userWeightKg,
+    isNative,
+    applyNativeStatus,
+  ]);
 
   // Finish Walk Session
   const finishWalk = useCallback(async () => {
@@ -573,6 +689,9 @@ export function useWalk(userId: string | null | undefined, userWeightKg: number 
       let finalDistance = distance;
       let finalSteps = steps;
       let finalDuration = duration;
+      let finalCalories = calories;
+      let finalVehicleFlagged = vehicleFlagged;
+      let nativeRoute: WalkRoutePoint[] | null = null;
       if (isNative) {
         try {
           const data = await WalkServicePlugin.getStatus();
@@ -587,20 +706,80 @@ export function useWalk(userId: string | null | undefined, userWeightKg: number 
             if (typeof data.durationSec === "number" && data.durationSec > 0) {
               finalDuration = Math.max(finalDuration, data.durationSec);
             }
+            if (typeof data.calories === "number" && data.calories > 0) {
+              finalCalories = Math.max(finalCalories, Math.round(data.calories));
+            }
+            if (typeof data.isVehicleFlagged === "boolean") {
+              finalVehicleFlagged = data.isVehicleFlagged;
+            }
           }
         } catch (e) {
           /* fall back to JS values */
         }
+
+        // The native service persisted every accepted GPS fix into SQLite
+        // during the session (survives process death / app swipes). Pull the
+        // exact route so the summary map can render start → end even after
+        // the activity ends.
+        try {
+          const route = await WalkServicePlugin.getRoutePoints({
+            sessionId: activeSession.id,
+          });
+          if (route && route.points) {
+            const parsed = JSON.parse(route.points) as WalkRoutePoint[];
+            if (Array.isArray(parsed) && parsed.length > 0) {
+              nativeRoute = parsed;
+            }
+            if (typeof route.isVehicleFlagged === "boolean") {
+              finalVehicleFlagged = route.isVehicleFlagged;
+            }
+          }
+        } catch (e) {
+          console.warn("Failed to pull native route points:", e);
+        }
+      }
+
+      // Merge the native SQLite trail (authoritative) with the JS-recorded
+      // trail (web fallback / native SQLite unavailable), dedupe by proximity,
+      // then simplify with light RDP so the saved path is smooth and compact.
+      // The live JS trail (jsTrailRef) is kept so a real multi-point route is
+      // never lost — previously only the LAST coordinate was kept, which
+      // produced the "No GPS route available" summary for real walks.
+      let finalPath: WalkRoutePoint[] = [];
+      if (nativeRoute && nativeRoute.length > 0) {
+        finalPath = nativeRoute;
+      } else if (jsTrailRef.current.length > 0) {
+        finalPath = [...jsTrailRef.current];
+        if (lastCoords) {
+          const lastPt = finalPath[finalPath.length - 1];
+          if (
+            !lastPt ||
+            haversineDistance(lastPt.lat, lastPt.lng, lastCoords.lat, lastCoords.lng) >= 1.2
+          ) {
+            finalPath.push({ lat: lastCoords.lat, lng: lastCoords.lng, ts: Date.now() });
+          }
+        }
+      } else if (lastCoords) {
+        finalPath = [{ lat: lastCoords.lat, lng: lastCoords.lng, ts: Date.now() }];
+      }
+
+      if (finalPath.length > 2) {
+        finalPath = ramerDouglasPeucker(finalPath, 0.00003);
       }
 
       await updateWalkSession(activeSession.id, userId, {
         duration: finalDuration,
         distance: finalDistance,
-        calories:
-          finalDistance > 0 || finalSteps > 0
-            ? Math.round((finalDistance / 1000) * userWeightKg * 0.57 + finalSteps * 0.04)
-            : calories,
+        // Calories: keep the max of the live/native value and the MET
+        // recomputation on the FINAL duration — never let the final summary
+        // shrink what the live UI already showed.
+        calories: Math.max(
+          finalCalories,
+          Math.round(3.5 * (userWeightKg || 70) * (finalDuration / 3600)),
+        ),
         steps: finalSteps,
+        ...(finalPath.length > 0 ? { path: finalPath } : {}),
+        ...(finalVehicleFlagged ? { vehicle: true } : {}),
       });
       const finished = await finishWalkSession(activeSession.id, userId);
       setActiveSession(null);
@@ -611,9 +790,20 @@ export function useWalk(userId: string | null | undefined, userWeightKg: number 
       setCalories(0);
       setSteps(0);
       setLastCoords(null);
+      setVehicleFlagged(false);
       nativeActiveRef.current = false;
       setNativeTracking(false);
+      jsTrailRef.current = [];
+      jsStepsRef.current = 0;
+      gpsDistanceRef.current = 0;
+      stepCleanupRef.current?.();
+      stepCleanupRef.current = null;
       Notifications.stopWalkForeground();
+      // Free the native SQLite storage — the route now lives in the session
+      // record so it can be displayed later, even after the activity ends.
+      if (isNative) {
+        WalkServicePlugin.clearRoutePoints({ sessionId: activeSession.id }).catch(() => {});
+      }
       return finished;
     } catch (e) {
       console.error("Failed to finish walk session:", e);
@@ -626,8 +816,10 @@ export function useWalk(userId: string | null | undefined, userWeightKg: number 
     userId,
     duration,
     distance,
-    calories,
     steps,
+    calories,
+    vehicleFlagged,
+    lastCoords,
     isNative,
     userWeightKg,
     applyNativeStatus,
@@ -642,16 +834,23 @@ export function useWalk(userId: string | null | undefined, userWeightKg: number 
     setCalories(0);
     setSteps(0);
     setLastCoords(null);
+    setVehicleFlagged(false);
     nativeActiveRef.current = false;
     setNativeTracking(false);
+    jsTrailRef.current = [];
+    jsStepsRef.current = 0;
+    gpsDistanceRef.current = 0;
+    stepCleanupRef.current?.();
+    stepCleanupRef.current = null;
     Notifications.stopWalkForeground();
   }, []);
 
   // Keep the native-action refs pointed at the latest callbacks.
   useEffect(() => {
     pauseWalkRef.current = pauseWalk;
+    resumeWalkRef.current = resumeWalk;
     finishWalkRef.current = finishWalk;
-  }, [pauseWalk, finishWalk]);
+  }, [pauseWalk, resumeWalk, finishWalk]);
 
   return {
     activeSession,
@@ -663,6 +862,7 @@ export function useWalk(userId: string | null | undefined, userWeightKg: number 
     steps,
     gpsAvailable,
     nativeTracking,
+    vehicleFlagged,
     loading,
     startWalk,
     pauseWalk,

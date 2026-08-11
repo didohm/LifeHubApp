@@ -1,5 +1,5 @@
 import { useEffect, useState, useMemo, useCallback } from "react";
-import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import { sounds } from "@/lib/sound";
 import {
   Search,
@@ -14,19 +14,23 @@ import {
   Cake,
   ChevronRight,
   Droplets,
-  Moon,
   Plus,
   Minus,
   Check,
+  CheckCircle2,
+  Clock,
   Dumbbell,
   Footprints,
+  FileText,
   Stethoscope,
   ChevronLeft,
+  type LucideIcon,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Screen } from "@/components/lifehub/Screen";
 import { UserAvatar } from "@/components/lifehub/UserAvatar";
 import { useAuth } from "@/hooks/use-auth";
+import { useAuthGuard } from "@/hooks/use-auth-guard";
 import { useData } from "@/lib/data-context";
 import { useHydration } from "@/lib/use-hydration";
 import { getActivityTimeline, ActivityEntry, todayLocalDate } from "@/lib/api";
@@ -49,9 +53,24 @@ export const Route = createFileRoute("/")({
 
 const daysOfWeek = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
+// Semantic icons + colors for activity timeline entries (same vocabulary as
+// the rest of the app — lucide icons in tinted circles, no platform emoji).
+// Moved outside component to prevent recreation on every render
+const kindMeta: Record<ActivityEntry["kind"], { Icon: LucideIcon; bg: string }> = {
+  workout: { Icon: Dumbbell, bg: "bg-orange-500/10 text-orange-600" },
+  water: { Icon: Droplets, bg: "bg-sky-500/10 text-sky-600" },
+  task: { Icon: ListChecks, bg: "bg-emerald-500/10 text-emerald-600" },
+  appointment: { Icon: CalendarIcon, bg: "bg-purple-500/10 text-purple-600" },
+  medication: { Icon: Pill, bg: "bg-pink-500/10 text-pink-600" },
+  walk: { Icon: Footprints, bg: "bg-emerald-500/10 text-emerald-600" },
+  document: { Icon: FileText, bg: "bg-blue-500/10 text-blue-600" },
+  bill: { Icon: Wallet, bg: "bg-amber-500/10 text-amber-600" },
+  other: { Icon: Zap, bg: "bg-[#E8E2FF] text-[#7C5CFC]" },
+};
+
 function Index() {
   const { user, loading: authLoading } = useAuth();
-  const navigate = useNavigate();
+  useAuthGuard(user, authLoading);
 
   const {
     medications,
@@ -153,12 +172,6 @@ function Index() {
   }, []);
 
   useEffect(() => {
-    if (!authLoading && !user) {
-      navigate({ to: "/auth" });
-    }
-  }, [user, authLoading, navigate]);
-
-  useEffect(() => {
     if (!user) return;
     setExtraLoading(true);
     getActivityTimeline(user.id, 10)
@@ -258,7 +271,7 @@ function Index() {
           alt="Health & LifeHub Illustration"
           width={400}
           height={400}
-          className="pointer-events-none absolute -right-2 top-1/2 w-44 max-h-40 -translate-y-1/2 object-contain drop-shadow-[0_10px_20px_rgba(124,92,252,0.25)] transition-transform hover:scale-105"
+          className="pointer-events-none absolute -right-2 top-1/2 w-44 max-h-40 -translate-y-1/2 object-contain drop-shadow-[0_10px_20px_rgba(124,92,252,0.25)]"
         />
       </section>
 
@@ -369,13 +382,17 @@ function Index() {
             <div className="mt-3 flex items-center justify-between border-t border-black/10 pt-2.5">
               <span className="text-[11px] font-bold">Session Status</span>
               <span
-                className={`flex size-6 items-center justify-center rounded-full text-xs font-bold transition-all duration-300 ${
+                className={`flex size-6 items-center justify-center rounded-full transition-all duration-300 ${
                   upcomingApp.status === "completed"
-                    ? "bg-[#12131A] text-white"
+                    ? "bg-emerald-500/15 text-emerald-600"
                     : "bg-white text-[#12131A]"
                 }`}
               >
-                {upcomingApp.status === "completed" ? "✓" : "!"}
+                {upcomingApp.status === "completed" ? (
+                  <Check className="size-3.5" strokeWidth={3} />
+                ) : (
+                  <Clock className="size-3.5" strokeWidth={3} />
+                )}
               </span>
             </div>
           </Link>
@@ -434,11 +451,17 @@ function Index() {
             <div className="mt-4 flex items-center justify-between border-t border-black/10 pt-2.5">
               <span className="text-[11px] font-bold">Dose Status</span>
               <span
-                className={`flex size-6 items-center justify-center rounded-full text-xs font-bold transition-all duration-300 ${
-                  upcomingMed.taken ? "bg-[#12131A] text-white" : "bg-white text-[#12131A]"
+                className={`flex size-6 items-center justify-center rounded-full transition-all duration-300 ${
+                  upcomingMed.taken
+                    ? "bg-emerald-500/15 text-emerald-600"
+                    : "bg-white text-[#12131A]"
                 }`}
               >
-                {upcomingMed.taken ? "✓" : "!"}
+                {upcomingMed.taken ? (
+                  <Check className="size-3.5" strokeWidth={3} />
+                ) : (
+                  <Clock className="size-3.5" strokeWidth={3} />
+                )}
               </span>
             </div>
           </Link>
@@ -567,27 +590,38 @@ function Index() {
           </div>
         </div>
 
-        <Link
-          to="/analytics"
-          className="card-soft bg-white p-4 border border-black/5 hover:shadow-md transition-all"
-        >
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-bold text-[#6B7280]">Dose Rate</span>
-            <Moon className="size-4 text-[#7C5CFC]" />
-          </div>
-          <p className="mt-2 text-2xl font-black text-[#12131A]">
-            {medications.length > 0 ? `${compliancePct}%` : "0%"}
-          </p>
-          <p className="mt-0.5 text-[11px] font-semibold text-[#6B7280]">
-            {takenMeds} of {medications.length} doses taken
-          </p>
-          <div className="mt-2 h-1.5 w-full rounded-full bg-black/5 overflow-hidden">
-            <div
-              className="h-full bg-[#7C5CFC] rounded-full"
-              style={{ width: `${compliancePct}%` }}
-            />
-          </div>
-        </Link>
+        {medications.length === 0 ? (
+          <Link
+            to="/medications"
+            className="card-soft tap flex flex-col items-center justify-center bg-white p-4 border border-dashed border-slate-200/60 text-center min-h-[160px]"
+          >
+            <Pill className="size-7 text-[#7C5CFC]/50" />
+            <span className="mt-2 text-xs font-extrabold text-[#12131A]">No dose rate yet</span>
+            <span className="text-[10px] text-[#6B7280] font-medium mt-0.5">
+              Add medications to track
+            </span>
+          </Link>
+        ) : (
+          <Link
+            to="/analytics"
+            className="card-soft bg-white p-4 border border-black/5 hover:shadow-md transition-all"
+          >
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold text-[#6B7280]">Dose Rate</span>
+              <Pill className="size-4 text-[#7C5CFC]" />
+            </div>
+            <p className="mt-2 text-2xl font-black text-[#12131A]">{compliancePct}%</p>
+            <p className="mt-0.5 text-[11px] font-semibold text-[#6B7280]">
+              {takenMeds} of {medications.length} doses taken
+            </p>
+            <div className="mt-2 h-1.5 w-full rounded-full bg-black/5 overflow-hidden">
+              <div
+                className="h-full bg-[#7C5CFC] rounded-full"
+                style={{ width: `${compliancePct}%` }}
+              />
+            </div>
+          </Link>
+        )}
       </section>
 
       {/* Quick Services Grid Bar */}
@@ -647,7 +681,6 @@ function Index() {
         <h2 className="text-lg font-extrabold text-[#12131A] flex items-center gap-2">
           <Activity className="size-4.5 text-[#7C5CFC]" /> Activity Timeline
         </h2>
-        <span className="text-xs font-bold text-[#6B7280]">Real DB feed</span>
       </div>
 
       <div className="mt-3 space-y-2">
@@ -658,30 +691,7 @@ function Index() {
           </div>
         ) : (
           activityTimeline.slice(0, 5).map((log) => {
-            let icon = "✓";
-            let bg = "bg-[#E8E2FF] text-[#7C5CFC]";
-            if (log.kind === "workout") {
-              icon = "🏋️";
-              bg = "bg-orange-500/10 text-orange-600";
-            } else if (log.kind === "water") {
-              icon = "💧";
-              bg = "bg-sky-500/10 text-sky-600";
-            } else if (log.kind === "task") {
-              icon = "✅";
-              bg = "bg-emerald-500/10 text-emerald-600";
-            } else if (log.kind === "appointment") {
-              icon = "📅";
-              bg = "bg-purple-500/10 text-purple-600";
-            } else if (log.kind === "medication") {
-              icon = "💊";
-              bg = "bg-pink-500/10 text-pink-600";
-            } else if (log.kind === "walk") {
-              icon = "🚶";
-              bg = "bg-emerald-500/10 text-emerald-600";
-            } else if (log.kind === "document") {
-              icon = "📄";
-              bg = "bg-blue-500/10 text-blue-600";
-            }
+            const { Icon, bg } = kindMeta[log.kind] ?? kindMeta.other;
 
             return (
               <div
@@ -690,9 +700,10 @@ function Index() {
               >
                 <div className="flex items-center gap-3">
                   <span
-                    className={`flex size-8 items-center justify-center rounded-full text-xs font-bold ${bg}`}
+                    aria-hidden
+                    className={`flex size-8 items-center justify-center rounded-full ${bg}`}
                   >
-                    {icon}
+                    <Icon className="size-4" strokeWidth={2.5} />
                   </span>
                   <div>
                     <p className="text-xs font-bold text-[#12131A]">{log.action}</p>

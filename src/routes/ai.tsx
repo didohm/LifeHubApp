@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import {
   Send,
   Plus,
@@ -12,9 +12,6 @@ import {
   MessageSquare,
   Loader2,
   Copy,
-  ThumbsUp,
-  ThumbsDown,
-  RotateCcw,
   Leaf,
   Search,
   ScrollText,
@@ -23,6 +20,7 @@ import { toast } from "sonner";
 import { motion, AnimatePresence } from "framer-motion";
 import { Screen } from "@/components/lifehub/Screen";
 import { useAuth } from "@/hooks/use-auth";
+import { useAuthGuard } from "@/hooks/use-auth-guard";
 import { generateAssistantReply } from "@/lib/ai-provider";
 import {
   getAiConversations,
@@ -152,16 +150,7 @@ function MarkdownContent({ content }: { content: string }) {
             {c.trim()}
           </th>
         ));
-        elements.push(
-          <table key={`tbl-${i}`} className="my-2 w-full border-collapse rounded-xl text-xs">
-            <thead>
-              <tr className="border-b border-border/50 bg-muted/50">{headerCells}</tr>
-            </thead>
-            <tbody></tbody>
-          </table>,
-        );
         i++;
-        const tableKey = `tbl-${i}`;
         const rows: React.ReactNode[] = [];
         while (i + 1 < lines.length && lines[i + 1].startsWith("|")) {
           i++;
@@ -176,7 +165,10 @@ function MarkdownContent({ content }: { content: string }) {
           rows.push(<tr key={`tr-${i}`}>{rowCells}</tr>);
         }
         elements.push(
-          <table key={tableKey} className="my-2 w-full border-collapse rounded-xl text-xs">
+          <table key={`tbl-${i}`} className="my-2 w-full border-collapse rounded-xl text-xs">
+            <thead>
+              <tr className="border-b border-border/50 bg-muted/50">{headerCells}</tr>
+            </thead>
             <tbody>{rows}</tbody>
           </table>,
         );
@@ -306,7 +298,7 @@ function TypingIndicator() {
 // ─── Main Page Component ────────────────────────────────────────────
 function AiPage() {
   const { user, firebaseUser, loading: authLoading } = useAuth();
-  const navigate = useNavigate();
+  useAuthGuard(user, authLoading);
   const chatEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -317,13 +309,6 @@ function AiPage() {
   const [loading, setLoading] = useState(false);
   const [streamingText, setStreamingText] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
-
-  // Auth guard
-  useEffect(() => {
-    if (!authLoading && !user) {
-      navigate({ to: "/auth" });
-    }
-  }, [user, authLoading, navigate]);
 
   // Load conversations
   const loadConvs = useCallback(async () => {
@@ -789,34 +774,7 @@ function AiPage() {
                           <Copy className="size-3" />
                           Copy
                         </button>
-                        <button
-                          className={cn(
-                            "inline-flex items-center gap-1 text-[11px] font-medium text-muted-foreground hover:text-emerald-600 transition-colors",
-                            focusRing,
-                          )}
-                          aria-label="Thumbs up"
-                        >
-                          <ThumbsUp className="size-3" />
-                        </button>
-                        <button
-                          className={cn(
-                            "inline-flex items-center gap-1 text-[11px] font-medium text-muted-foreground hover:text-destructive transition-colors",
-                            focusRing,
-                          )}
-                          aria-label="Thumbs down"
-                        >
-                          <ThumbsDown className="size-3" />
-                        </button>
-                        <button
-                          className={cn(
-                            "inline-flex items-center gap-1 text-[11px] font-medium text-muted-foreground hover:text-foreground transition-colors ml-auto",
-                            focusRing,
-                          )}
-                          aria-label="Regenerate response"
-                        >
-                          <RotateCcw className="size-3" />
-                          Regenerate
-                        </button>
+
                       </div>
                     )}
                   </div>

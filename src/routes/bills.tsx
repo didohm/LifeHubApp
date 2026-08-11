@@ -1,5 +1,5 @@
-import { useState, useEffect, useRef } from "react";
-import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { useState, useEffect } from "react";
+import { createFileRoute } from "@tanstack/react-router";
 import {
   Plus,
   Wallet,
@@ -15,7 +15,10 @@ import { toast } from "sonner";
 import { Screen } from "@/components/lifehub/Screen";
 import { Modal } from "@/components/lifehub/Modal";
 import { useAuth } from "@/hooks/use-auth";
+import { useAuthGuard } from "@/hooks/use-auth-guard";
+import { useDeleteWithGuard } from "@/hooks/use-delete-with-guard";
 import { useData } from "@/lib/data-context";
+import { todayLocalDate } from "@/lib/api";
 import { Bill } from "@/lib/types";
 import { ListSkeleton } from "@/components/lifehub/SkeletonLoader";
 
@@ -28,7 +31,7 @@ export const Route = createFileRoute("/bills")({
 
 function BillsPage() {
   const { user, loading: authLoading } = useAuth();
-  const navigate = useNavigate();
+  useAuthGuard(user, authLoading);
 
   const {
     bills,
@@ -55,23 +58,19 @@ function BillsPage() {
   const [title, setTitle] = useState("");
   const [amount, setAmount] = useState("");
   const [category, setCategory] = useState("Health");
-  const [dueDate, setDueDate] = useState(new Date().toISOString().split("T")[0]);
+  const [dueDate, setDueDate] = useState(todayLocalDate());
   const [paymentMethod, setPaymentMethod] = useState("Cash (Espèces)");
   const [submitting, setSubmitting] = useState(false);
   const [paying, setPaying] = useState(false);
 
-  useEffect(() => {
-    if (!authLoading && !user) {
-      navigate({ to: "/auth" });
-    }
-  }, [user, authLoading, navigate]);
+  const { deleteWithGuard } = useDeleteWithGuard();
 
   const openAddModal = () => {
     setEditingBill(null);
     setTitle("");
     setAmount("");
     setCategory("Health");
-    setDueDate(new Date().toISOString().split("T")[0]);
+    setDueDate(todayLocalDate());
     setModalOpen(true);
   };
 
@@ -82,12 +81,20 @@ function BillsPage() {
 
     try {
       if (editingBill) {
+        // Validate status transition: prevent marking paid bills as unpaid without explicit reason
+        const newStatus = editingBill.status;
+        if (editingBill.status === 'paid' && status !== 'paid') {
+          toast.error("Cannot change status of a paid bill. Delete and recreate if needed.");
+          setSubmitting(false);
+          return;
+        }
+        
         const updated = await editBill(editingBill.id, {
           title,
           amount: parseFloat(amount) || 0,
           category,
           due_date: dueDate,
-          status: editingBill.status,
+          status: newStatus,
         });
         if (updated) {
           toast.success("Bill updated!");
@@ -123,7 +130,7 @@ function BillsPage() {
 
     try {
       await payBillAction(payModalBill.id, paymentMethod);
-      toast.success(`Paid $${Number(payModalBill.amount).toFixed(2)} via ${paymentMethod}! 🎉`);
+      toast.success(`Paid DA ${Number(payModalBill.amount).toFixed(2)} via ${paymentMethod}! 🎉`);
       setPayModalBill(null);
     } catch (err) {
       toast.error("Payment failed. Please try again.");
@@ -132,22 +139,14 @@ function BillsPage() {
     }
   };
 
-  // Guards against repeated taps on the same Remove button: repeat taps on
-  // an item that is already being removed are ignored, and the success toast
-  // uses a per-item id so only ONE "removed" notification is ever shown.
-  const deletingIds = useRef<Set<string>>(new Set());
   const handleDelete = async (id: string) => {
     if (!user) return;
-    if (deletingIds.current.has(id)) return; // already removing this item
-    deletingIds.current.add(id);
-    try {
+    await deleteWithGuard(id, async () => {
       await removeBill(id);
       toast.success("Bill removed.", { id: `bill-removed-${id}` });
-    } catch (err) {
+    })().catch(() => {
       toast.error("Failed to delete bill.", { id: `bill-delete-error-${id}` });
-    } finally {
-      deletingIds.current.delete(id);
-    }
+    });
   };
 
   const filteredBills = bills.filter((b) => {
@@ -224,11 +223,11 @@ function BillsPage() {
       <div className="mt-4 grid grid-cols-2 gap-3">
         <div className="card-soft bg-rose-500/10 p-4 border border-rose-500/20 text-rose-900">
           <span className="text-xs font-bold">Unpaid Dues</span>
-          <p className="mt-1 text-2xl font-black">${totalUnpaid.toFixed(2)}</p>
+          <p className="mt-1 text-2xl font-black">DA {totalUnpaid.toFixed(2)}</p>
         </div>
         <div className="card-soft bg-emerald-500/10 p-4 border border-emerald-500/20 text-emerald-900">
           <span className="text-xs font-bold">Paid Total</span>
-          <p className="mt-1 text-2xl font-black">${totalPaid.toFixed(2)}</p>
+          <p className="mt-1 text-2xl font-black">DA {totalPaid.toFixed(2)}</p>
         </div>
       </div>
 
@@ -287,8 +286,8 @@ function BillsPage() {
 
               <div className="flex items-center gap-3">
                 <div className="text-right">
-                  <p className="text-base font-black text-foreground">
-                    ${Number(bill.amount).toFixed(2)}
+                  <p className="text-base font-black text-foreground whitespace-nowrap">
+                    DA {Number(bill.amount).toFixed(2)}
                   </p>
                   <span
                     className={`text-[10px] font-bold uppercase ${
@@ -349,7 +348,7 @@ function BillsPage() {
 
           <div className="grid grid-cols-2 gap-2">
             <div>
-              <label className="text-xs font-bold text-foreground">Amount ($)</label>
+              <label className="text-xs font-bold text-foreground">Amount (DA)</label>
               <input
                 type="number"
                 step="0.01"
@@ -422,8 +421,8 @@ function BillsPage() {
 
           <div className="mt-4 rounded-2xl bg-muted/30 p-4 text-center">
             <p className="text-xs text-muted-foreground">Amount Due for {payModalBill.title}</p>
-            <p className="text-3xl font-black text-foreground mt-1">
-              ${Number(payModalBill.amount).toFixed(2)}
+            <p className="text-3xl font-black text-foreground mt-1 whitespace-nowrap">
+              DA {Number(payModalBill.amount).toFixed(2)}
             </p>
           </div>
 
@@ -460,7 +459,7 @@ function BillsPage() {
                 )}
                 {paying
                   ? "Processing..."
-                  : `Confirm Pay $${Number(payModalBill.amount).toFixed(2)}`}
+                  : `Confirm Pay DA ${Number(payModalBill.amount).toFixed(2)}`}
               </button>
             </div>
           </form>
@@ -497,7 +496,7 @@ function BillsPage() {
                 </div>
                 <div className="text-right">
                   <p className="text-sm font-black text-emerald-600">
-                    +${Number(p.amount).toFixed(2)}
+                    +DA {Number(p.amount).toFixed(2)}
                   </p>
                   <p className="text-[10px] text-muted-foreground">
                     {new Date(p.payment_date).toLocaleDateString()}
