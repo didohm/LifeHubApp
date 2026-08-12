@@ -153,6 +153,7 @@ public class WalkServicePlugin extends Plugin {
         }
 
         String sessionId = call.getString("sessionId", "current_session");
+        boolean startPaused = call.getBoolean("paused", false);
         Double distanceKmObj = call.getDouble("distanceKm", 0.0);
         Integer stepsObj = call.getInt("steps", 0);
         Long durationObj = call.getLong("durationSec", 0L);
@@ -170,6 +171,7 @@ public class WalkServicePlugin extends Plugin {
             Intent intent = new Intent(getContext(), WalkService.class);
             intent.setAction(WalkService.ACTION_START);
             intent.putExtra(WalkService.EXTRA_SESSION_ID, sessionId);
+            intent.putExtra(WalkService.EXTRA_PAUSED, startPaused);
             intent.putExtra(WalkService.EXTRA_DISTANCE_KM, distanceKm);
             intent.putExtra(WalkService.EXTRA_STEPS, steps);
             intent.putExtra(WalkService.EXTRA_DURATION_SEC, duration);

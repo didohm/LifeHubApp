@@ -91,6 +91,17 @@ export function useWalk(
   const userActedRef = useRef(false);
   const lastMotionTimeRef = useRef<number>(Date.now());
   const lastStepTimeRef = useRef<number>(0);
+  // Live JS metrics snapshot used by the 4s poll to refresh the JS fallback
+  // notification — avoids adding distance/steps/duration/calories to the poll
+  // interval's dependency array (that would recreate the interval every tick).
+  const liveMetricsRef = useRef({ distance: 0, steps: 0, duration: 0, calories: 0 });
+  liveMetricsRef.current = { distance, steps, duration, calories };
+  // Guards the one-shot native service re-arm after a restored session, so a
+  // re-run of the restore effect can never restart the service with a stale
+  // baseline. Reset when a brand-new walk starts.
+  const restoredRef = useRef(false);
+  const userWeightKgRef = useRef(userWeightKg);
+  userWeightKgRef.current = userWeightKg;
   // True once the native WalkService has reported at least one live update.
   // While true, the native values are the authoritative source for
   // distance/steps and the JS fallback accumulators are paused.
@@ -122,48 +133,6 @@ export function useWalk(
     const kcal = met * weightKg * (duration / 3600);
     setCalories((prev) => Math.max(prev, Math.round(kcal)));
   }, [duration, userWeightKg]);
-
-  // Restore in-progress walk after reload
-  useEffect(() => {
-    if (!userId) return;
-    let cancelled = false;
-    (async () => {
-      try {
-        const abandoned = await getAbandonedWalkSessions(userId);
-        if (cancelled || userActedRef.current) return;
-        const latest = abandoned[0];
-        const restoreSession =
-          latest && latest.day === todayLocalDate() && (latest.duration || 0) > 0;
-
-        if (restoreSession) {
-          setActiveSession(latest);
-          setStatus("paused");
-          setDuration(latest.duration || 0);
-          setDistance(latest.distance || 0);
-          setCalories(latest.calories || 0);
-          setSteps(latest.steps || 0);
-          const path = latest.path || [];
-          setLastCoords(
-            path.length > 0
-              ? { lat: path[path.length - 1].lat, lng: path[path.length - 1].lng }
-              : null,
-          );
-          abandoned.slice(1).forEach((s) => {
-            cancelWalkSession(s.id, userId).catch(() => {});
-          });
-        } else {
-          abandoned.forEach((s) => {
-            cancelWalkSession(s.id, userId).catch(() => {});
-          });
-        }
-      } catch (e) {
-        console.error("Failed to restore walk session:", e);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [userId]);
 
   // Active Timer Loop
   useEffect(() => {
@@ -315,6 +284,89 @@ export function useWalk(
     }
   }, []);
 
+  // Restore in-progress walk after reload. Placed after applyNativeStatus
+  // (stable useCallback) so the re-arm path can reuse the native snapshot
+  // sync logic.
+  useEffect(() => {
+    if (!userId) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const abandoned = await getAbandonedWalkSessions(userId);
+        if (cancelled || userActedRef.current) return;
+        const latest = abandoned[0];
+        const restoreSession =
+          latest && latest.day === todayLocalDate() && (latest.duration || 0) > 0;
+
+        if (restoreSession) {
+          setActiveSession(latest);
+          setStatus("paused");
+          setDuration(latest.duration || 0);
+          setDistance(latest.distance || 0);
+          setCalories(latest.calories || 0);
+          setSteps(latest.steps || 0);
+          setVehicleFlagged(!!latest.vehicle);
+          const path = latest.path || [];
+          setLastCoords(
+            path.length > 0
+              ? { lat: path[path.length - 1].lat, lng: path[path.length - 1].lng }
+              : null,
+          );
+          abandoned.slice(1).forEach((s) => {
+            cancelWalkSession(s.id, userId).catch(() => {});
+          });
+
+          // Re-arm the native foreground walk service so the recovered walk
+          // keeps its OS notification and background tracking instead of
+          // silently degrading to JS-only tracking. The service is started
+          // PAUSED: the walk stays frozen exactly where Firestore left it
+          // until the user taps Resume (matching the in-app "Walk Paused"
+          // state). Native startForegroundTracking() merges the persisted
+          // counters, so the dead process's freshest snapshot is never lost.
+          if (isNative && !restoredRef.current) {
+            restoredRef.current = true;
+            try {
+              const st = await WalkServicePlugin.getStatus();
+              if (st && st.tracking) {
+                // The OS already restarted the foreground service on its own
+                // (START_STICKY + stopWithTask="false") and it kept tracking
+                // in the background — it is the authoritative source, so just
+                // resync the UI with its current snapshot.
+                applyNativeStatus(st);
+              } else {
+                await Notifications.startWalkForeground(
+                  (latest.distance || 0) / 1000,
+                  latest.steps || 0,
+                  latest.duration || 0,
+                  latest.calories || 0,
+                  0,
+                  userWeightKgRef.current,
+                  latest.id,
+                  true, // start paused — user resumes deliberately
+                );
+                // Sync the re-armed service's (possibly fresher) persisted
+                // counters into the UI.
+                const st2 = await WalkServicePlugin.getStatus();
+                if (st2) applyNativeStatus(st2);
+              }
+            } catch (e) {
+              console.warn("Failed to re-arm native walk service after restore:", e);
+            }
+          }
+        } else {
+          abandoned.forEach((s) => {
+            cancelWalkSession(s.id, userId).catch(() => {});
+          });
+        }
+      } catch (e) {
+        console.error("Failed to restore walk session:", e);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [userId, applyNativeStatus, isNative]);
+
   useEffect(() => {
     if (!isNative) return;
     let listener: { remove: () => void } | null = null;
@@ -347,6 +399,15 @@ export function useWalk(
       try {
         const data = await WalkServicePlugin.getStatus();
         if (data) applyNativeStatus(data);
+        // The native service is down (failed to start — e.g. missing FGS
+        // permissions / Android 12+ launch restriction) while a session is
+        // live: keep the JS fallback notification mirroring the live JS
+        // counters instead of a frozen "Tracking your walk" notice. No-op
+        // unless the fallback notification is actually showing.
+        if (!data || !data.tracking) {
+          const m = liveMetricsRef.current;
+          Notifications.refreshWalkFallback(m.distance / 1000, m.steps, m.duration, m.calories);
+        }
       } catch (e) {
         // Service may not be running (e.g. web or device without location)
       }
@@ -387,7 +448,9 @@ export function useWalk(
   //
   // The native service now owns all counters from the moment it starts, and
   // the JS fallback notification (walkFallbackActive) is only used when the
-  // native service fails to start entirely (no permissions, etc.).
+  // native service fails to start entirely (no permissions, etc.) — while it
+  // is showing, the 4s poll above keeps its body refreshed with live metrics
+  // via Notifications.refreshWalkFallback().
 
   // Auto-pause and auto-resume monitoring loop.
   // While the native service is live we do NOT auto-pause on stale JS events:
@@ -584,6 +647,19 @@ export function useWalk(
     userActedRef.current = true;
     setLoading(true);
     try {
+      // Tear down any live native foreground service FIRST: its SQLite route
+      // points and SharedPreferences are keyed on the previous session id. A
+      // new walk must not inherit, orphan, or double-own them — the native
+      // ACTION_STOP clears both (and the JS fallback notification too).
+      if (isNative) {
+        try {
+          await Notifications.stopWalkForeground();
+        } catch (e) {
+          /* ignore */
+        }
+      }
+      restoredRef.current = false;
+
       const abandoned = await getAbandonedWalkSessions(userId);
       await Promise.all(abandoned.map((s) => cancelWalkSession(s.id, userId).catch(() => {})));
 
@@ -615,7 +691,7 @@ export function useWalk(
     } finally {
       setLoading(false);
     }
-  }, [userId, userWeightKg]);
+  }, [userId, userWeightKg, isNative]);
 
   // Pause Walk Session
   const pauseWalk = useCallback(async () => {

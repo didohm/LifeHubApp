@@ -88,6 +88,8 @@ public class WalkService extends Service implements LocationListener, SensorEven
     public static final String EXTRA_PACE = "extra_pace";
     public static final String EXTRA_WEIGHT_KG = "extra_weight_kg";
     public static final String EXTRA_SESSION_ID = "extra_session_id";
+    /** Start the service frozen (paused) — used when a walk is recovered after process death. */
+    public static final String EXTRA_PAUSED = "extra_paused";
 
     /** Tapped from the foreground notification — tells the app to finish. */
     public static final String ACTION_FINISH = "com.lifehub.app.walk.FINISH";
@@ -410,6 +412,7 @@ public class WalkService extends Service implements LocationListener, SensorEven
                     if (sessId != null && !sessId.isEmpty()) {
                         activeSessionId = sessId;
                     }
+                    boolean startPaused = intent.getBooleanExtra(EXTRA_PAUSED, false);
                     double km = intent.getDoubleExtra(EXTRA_DISTANCE_KM, 0.0);
                     int steps = intent.getIntExtra(EXTRA_STEPS, 0);
                     long dur = intent.getLongExtra(EXTRA_DURATION_SEC, 0);
@@ -417,7 +420,7 @@ public class WalkService extends Service implements LocationListener, SensorEven
                     double pace = intent.getDoubleExtra(EXTRA_PACE, 0.0);
                     double weight = intent.getDoubleExtra(EXTRA_WEIGHT_KG, 0.0);
                     if (weight > 0.0) userWeightKg = weight;
-                    startForegroundTracking(km, steps, dur, cal, pace);
+                    startForegroundTracking(km, steps, dur, cal, pace, startPaused);
                     break;
                 }
                 case ACTION_UPDATE: {
@@ -845,21 +848,32 @@ public class WalkService extends Service implements LocationListener, SensorEven
             int steps,
             long durationSec,
             double calories,
-            double pace
+            double pace,
+            boolean startPaused
     ) {
+        // Merge with any state persisted by a previous process instance (walk
+        // recovered after process death / app force-close): the persisted
+        // counters were written on every tick/fix, so they are the freshest
+        // snapshot available — never overwrite them with the app's older
+        // Firestore baseline. For a genuine new walk the prefs were cleared on
+        // stop, so the merge degrades to the intent values.
+        SharedPreferences p = prefs();
+        currentDistanceKm = Math.max(p.getFloat(KEY_DISTANCE, 0f), (float) Math.max(0, distanceKm));
+        currentSteps = Math.max(p.getInt(KEY_STEPS, 0), Math.max(0, steps));
+        this.durationSec = Math.max(p.getLong(KEY_DURATION, 0L), Math.max(0L, durationSec));
+        currentCalories = Math.max(p.getFloat(KEY_CALORIES, 0f), (float) Math.max(0, calories));
+        currentPace = Math.max(p.getFloat(KEY_PACE, 0f), (float) Math.max(0, pace));
+        gpsDistanceKm = Math.max(p.getFloat(KEY_GPS_KM, 0f), (float) gpsDistanceKm);
         isTracking = true;
-        paused = false;
-        currentDistanceKm = Math.max(0, distanceKm);
-        currentSteps = Math.max(0, steps);
-        this.durationSec = Math.max(0, durationSec);
-        currentCalories = Math.max(0, calories);
-        currentPace = Math.max(0, pace);
+        // A recovered walk is re-armed frozen (paused): the clock stays stopped
+        // at the recovered metrics until the user taps Resume in the app or on
+        // the notification. A fresh walk starts with paused=false as before.
+        paused = startPaused;
         startedAtMs = SystemClock.elapsedRealtime() - this.durationSec * 1000L;
         accumulatedMs = this.durationSec * 1000L;
         lastLocation = null; // first fix after (re)start only sets the baseline
         stepsAtLastMark = currentSteps;
         updateCount = 0;
-        gpsDistanceKm = 0.0;
         isVehicleFlagged = false;
         lastVehicleCheckWallMs = 0L;
         stepsAtLastVehicleCheck = 0;
@@ -1037,17 +1051,39 @@ public class WalkService extends Service implements LocationListener, SensorEven
     /* ── AlarmManager Ticker (Doze-Exempt) ────────────────────────────────── */
     
     /**
+     * True when this app may schedule exact alarms on Android 12+ (the
+     * SCHEDULE_EXACT_ALARM / USE_EXACT_ALARM grant). Older versions always
+     * allow them. The Doze-exempt AlarmManager ticker depends on exact
+     * alarms; when the grant is missing the ticker must fall back to the
+     * (wake-lock-backed) Handler ticker instead of freezing the metrics.
+     */
+    private boolean canScheduleExactAlarms() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            return alarmManager != null && alarmManager.canScheduleExactAlarms();
+        }
+        return true;
+    }
+
+    /**
      * Starts Doze-exempt ticker using AlarmManager for guaranteed metric updates
      * even when device is in deep Doze mode. Falls back to Handler ticker if
-     * alarm scheduling fails.
+     * alarm scheduling fails or the exact-alarm grant is missing.
      */
     private void startAlarmTicker() {
         if (alarmManager == null) {
             Log.w(TAG, "AlarmManager unavailable, using Handler ticker fallback");
             useAlarmTicker = false;
+            startHandlerTicker();
             return;
         }
-        
+
+        if (!canScheduleExactAlarms()) {
+            Log.w(TAG, "Exact alarm permission not granted, using Handler ticker fallback");
+            useAlarmTicker = false;
+            startHandlerTicker();
+            return;
+        }
+
         try {
             Intent intent = new Intent(this, WalkTickerReceiver.class);
             intent.setAction(WalkTickerReceiver.ACTION_TICKER);
@@ -1065,6 +1101,7 @@ public class WalkService extends Service implements LocationListener, SensorEven
         } catch (Exception e) {
             Log.e(TAG, "Failed to start AlarmManager ticker, falling back to Handler", e);
             useAlarmTicker = false;
+            startHandlerTicker();
         }
     }
     
@@ -1086,8 +1123,25 @@ public class WalkService extends Service implements LocationListener, SensorEven
                 alarmManager.set(AlarmManager.RTC_WAKEUP, nextTriggerMs, tickerPendingIntent);
             }
         } catch (Exception e) {
-            Log.e(TAG, "Failed to schedule next ticker alarm", e);
+            // Exact alarms can be revoked mid-walk (OEM battery managers / user
+            // toggling "Alarms & reminders"): silently dying here would freeze
+            // the notification and metrics in deep Doze. Fall back to the
+            // wake-lock-backed Handler ticker instead.
+            Log.e(TAG, "Failed to schedule next ticker alarm, falling back to Handler ticker", e);
+            useAlarmTicker = false;
+            startHandlerTicker();
         }
+    }
+
+    /**
+     * Handler-based 1s ticker fallback for when exact alarms are unavailable
+     * or revoked mid-walk. Not Doze-exempt by itself, but the service holds a
+     * PARTIAL_WAKE_LOCK for the whole walk, which keeps the main looper (and
+     * this runnable) executing with the screen off.
+     */
+    private void startHandlerTicker() {
+        ticker.removeCallbacks(tick);
+        ticker.postDelayed(tick, 1000);
     }
     
     /**
@@ -1718,7 +1772,13 @@ public class WalkService extends Service implements LocationListener, SensorEven
             dbHelper.clearPointsForSession(activeSessionId);
         }
         activeSessionId = "current_session";
-        stopForeground(true);
+        try {
+            stopForeground(true);
+        } catch (Exception e) {
+            // ACTION_STOP may be delivered while the service was never in the
+            // foreground (e.g. JS shutdown after a failed start) — safe no-op.
+            Log.w(TAG, "stopForeground failed during stop tracking", e);
+        }
         updateCount = 0;
     }
 

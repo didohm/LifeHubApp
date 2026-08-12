@@ -64,6 +64,8 @@ export interface WalkServicePluginInterface {
     sessionId?: string;
     /** User body weight in kg — drives the native calorie math. */
     weightKg?: number;
+    /** Start the service frozen (paused) — used when a walk is recovered after process death. */
+    paused?: boolean;
   }): Promise<{ started: boolean; error?: string }>;
   updateService(args: {
     distanceKm: number;
@@ -185,6 +187,8 @@ async function runLegacyCleanup() {
  * refreshing that fallback notification so it never freezes at 0.00 km.
  */
 let walkFallbackActive = false;
+/** Last time the fallback notification was refreshed (throttled). */
+let lastFallbackRefreshMs = 0;
 
 /* ────────────────────────────────────────────────────────────────────────────
  * Plan builders. Each returns the set of notifications an entity needs.
@@ -509,6 +513,7 @@ export const Notifications = {
     paceMinPerKm = 0,
     weightKg = 70,
     sessionId?: string,
+    paused = false,
   ) {
     if (!isNative()) return;
     try {
@@ -521,6 +526,7 @@ export const Notifications = {
         paceMinPerKm,
         weightKg,
         sessionId,
+        paused,
       });
       if (!result.started) {
         walkFallbackActive = true;
@@ -541,44 +547,26 @@ export const Notifications = {
   },
 
   /**
-   * Pushes the app's current live metrics into the native walk service.
+   * Refreshes the JS-walk fallback notification with the current LIVE metrics.
    *
-   * The native service is the authoritative source while it produces fixes,
-   * but when it runs without motion data (no GPS lock, no step sensor) the
-   * app keeps counting in JS while the native counters stay idle. This feeds
-   * the JS values into the native service (monotonic merge) so the counters
-   * mirror the app in real time. When the native service could not start and
-   * the JS fallback notification is showing instead, it refreshes that
-   * notification with the same numbers.
+   * The fallback notification is only shown when the native foreground service
+   * failed to start entirely (no FGS permissions, Android 12+ launch
+   * restriction, etc.). While it is active the app keeps counting in JS, and
+   * the poll in use-walk calls this so the notification mirrors the real
+   * numbers instead of a frozen "Tracking your walk in the background." Pushed
+   * at most every 15s to avoid reposting the notification every 4s poll.
    */
-  async updateWalkForeground(
-    distanceKm = 0,
-    steps = 0,
-    durationSec = 0,
-    calories = 0,
-    paceMinPerKm = 0,
-    weightKg = 70,
-  ) {
-    if (!isNative()) return;
-    try {
-      await NotificationService.initChannels();
-      await WalkServicePlugin.updateService({
-        distanceKm,
-        steps,
-        durationSec,
-        calories,
-        paceMinPerKm,
-        weightKg,
-      });
-    } catch (e) {
-      /* silent */
-    }
-    if (walkFallbackActive) {
-      await this.scheduleWalkReminder(
-        "🚶 Walking session in progress",
-        "Tracking your walk in the background.",
-      );
-    }
+  async refreshWalkFallback(distanceKm = 0, steps = 0, durationSec = 0, calories = 0) {
+    if (!isNative() || !walkFallbackActive) return;
+    const now = Date.now();
+    if (now - lastFallbackRefreshMs < 15_000) return;
+    lastFallbackRefreshMs = now;
+    const mins = Math.floor(durationSec / 60);
+    const secs = Math.floor(durationSec % 60);
+    const body =
+      `${distanceKm.toFixed(2)} km · ${steps.toLocaleString("en-US")} steps · ` +
+      `${mins}m ${secs}s · ${Math.round(calories)} kcal (app fallback)`;
+    await this.scheduleWalkReminder("🚶 Walking session in progress", body);
   },
 
   async pauseWalkForeground() {
