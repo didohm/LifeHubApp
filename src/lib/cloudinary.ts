@@ -15,6 +15,7 @@ const CLOUDINARY_UPLOAD_URL = `https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOU
 const PRESETS = {
   documents: "documents",
   avatars: "avatars",
+  photos: "photos", // Walk photos and other user photos
 } as const;
 
 export type UploadPreset = keyof typeof PRESETS;
@@ -147,6 +148,25 @@ export async function uploadAvatar(
 ): Promise<CloudinaryUploadResult> {
   return uploadToCloudinary({
     preset: "avatars",
+    file,
+    onProgress,
+  });
+}
+
+/**
+ * Uploads a walk photo to Cloudinary
+ * Uses the 'photos' preset with folder: photos/walks
+ *
+ * @param file Image file to upload
+ * @param onProgress Optional progress callback
+ * @returns Upload result with secure URL
+ */
+export async function uploadWalkPhoto(
+  file: File,
+  onProgress?: (progress: number) => void,
+): Promise<CloudinaryUploadResult> {
+  return uploadToCloudinary({
+    preset: "photos",
     file,
     onProgress,
   });

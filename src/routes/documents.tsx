@@ -182,7 +182,7 @@ function DocumentsPage() {
         prompt: `Based on this document metadata, provide helpful context and reminders: 
         - Document name: ${docItem.name}
         - Category: ${docItem.category}
-        - Upload date: ${docItem.upload_date || 'N/A'}
+        - Upload date: ${docItem.created_at || 'N/A'}
         
         Generate a brief helpful summary about what this type of document typically contains and what the user should remember about it.`,
         userId: user.id,

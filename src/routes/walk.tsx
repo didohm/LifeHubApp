@@ -17,6 +17,7 @@ import {
   Car,
   Gauge,
   Satellite,
+  BarChart3,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Screen, ScreenHeader } from "@/components/lifehub/Screen";
@@ -28,9 +29,12 @@ import { todayLocalDate } from "@/lib/api";
 import { sounds } from "@/lib/sound";
 import { PermissionManager } from "@/lib/permissions";
 import { WalkServicePlugin, WalkRoutePoint } from "@/lib/notifications-integration";
-import { WalkSession } from "@/lib/types";
+import { WalkSession, WalkSummary } from "@/lib/types";
+import { getWalkSummary } from "@/lib/walk-storage";
 
 const RouteMap = lazy(() => import("@/components/lifehub/RouteMap"));
+const EnhancedWalkSummary = lazy(() => import("@/components/lifehub/EnhancedWalkSummary"));
+const PersonalStats = lazy(() => import("@/components/lifehub/PersonalStats"));
 
 export const Route = createFileRoute("/walk")({
   head: () => ({
@@ -212,19 +216,27 @@ function WalkPage() {
   const userWeightKg = user?.weight && Number(user.weight) > 0 ? Number(user.weight) : 70;
   const hasValidWeight = user?.weight && Number(user.weight) > 0;
 
-  // Finished session shown in the Strava-style summary modal (with route map).
+  // Finished session shown in the summary modal.
+  const [completedSummary, setCompletedSummary] = useState<WalkSummary | null>(null);
   const [completedSession, setCompletedSession] = useState<WalkSession | null>(null);
 
   // Single completion experience: summary modal + chime, refreshed stats.
-  // Deliberately NO toast — the modal IS the completion feedback, so showing a
-  // "Walk finished!" banner at the top at the same time is duplicated UI.
-  // Used by BOTH the in-app Finish button and the native notification Finish
-  // action (routed through use-walk's onComplete callback).
   const handleWalkComplete = useCallback(
-    (result: WalkSession) => {
+    async (result: WalkSession) => {
       if (!result) return;
       sounds.playSuccess();
-      setCompletedSession(result);
+      // Load the full summary from local SQLite (includes splits, elevation, etc.)
+      try {
+        const summary = await getWalkSummary(result.id);
+        if (summary) {
+          setCompletedSummary(summary);
+        } else {
+          setCompletedSession(result);
+        }
+      } catch (error) {
+        console.error("Failed to load walk summary:", error);
+        setCompletedSession(result);
+      }
       refreshFitness();
     },
     [refreshFitness],
@@ -526,12 +538,31 @@ function WalkPage() {
         </div>
       </div>
 
+      {/* Personal All-Time Stats & Weekly Trends */}
+      {user?.id && (
+        <div className="mb-5">
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="text-lg font-extrabold text-[#12131A] flex items-center gap-2">
+              <BarChart3 className="size-4.5 text-[#7C5CFC]" /> Personal Analytics
+            </h2>
+          </div>
+          <Suspense fallback={<div className="h-40 bg-slate-100 rounded-xl animate-pulse" />}>
+            <PersonalStats userId={user.id} />
+          </Suspense>
+        </div>
+      )}
+
       {/* Walking History */}
       <div className="flex items-center justify-between mb-3">
         <h2 className="text-lg font-extrabold text-[#12131A] flex items-center gap-2">
           <History className="size-4.5 text-[#7C5CFC]" /> Walk History
         </h2>
-        <span className="text-xs font-bold text-[#6B7280]">{walkHistory.length} Walks</span>
+        <button
+          onClick={() => navigate({ to: "/walk/history" })}
+          className="text-xs font-extrabold text-[#7C5CFC] hover:underline flex items-center gap-1"
+        >
+          View All ({walkHistory.length}) &rarr;
+        </button>
       </div>
 
       <div className="space-y-2">
@@ -545,7 +576,15 @@ function WalkPage() {
           walkHistory.map((s) => (
             <button
               key={s.id}
-              onClick={() => setCompletedSession(s)}
+              onClick={async () => {
+                const summary = await getWalkSummary(s.id);
+                if (summary) {
+                  setCompletedSummary(summary);
+                } else {
+                  // Fallback for session without summary in SQLite
+                  setCompletedSession(s);
+                }
+              }}
               className="card-soft bg-white p-3.5 border border-black/5 shadow-xs flex items-center justify-between w-full text-left active:scale-[0.98] transition-transform"
             >
               <div className="flex items-center gap-3">
@@ -590,8 +629,18 @@ function WalkPage() {
         )}
       </div>
 
-      {/* Strava-style completion summary with the exact GPS route */}
-      {completedSession && (
+      {/* Enhanced summary modal for finished/selected walks */}
+      {completedSummary && (
+        <Suspense fallback={null}>
+          <EnhancedWalkSummary
+            summary={completedSummary}
+            onClose={() => setCompletedSummary(null)}
+          />
+        </Suspense>
+      )}
+
+      {/* Fallback legacy summary modal if summary unavailable */}
+      {!completedSummary && completedSession && (
         <WalkSummaryModal session={completedSession} onClose={() => setCompletedSession(null)} />
       )}
     </Screen>

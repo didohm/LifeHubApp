@@ -37,6 +37,18 @@
             </intent-filter>
         </receiver>
 
+        <!-- Doze-exempt ticker for Walk Service.
+             Receives AlarmManager broadcasts to update metrics (distance, steps, duration)
+             every second even when device is in deep Doze mode. This keeps the walk
+             notification and JS app metrics fresh during background tracking. -->
+        <receiver
+            android:name=".WalkTickerReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.lifehub.app.walk.TICKER" />
+            </intent-filter>
+        </receiver>
+
         <!-- Foreground Service for Walk Tracking.
              stopWithTask="false" keeps the walk alive (and the notification
              persistent) when the app is swiped away — the service re-enters the

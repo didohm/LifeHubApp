@@ -28,6 +28,7 @@ import { Route as WalkRouteImport } from './routes/walk'
 import { Route as WorkoutProgramsRouteImport } from './routes/workout-programs'
 import { Route as WorkoutsRouteImport } from './routes/workouts'
 import { Route as ApiAssistantRouteImport } from './routes/api/assistant'
+import { Route as WalkHistoryRouteImport } from './routes/walk/history'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -124,6 +125,11 @@ const ApiAssistantRoute = ApiAssistantRouteImport.update({
   path: '/api/assistant',
   getParentRoute: () => rootRouteImport,
 } as any)
+const WalkHistoryRoute = WalkHistoryRouteImport.update({
+  id: '/history',
+  path: '/history',
+  getParentRoute: () => WalkRoute,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -141,10 +147,11 @@ export interface FileRoutesByFullPath {
   '/services': typeof ServicesRoute
   '/sitemap.xml': typeof SitemapDotxmlRoute
   '/tasks': typeof TasksRoute
-  '/walk': typeof WalkRoute
+  '/walk': typeof WalkRouteWithChildren
   '/workout-programs': typeof WorkoutProgramsRoute
   '/workouts': typeof WorkoutsRoute
   '/api/assistant': typeof ApiAssistantRoute
+  '/walk/history': typeof WalkHistoryRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -162,10 +169,11 @@ export interface FileRoutesByTo {
   '/services': typeof ServicesRoute
   '/sitemap.xml': typeof SitemapDotxmlRoute
   '/tasks': typeof TasksRoute
-  '/walk': typeof WalkRoute
+  '/walk': typeof WalkRouteWithChildren
   '/workout-programs': typeof WorkoutProgramsRoute
   '/workouts': typeof WorkoutsRoute
   '/api/assistant': typeof ApiAssistantRoute
+  '/walk/history': typeof WalkHistoryRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -184,10 +192,11 @@ export interface FileRoutesById {
   '/services': typeof ServicesRoute
   '/sitemap.xml': typeof SitemapDotxmlRoute
   '/tasks': typeof TasksRoute
-  '/walk': typeof WalkRoute
+  '/walk': typeof WalkRouteWithChildren
   '/workout-programs': typeof WorkoutProgramsRoute
   '/workouts': typeof WorkoutsRoute
   '/api/assistant': typeof ApiAssistantRoute
+  '/walk/history': typeof WalkHistoryRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -211,6 +220,7 @@ export interface FileRouteTypes {
     | '/workout-programs'
     | '/workouts'
     | '/api/assistant'
+    | '/walk/history'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -232,6 +242,7 @@ export interface FileRouteTypes {
     | '/workout-programs'
     | '/workouts'
     | '/api/assistant'
+    | '/walk/history'
   id:
     | '__root__'
     | '/'
@@ -253,6 +264,7 @@ export interface FileRouteTypes {
     | '/workout-programs'
     | '/workouts'
     | '/api/assistant'
+    | '/walk/history'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -271,7 +283,7 @@ export interface RootRouteChildren {
   ServicesRoute: typeof ServicesRoute
   SitemapDotxmlRoute: typeof SitemapDotxmlRoute
   TasksRoute: typeof TasksRoute
-  WalkRoute: typeof WalkRoute
+  WalkRoute: typeof WalkRouteWithChildren
   WorkoutProgramsRoute: typeof WorkoutProgramsRoute
   WorkoutsRoute: typeof WorkoutsRoute
   ApiAssistantRoute: typeof ApiAssistantRoute
@@ -412,8 +424,25 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiAssistantRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/walk/history': {
+      id: '/walk/history'
+      path: '/history'
+      fullPath: '/walk/history'
+      preLoaderRoute: typeof WalkHistoryRouteImport
+      parentRoute: typeof WalkRoute
+    }
   }
 }
+
+interface WalkRouteChildren {
+  WalkHistoryRoute: typeof WalkHistoryRoute
+}
+
+const WalkRouteChildren: WalkRouteChildren = {
+  WalkHistoryRoute: WalkHistoryRoute,
+}
+
+const WalkRouteWithChildren = WalkRoute._addFileChildren(WalkRouteChildren)
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
@@ -431,7 +460,7 @@ const rootRouteChildren: RootRouteChildren = {
   ServicesRoute: ServicesRoute,
   SitemapDotxmlRoute: SitemapDotxmlRoute,
   TasksRoute: TasksRoute,
-  WalkRoute: WalkRoute,
+  WalkRoute: WalkRouteWithChildren,
   WorkoutProgramsRoute: WorkoutProgramsRoute,
   WorkoutsRoute: WorkoutsRoute,
   ApiAssistantRoute: ApiAssistantRoute,

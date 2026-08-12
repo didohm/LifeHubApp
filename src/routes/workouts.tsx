@@ -21,7 +21,7 @@ import { useData } from "@/lib/data-context";
 import { completeDayWorkout, DAY_LABELS } from "@/lib/api";
 import { WorkoutProgram, DayKey } from "@/lib/types";
 import { ListSkeleton } from "@/components/lifehub/SkeletonLoader";
-import { focusForDay, isTrainingDay } from "@/lib/workout-utils";
+import { focusForDay, isTrainingDay, isCardioProgram } from "@/lib/workout-utils";
 
 export const Route = createFileRoute("/workouts")({
   head: () => ({

@@ -9,7 +9,7 @@ import {
   cancelWalkSession,
   todayLocalDate,
 } from "@/lib/api";
-import { WalkSession } from "@/lib/types";
+import { WalkSession, WalkSummary, WalkSplit } from "@/lib/types";
 import {
   Notifications,
   WalkServicePlugin,
@@ -17,6 +17,13 @@ import {
   WalkRoutePoint,
 } from "@/lib/notifications-integration";
 import { ramerDouglasPeucker } from "@/lib/rdp";
+import {
+  filterGPSPoints,
+  computeWalkStats,
+  encodePolyline,
+  type GPSPoint,
+} from "@/lib/walk-gps-utils";
+import { saveWalkSummary } from "@/lib/walk-storage";
 
 export interface StepCounterPluginInterface {
   isAvailable(): Promise<{ available: boolean; hasCounter: boolean; hasDetector: boolean }>;
@@ -767,21 +774,79 @@ export function useWalk(
         finalPath = ramerDouglasPeucker(finalPath, 0.00003);
       }
 
-      await updateWalkSession(activeSession.id, userId, {
+      // Convert route points to GPSPoint format for stats computation
+      const gpsPoints: GPSPoint[] = finalPath.map((pt) => ({
+        lat: pt.lat,
+        lng: pt.lng,
+        altitude: null,
+        accuracy: null,
+        speed: null,
+        ts: pt.ts,
+      }));
+
+      // Filter GPS noise and compute comprehensive stats
+      const filteredPoints = filterGPSPoints(gpsPoints);
+      const stats = computeWalkStats(filteredPoints, finalDuration);
+
+      // Encode polyline for efficient storage
+      const encodedPolyline = filteredPoints.length > 0 ? encodePolyline(filteredPoints) : null;
+
+      // Prepare start/end coordinates
+      const startLat = filteredPoints.length > 0 ? filteredPoints[0].lat : null;
+      const startLng = filteredPoints.length > 0 ? filteredPoints[0].lng : null;
+      const endLat = filteredPoints.length > 0 ? filteredPoints[filteredPoints.length - 1].lat : null;
+      const endLng = filteredPoints.length > 0 ? filteredPoints[filteredPoints.length - 1].lng : null;
+
+      const finalCaloriesValue = Math.max(
+        finalCalories,
+        Math.round(3.5 * (userWeightKg || 70) * (finalDuration / 3600)),
+      );
+
+      // Create walk summary for local SQLite storage
+      const now = new Date().toISOString();
+      const summary: WalkSummary = {
+        id: activeSession.id,
+        user_id: userId,
+        status: "finished",
         duration: finalDuration,
-        distance: finalDistance,
-        // Calories: keep the max of the live/native value and the MET
-        // recomputation on the FINAL duration — never let the final summary
-        // shrink what the live UI already showed.
-        calories: Math.max(
-          finalCalories,
-          Math.round(3.5 * (userWeightKg || 70) * (finalDuration / 3600)),
-        ),
+        distance: stats.totalDistance || finalDistance,
+        calories: finalCaloriesValue,
         steps: finalSteps,
-        ...(finalPath.length > 0 ? { path: finalPath } : {}),
-        ...(finalVehicleFlagged ? { vehicle: true } : {}),
-      });
-      const finished = await finishWalkSession(activeSession.id, userId);
+        avg_pace: stats.avgPace,
+        elevation_gain: stats.elevationGain,
+        elevation_loss: stats.elevationLoss,
+        day: todayLocalDate(),
+        started_at: activeSession.started_at,
+        finished_at: now,
+        encoded_polyline: encodedPolyline,
+        start_lat: startLat,
+        start_lng: startLng,
+        end_lat: endLat,
+        end_lng: endLng,
+        photo_urls: [],
+        vehicle_flagged: finalVehicleFlagged,
+        created_at: activeSession.created_at,
+        updated_at: now,
+      };
+
+      // Convert splits to WalkSplit format
+      const splits: WalkSplit[] = stats.splits.map((split) => ({
+        session_id: activeSession.id,
+        split_number: split.splitNumber,
+        distance: split.distance,
+        duration: split.duration,
+        pace: split.pace,
+        elevation_change: split.elevationChange,
+      }));
+
+      // Save to local SQLite (no Firestore sync)
+      try {
+        await saveWalkSummary(summary, splits);
+      } catch (error) {
+        console.error("Failed to save walk summary locally:", error);
+      }
+
+      // Clean up state
       setActiveSession(null);
       setStatus("idle");
       setIsAutoPaused(false);
@@ -799,12 +864,28 @@ export function useWalk(
       stepCleanupRef.current?.();
       stepCleanupRef.current = null;
       Notifications.stopWalkForeground();
-      // Free the native SQLite storage — the route now lives in the session
-      // record so it can be displayed later, even after the activity ends.
+      
+      // Free the native SQLite route_points storage — the route now lives in 
+      // walk_summaries table with encoded polyline
       if (isNative) {
         WalkServicePlugin.clearRoutePoints({ sessionId: activeSession.id }).catch(() => {});
       }
-      return finished;
+
+      // Create a finished session object for the callback
+      const finishedSession: WalkSession = {
+        ...activeSession,
+        status: "finished",
+        duration: finalDuration,
+        distance: stats.totalDistance || finalDistance,
+        calories: finalCaloriesValue,
+        steps: finalSteps,
+        finished_at: now,
+        path: finalPath.length > 0 ? finalPath : null,
+        vehicle: finalVehicleFlagged,
+        updated_at: now,
+      };
+
+      return finishedSession;
     } catch (e) {
       console.error("Failed to finish walk session:", e);
       return null;

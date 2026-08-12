@@ -252,6 +252,64 @@ export interface WalkSession {
   updated_at: string;
 }
 
+// ─── Walking Summaries (Local SQLite) ───
+export interface WalkSummary {
+  id: string;
+  user_id: string;
+  status: "finished" | "cancelled";
+  
+  // Core metrics
+  duration: number;        // seconds
+  distance: number;        // meters
+  calories: number;
+  steps: number;
+  
+  // Pace & elevation
+  avg_pace: number | null; // seconds per km
+  elevation_gain: number | null;
+  elevation_loss: number | null;
+  
+  // Timestamps
+  day: string;             // YYYY-MM-DD
+  started_at: string;
+  finished_at: string | null;
+  
+  // Map data
+  encoded_polyline: string | null;
+  start_lat: number | null;
+  start_lng: number | null;
+  end_lat: number | null;
+  end_lng: number | null;
+  
+  // Media
+  photo_urls: string[];    // Cloudinary URLs
+  
+  vehicle_flagged: boolean;
+  
+  created_at: string;
+  updated_at: string;
+}
+
+export interface WalkSplit {
+  id?: number;
+  session_id: string;
+  split_number: number;    // 1-indexed
+  distance: number;        // meters (actual, may be slightly over 1000m)
+  duration: number;        // seconds
+  pace: number;            // seconds per km
+  elevation_change: number | null;
+}
+
+export interface AggregatedWalkStats {
+  total_walks: number;
+  total_distance: number;     // meters
+  total_duration: number;     // seconds
+  total_steps: number;
+  avg_pace: number | null;    // seconds per km
+  longest_distance: number | null;  // meters
+  fastest_pace: number | null;      // seconds per km
+}
+
 // ─── Hydration (daily water intake) ───
 export interface WaterLog {
   id: string;

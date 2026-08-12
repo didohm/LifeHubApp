@@ -41,6 +41,11 @@ import com.google.android.gms.location.LocationResult;
 import com.google.android.gms.location.LocationServices;
 import com.google.android.gms.location.Priority;
 
+import android.app.AlarmManager;
+import android.os.Handler;
+import android.os.Looper;
+import android.app.ActivityManager;
+
 /**
  * Foreground Service for active walking tracking in LifeHub.
  *
@@ -90,6 +95,10 @@ public class WalkService extends Service implements LocationListener, SensorEven
     public static final String ACTION_PAUSE_TAP = "com.lifehub.app.walk.PAUSE_TAP";
     /** Tapped from the foreground notification — tells the app to resume. */
     public static final String ACTION_RESUME_TAP = "com.lifehub.app.walk.RESUME_TAP";
+    /** Internal action for AlarmManager ticker updates (Doze-exempt). */
+    public static final String ACTION_TICKER_UPDATE = "com.lifehub.app.walk.TICKER_UPDATE";
+    /** Internal action for wake lock maintenance. */
+    public static final String ACTION_WAKELOCK_MAINTAIN = "com.lifehub.app.walk.WAKELOCK_MAINTAIN";
 
     private static final String PREFS = "lifehub_walk_state";
     private static final String KEY_TRACKING = "tracking";
@@ -111,6 +120,12 @@ public class WalkService extends Service implements LocationListener, SensorEven
     private static final String KEY_GPS_KM = "gps_km";
     private static final String KEY_SESSION_ID = "session_id";
     private static final String KEY_VEHICLE_FLAGGED = "vehicle_flagged";
+    private static final String KEY_SENSORS_REGISTERED = "sensors_registered";
+    private static final String KEY_LOCATION_REGISTERED = "location_registered";
+    private static final String KEY_LAST_HEARTBEAT = "last_heartbeat";
+    private static final String KEY_WAKELOCK_ACQUIRED_AT = "wakelock_acquired_at";
+    private static final String KEY_SENSOR_REGISTRATION_FAILURES = "sensor_failures";
+    private static final String KEY_LOCATION_PROVIDER_TYPE = "location_provider_type";
 
     // Average adult step length in meters (standard average stride — the app
     // has no height/gender profile data, so this fixed constant is the only
@@ -165,6 +180,50 @@ public class WalkService extends Service implements LocationListener, SensorEven
     private int stepsAtLastVehicleCheck = 0;
     private long lastVehicleCheckWallMs = 0L;
 
+    // AlarmManager-based ticker for Doze immunity
+    private AlarmManager alarmManager;
+    private PendingIntent tickerPendingIntent;
+    private PendingIntent wakeLockMaintenancePendingIntent;
+    private boolean useAlarmTicker = true;
+
+    // Sensor registration state tracking
+    private boolean sensorsRegistered = false;
+    private int sensorRegistrationAttempts = 0;
+    private static final int MAX_SENSOR_RETRIES = 3;
+    private Handler sensorRetryHandler;
+
+    // Location provider health monitoring
+    private long lastGpsHealthCheckMs = 0L;
+    private static final long GPS_HEALTH_CHECK_INTERVAL_MS = 60_000L;
+    private static final long GPS_STALE_THRESHOLD_MS = 60_000L;
+    private boolean isFusedLocationRequestActive = false;
+    private String activeLocationProvider = "none";
+
+    // Wake lock maintenance
+    private long wakeLockAcquiredAtMs = 0L;
+    private static final long WAKELOCK_TIMEOUT_MS = 60 * 60 * 1000L;
+    private static final long WAKELOCK_REACQUIRE_BEFORE_MS = 5 * 60 * 1000L;
+
+    // Connectivity monitoring
+    private ConnectivityMonitor connectivityMonitor;
+
+    // Battery optimization enforcement
+    private boolean batteryOptimizationWarningShown = false;
+    
+    // Play Services health check
+    private long lastPlayServicesCheckMs = 0L;
+    private static final long PLAY_SERVICES_CHECK_INTERVAL_MS = 120_000L; // 2 minutes
+    
+    // Service restart tracking for reliability guard
+    private static int serviceRestartCount = 0;
+    private static long lastRestartTimeMs = 0L;
+    private static final int MAX_RESTARTS_PER_MINUTE = 5;
+    
+    // Diagnostic logging and health monitoring (P4)
+    private WalkDiagnostics diagnostics;
+    private long lastHealthReportMs = 0L;
+    private static final long HEALTH_REPORT_INTERVAL_MS = 10_000L; // 10 seconds
+
     public class LocalBinder extends Binder {
         public WalkService getService() {
             return WalkService.this;
@@ -199,6 +258,40 @@ public class WalkService extends Service implements LocationListener, SensorEven
         createNotificationChannel();
         restoreState();
         startTicker();
+        
+        // Initialize diagnostic logging (P4.1)
+        diagnostics = new WalkDiagnostics(this);
+        diagnostics.info(WalkDiagnostics.CAT_LIFECYCLE, "WalkService created");
+        
+        // Initialize AlarmManager for Doze-exempt ticker
+        alarmManager = (AlarmManager) getSystemService(Context.ALARM_SERVICE);
+        sensorRetryHandler = new Handler(Looper.getMainLooper());
+        
+        // Initialize connectivity monitor for network-aware provider switching
+        connectivityMonitor = new ConnectivityMonitor(this);
+        connectivityMonitor.setListener(new ConnectivityMonitor.ConnectivityListener() {
+            @Override
+            public void onNetworkAvailable() {
+                Log.d(TAG, "Network restored, switching to fused location if appropriate");
+                if (diagnostics != null) {
+                    diagnostics.info(WalkDiagnostics.CAT_NETWORK, "Network available, considering provider switch");
+                }
+                if (isTracking && !paused && "gps".equals(activeLocationProvider)) {
+                    switchToFusedLocationProvider();
+                }
+            }
+
+            @Override
+            public void onNetworkLost() {
+                Log.d(TAG, "Network lost, switching to GPS-only mode");
+                if (diagnostics != null) {
+                    diagnostics.warn(WalkDiagnostics.CAT_NETWORK, "Network lost, switching to GPS-only");
+                }
+                if (isTracking && !paused && "fused".equals(activeLocationProvider)) {
+                    switchToGpsLocationProvider();
+                }
+            }
+        });
     }
 
     /* ── State persistence ────────────────────────────────────────────────── */
@@ -229,6 +322,12 @@ public class WalkService extends Service implements LocationListener, SensorEven
             .putFloat(KEY_GPS_KM, (float) gpsDistanceKm)
             .putString(KEY_SESSION_ID, activeSessionId)
             .putBoolean(KEY_VEHICLE_FLAGGED, isVehicleFlagged)
+            .putBoolean(KEY_SENSORS_REGISTERED, sensorsRegistered)
+            .putBoolean(KEY_LOCATION_REGISTERED, isFusedLocationRequestActive || !activeLocationProvider.equals("none"))
+            .putLong(KEY_LAST_HEARTBEAT, System.currentTimeMillis())
+            .putLong(KEY_WAKELOCK_ACQUIRED_AT, wakeLockAcquiredAtMs)
+            .putInt(KEY_SENSOR_REGISTRATION_FAILURES, sensorRegistrationAttempts)
+            .putString(KEY_LOCATION_PROVIDER_TYPE, activeLocationProvider)
             .apply();
     }
 
@@ -251,6 +350,21 @@ public class WalkService extends Service implements LocationListener, SensorEven
         isVehicleFlagged = p.getBoolean(KEY_VEHICLE_FLAGGED, false);
         float weight = p.getFloat(KEY_WEIGHT, 0f);
         if (weight > 0f) userWeightKg = weight;
+        
+        // Restore background execution state
+        sensorsRegistered = p.getBoolean(KEY_SENSORS_REGISTERED, false);
+        isFusedLocationRequestActive = p.getBoolean(KEY_LOCATION_REGISTERED, false);
+        long lastHeartbeat = p.getLong(KEY_LAST_HEARTBEAT, 0L);
+        wakeLockAcquiredAtMs = p.getLong(KEY_WAKELOCK_ACQUIRED_AT, 0L);
+        sensorRegistrationAttempts = p.getInt(KEY_SENSOR_REGISTRATION_FAILURES, 0);
+        activeLocationProvider = p.getString(KEY_LOCATION_PROVIDER_TYPE, "none");
+        
+        // Detect long-term process death (heartbeat stale > 5 minutes)
+        long heartbeatAgeMs = System.currentTimeMillis() - lastHeartbeat;
+        if (isTracking && lastHeartbeat > 0L && heartbeatAgeMs > 5 * 60 * 1000L) {
+            Log.w(TAG, "Service restarted after long process death (" + (heartbeatAgeMs / 1000L) + "s), potential data loss");
+            publishUpdate("heartbeat_stale");
+        }
 
         long nowElapsed = SystemClock.elapsedRealtime();
         if (startedAtMs > nowElapsed || startedAtMs <= 0) {
@@ -272,6 +386,22 @@ public class WalkService extends Service implements LocationListener, SensorEven
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
+        // P3.3: Service restart reliability guard - detect crash loops
+        long now = System.currentTimeMillis();
+        if (now - lastRestartTimeMs < 60_000L) {
+            serviceRestartCount++;
+            if (serviceRestartCount > MAX_RESTARTS_PER_MINUTE) {
+                Log.e(TAG, "Service restarting too frequently (" + serviceRestartCount + " times in 1 minute), stopping to prevent crash loop");
+                publishUpdate("service_crash_loop_detected");
+                stopForegroundTracking();
+                stopSelf();
+                return START_NOT_STICKY;
+            }
+        } else {
+            serviceRestartCount = 1;
+        }
+        lastRestartTimeMs = now;
+        
         if (intent != null && intent.getAction() != null) {
             String action = intent.getAction();
             switch (action) {
@@ -361,6 +491,18 @@ public class WalkService extends Service implements LocationListener, SensorEven
                 case ACTION_RESUME_TAP:
                     publishUpdate("resume");
                     break;
+                case ACTION_TICKER_UPDATE:
+                    // Doze-exempt ticker update from AlarmManager
+                    if (isTracking && !paused) {
+                        handleTickerUpdate();
+                    }
+                    scheduleNextTicker();
+                    break;
+                case ACTION_WAKELOCK_MAINTAIN:
+                    // Proactive wake lock re-acquisition before expiry
+                    Log.d(TAG, "Wake lock maintenance triggered");
+                    ensureWakeLockHeld();
+                    break;
                 default:
                     break;
             }
@@ -368,6 +510,16 @@ public class WalkService extends Service implements LocationListener, SensorEven
             // Re-created after a process death with no intent: re-enter the
             // foreground so the persisted walk keeps going instead of silently
             // disappearing. stopWithTask="false" keeps us alive across swipes.
+            
+            // P3.3: Validate service state before resuming
+            if (!validateServiceState()) {
+                Log.e(TAG, "Service state corrupted after restart, cannot resume");
+                publishUpdate("service_state_corrupted");
+                stopForegroundTracking();
+                stopSelf();
+                return START_NOT_STICKY;
+            }
+            
             resumeTrackingEnginesIfNeeded();
         }
         return START_STICKY;
@@ -394,6 +546,17 @@ public class WalkService extends Service implements LocationListener, SensorEven
         registerScreenOnReceiver();
         registerLocationUpdates();
         registerStepListeners();
+        
+        // Start AlarmManager ticker if not already running
+        if (useAlarmTicker && tickerPendingIntent == null) {
+            startAlarmTicker();
+        }
+        
+        // Start network monitoring if not already active
+        if (connectivityMonitor != null) {
+            connectivityMonitor.startMonitoring();
+        }
+        
         // Reset the step/gps marks so the restored walk earns new distance
         // from the first fresh fix/step instead of re-crediting the persisted
         // totals. The step-counter baseline was persisted, so the hardware
@@ -402,18 +565,61 @@ public class WalkService extends Service implements LocationListener, SensorEven
         // UI learns the restored native state immediately.
         publishUpdate();
     }
+    
+    /**
+     * P3.3: Validates service state integrity after restart.
+     * Detects corrupted state (tracking=true but no resources registered).
+     * Returns true if state is valid, false if corrupted.
+     */
+    private boolean validateServiceState() {
+        if (!isTracking) return true;
+        
+        // Check for corrupted state: tracking but no duration
+        if (durationSec == 0 && startedAtMs == 0) {
+            Log.e(TAG, "Corrupted state: tracking=true but no duration/startTime");
+            return false;
+        }
+        
+        // Check if resources are in a sane state
+        boolean hasValidState = true;
+        
+        if (alarmManager == null) {
+            Log.w(TAG, "AlarmManager is null during restart");
+            hasValidState = false;
+        }
+        
+        if (sensorManager == null) {
+            Log.w(TAG, "SensorManager is null during restart");
+            hasValidState = false;
+        }
+        
+        if (locationManager == null && fusedLocationClient == null) {
+            Log.w(TAG, "No location providers available during restart");
+            hasValidState = false;
+        }
+        
+        if (!hasValidState) {
+            Log.e(TAG, "Service resources unavailable, cannot resume tracking");
+        }
+        
+        return hasValidState;
+    }
 
     private void createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             NotificationChannel channel = new NotificationChannel(
                     CHANNEL_ID,
                     "Walking Tracking",
-                    NotificationManager.IMPORTANCE_LOW
+                    NotificationManager.IMPORTANCE_DEFAULT // Upgraded from LOW for OEM compatibility
             );
-            channel.setDescription("Live walking session metrics");
+            channel.setDescription("Live walking session metrics during active walks");
             channel.setSound(null, null);
             channel.enableVibration(false);
             channel.setShowBadge(false);
+            // Ensure channel is not suppressed by aggressive OEM battery managers
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                channel.setAllowBubbles(false);
+            }
             if (notificationManager != null) {
                 notificationManager.createNotificationChannel(channel);
             }
@@ -445,8 +651,8 @@ public class WalkService extends Service implements LocationListener, SensorEven
                 .setOngoing(true)
                 .setOnlyAlertOnce(true)
                 .setContentIntent(pendingIntent)
-                .setPriority(NotificationCompat.PRIORITY_LOW)
-                .setCategory(NotificationCompat.CATEGORY_SERVICE);
+                .setPriority(NotificationCompat.PRIORITY_DEFAULT) // Upgraded from LOW for visibility
+                .setCategory(NotificationCompat.CATEGORY_WORKOUT); // More specific than SERVICE
 
         // "Pause/Resume" and "Finish" action buttons drive the React app through the
         // walkUpdate event (the app owns the actual session lifecycle).
@@ -524,6 +730,16 @@ public class WalkService extends Service implements LocationListener, SensorEven
     }
 
     private void enterForeground() {
+        // P3.2: Android 13+ requires POST_NOTIFICATIONS permission to show notifications
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) 
+                    != PackageManager.PERMISSION_GRANTED) {
+                Log.w(TAG, "POST_NOTIFICATIONS permission not granted on Android 13+, notifying JS app");
+                publishUpdate("notification_permission_required");
+                // Continue anyway - service will run but notification may not show
+            }
+        }
+        
         // Create the notification builder only once when entering foreground
         if (notificationBuilder == null) {
             createNotificationBuilder();
@@ -545,39 +761,82 @@ public class WalkService extends Service implements LocationListener, SensorEven
             // No valid foreground-service type for the granted permissions: we
             // cannot legally start a foreground service, so we degrade to a
             // normal (non-ongoing) notification so tracking still surfaces.
-            notificationManager.notify(NOTIFICATION_ID, notification);
+            Log.w(TAG, "No valid foreground service type, using regular notification");
+            publishUpdate("no_foreground_permission");
+            if (notificationManager != null) {
+                notificationManager.notify(NOTIFICATION_ID, notification);
+            }
             isInForeground = true;
             return;
         }
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            startForeground(NOTIFICATION_ID, notification, fgsType);
-        } else {
-            startForeground(NOTIFICATION_ID, notification);
+        
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                startForeground(NOTIFICATION_ID, notification, fgsType);
+            } else {
+                startForeground(NOTIFICATION_ID, notification);
+            }
+            isInForeground = true;
+        } catch (Exception e) {
+            // P3.1: Android 12+ can throw ForegroundServiceStartNotAllowedException
+            Log.e(TAG, "Failed to start foreground service", e);
+            publishUpdate("foreground_service_start_failed");
+            
+            // Fallback: show regular notification
+            if (notificationManager != null) {
+                notificationManager.notify(NOTIFICATION_ID, notification);
+            }
+            isInForeground = false;
         }
-        isInForeground = true;
     }
 
     /**
+     * P3.4: Enhanced foreground service type selection.
      * Picks a valid foreground-service type from the permissions actually held:
      *  - `location` when ACCESS_FINE/COARSE_LOCATION is granted (the common case)
      *  - `health`   when ACTIVITY_RECOGNITION is granted (step-only tracking)
      *  - 0          when neither is granted (caller should not start FGS)
+     * 
+     * Android 14+ (API 34+) requires ACCESS_BACKGROUND_LOCATION for location type.
      * A fixed `location` type throws SecurityException on Android 14+ without
      * the location permission, which previously crashed the app on start.
      */
     private int computeFgsType() {
-        boolean hasLocation =
-                ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION)
-                        == PackageManager.PERMISSION_GRANTED
-                        || ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION)
+        boolean hasFineLocation = ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION)
                         == PackageManager.PERMISSION_GRANTED;
-        if (hasLocation) return android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION;
-        boolean hasActivity =
-                ContextCompat.checkSelfPermission(this, Manifest.permission.ACTIVITY_RECOGNITION)
+        boolean hasCoarseLocation = ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION)
+                        == PackageManager.PERMISSION_GRANTED;
+        boolean hasLocation = hasFineLocation || hasCoarseLocation;
+        
+        // Android 14+ requires background location permission for FOREGROUND_SERVICE_TYPE_LOCATION
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) { // API 34
+            boolean hasBackgroundLocation = ContextCompat.checkSelfPermission(this, 
+                    Manifest.permission.ACCESS_BACKGROUND_LOCATION) == PackageManager.PERMISSION_GRANTED;
+            
+            if (hasLocation && hasBackgroundLocation) {
+                Log.d(TAG, "Using FOREGROUND_SERVICE_TYPE_LOCATION (Android 14+)");
+                return android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION;
+            } else if (hasLocation && !hasBackgroundLocation) {
+                Log.w(TAG, "Background location not granted on Android 14+, falling back to health type");
+                publishUpdate("background_location_required");
+            }
+        } else {
+            // Android 10-13: location permission sufficient
+            if (hasLocation) {
+                Log.d(TAG, "Using FOREGROUND_SERVICE_TYPE_LOCATION");
+                return android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION;
+            }
+        }
+        
+        // Fallback to health type if activity recognition granted
+        boolean hasActivity = ContextCompat.checkSelfPermission(this, Manifest.permission.ACTIVITY_RECOGNITION)
                         == PackageManager.PERMISSION_GRANTED;
         if (hasActivity && Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            Log.d(TAG, "Using FOREGROUND_SERVICE_TYPE_HEALTH");
             return android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_HEALTH;
         }
+        
+        Log.e(TAG, "No valid foreground service type - missing required permissions");
         return 0;
     }
 
@@ -615,6 +874,15 @@ public class WalkService extends Service implements LocationListener, SensorEven
         enterForeground(); // This already displays the notification
         registerLocationUpdates();
         registerStepListeners();
+        
+        // Start AlarmManager ticker for Doze-exempt updates
+        startAlarmTicker();
+        
+        // Start network connectivity monitoring
+        if (connectivityMonitor != null) {
+            connectivityMonitor.startMonitoring();
+        }
+        
         // Doze/battery-saver would otherwise suspend the service's location and
         // step streams minutes into a walk (steps freeze, distance stalls).
         requestBatteryOptimizationExemption();
@@ -624,17 +892,45 @@ public class WalkService extends Service implements LocationListener, SensorEven
     }
 
     /**
+     * Checks if app is exempt from battery optimization.
+     * Returns true if exempt, false otherwise.
+     */
+    private boolean isBatteryOptimizationExempt() {
+        try {
+            PowerManager pm = (PowerManager) getSystemService(Context.POWER_SERVICE);
+            if (pm != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                return pm.isIgnoringBatteryOptimizations(getPackageName());
+            }
+            return true; // Pre-M devices don't have this restriction
+        } catch (Exception e) {
+            Log.w(TAG, "Failed to check battery optimization status", e);
+            return false;
+        }
+    }
+    
+    /**
      * Asks the OS to exempt LifeHub from battery optimization while a walk is
      * active. Foreground services are normally prioritized, but aggressive
      * OEM battery managers / Doze can still suspend the (non-wake-up) step
      * sensor stream and stall GPS — which freezes steps/distance mid-walk.
      * The system shows the standard "Allow background activity?" dialog once;
      * this is a no-op when the app is already exempt.
+     * 
+     * Now checks exemption status and notifies JS app if not exempt.
      */
     private void requestBatteryOptimizationExemption() {
         try {
-            PowerManager pm = (PowerManager) getSystemService(Context.POWER_SERVICE);
-            if (pm == null || pm.isIgnoringBatteryOptimizations(getPackageName())) return;
+            if (isBatteryOptimizationExempt()) {
+                Log.d(TAG, "Battery optimization already disabled");
+                return;
+            }
+            
+            // Not exempt - notify JS app for better UX
+            if (!batteryOptimizationWarningShown) {
+                publishUpdate("battery_not_exempt");
+                batteryOptimizationWarningShown = true;
+            }
+            
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
                 Intent intent = new Intent(
                         Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
@@ -656,12 +952,65 @@ public class WalkService extends Service implements LocationListener, SensorEven
             if (pm != null) {
                 wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "LifeHub::WalkTracking");
                 wakeLock.setReferenceCounted(false);
-                // 10 hour timeout with automatic re-acquisition via ticker
-                if (!wakeLock.isHeld()) wakeLock.acquire(10 * 60 * 60 * 1000L);
+                // 1 hour timeout with proactive re-acquisition
+                if (!wakeLock.isHeld()) {
+                    wakeLock.acquire(WAKELOCK_TIMEOUT_MS);
+                    wakeLockAcquiredAtMs = System.currentTimeMillis();
+                    scheduleWakeLockMaintenance();
+                    Log.d(TAG, "Wake lock acquired with 1h timeout");
+                    if (diagnostics != null) {
+                        diagnostics.info(WalkDiagnostics.CAT_WAKELOCK, "Wake lock acquired (timeout: 1h)");
+                    }
+                }
             }
         } catch (Exception e) {
             Log.e(TAG, "Failed to acquire wake lock", e);
+            if (diagnostics != null) {
+                diagnostics.error(WalkDiagnostics.CAT_WAKELOCK, "Failed to acquire wake lock: " + e.getMessage());
+            }
             wakeLock = null;
+        }
+    }
+
+    /**
+     * Schedules proactive wake lock re-acquisition 5 minutes before expiry.
+     * Prevents sensor stream stalls on walks longer than 1 hour.
+     */
+    private void scheduleWakeLockMaintenance() {
+        if (alarmManager == null) return;
+        
+        try {
+            Intent intent = new Intent(this, WalkService.class);
+            intent.setAction(ACTION_WAKELOCK_MAINTAIN);
+            
+            wakeLockMaintenancePendingIntent = PendingIntent.getService(
+                this,
+                2002,
+                intent,
+                PendingIntent.FLAG_UPDATE_CURRENT | (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M ? PendingIntent.FLAG_IMMUTABLE : 0)
+            );
+            
+            long maintainAtMs = System.currentTimeMillis() + WAKELOCK_TIMEOUT_MS - WAKELOCK_REACQUIRE_BEFORE_MS;
+            
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                alarmManager.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, maintainAtMs, wakeLockMaintenancePendingIntent);
+            } else {
+                alarmManager.setExact(AlarmManager.RTC_WAKEUP, maintainAtMs, wakeLockMaintenancePendingIntent);
+            }
+            
+            Log.d(TAG, "Wake lock maintenance scheduled for 55min from now");
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to schedule wake lock maintenance", e);
+        }
+    }
+    
+    /**
+     * Validates wake lock is held before sensor operations and re-acquires if released.
+     */
+    private void ensureWakeLockHeld() {
+        if (wakeLock == null || !wakeLock.isHeld()) {
+            Log.w(TAG, "Wake lock not held, re-acquiring");
+            acquireWakeLock();
         }
     }
 
@@ -674,6 +1023,175 @@ public class WalkService extends Service implements LocationListener, SensorEven
             }
         }
         wakeLock = null;
+        
+        // Cancel wake lock maintenance alarm
+        if (alarmManager != null && wakeLockMaintenancePendingIntent != null) {
+            try {
+                alarmManager.cancel(wakeLockMaintenancePendingIntent);
+            } catch (Exception e) {
+                Log.w(TAG, "Failed to cancel wake lock maintenance alarm", e);
+            }
+        }
+    }
+    
+    /* ── AlarmManager Ticker (Doze-Exempt) ────────────────────────────────── */
+    
+    /**
+     * Starts Doze-exempt ticker using AlarmManager for guaranteed metric updates
+     * even when device is in deep Doze mode. Falls back to Handler ticker if
+     * alarm scheduling fails.
+     */
+    private void startAlarmTicker() {
+        if (alarmManager == null) {
+            Log.w(TAG, "AlarmManager unavailable, using Handler ticker fallback");
+            useAlarmTicker = false;
+            return;
+        }
+        
+        try {
+            Intent intent = new Intent(this, WalkTickerReceiver.class);
+            intent.setAction(WalkTickerReceiver.ACTION_TICKER);
+            
+            tickerPendingIntent = PendingIntent.getBroadcast(
+                this,
+                2001,
+                intent,
+                PendingIntent.FLAG_UPDATE_CURRENT | (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M ? PendingIntent.FLAG_IMMUTABLE : 0)
+            );
+            
+            scheduleNextTicker();
+            useAlarmTicker = true;
+            Log.d(TAG, "AlarmManager ticker started (Doze-exempt)");
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to start AlarmManager ticker, falling back to Handler", e);
+            useAlarmTicker = false;
+        }
+    }
+    
+    /**
+     * Schedules next ticker alarm 1 second from now. Uses setExactAndAllowWhileIdle
+     * for Doze immunity on Android 6+.
+     */
+    private void scheduleNextTicker() {
+        if (!useAlarmTicker || alarmManager == null || tickerPendingIntent == null) return;
+        
+        try {
+            long nextTriggerMs = System.currentTimeMillis() + 1000L;
+            
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                alarmManager.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, nextTriggerMs, tickerPendingIntent);
+            } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT) {
+                alarmManager.setExact(AlarmManager.RTC_WAKEUP, nextTriggerMs, tickerPendingIntent);
+            } else {
+                alarmManager.set(AlarmManager.RTC_WAKEUP, nextTriggerMs, tickerPendingIntent);
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to schedule next ticker alarm", e);
+        }
+    }
+    
+    /**
+     * Cancels AlarmManager ticker when tracking stops.
+     */
+    private void stopAlarmTicker() {
+        if (alarmManager != null && tickerPendingIntent != null) {
+            try {
+                alarmManager.cancel(tickerPendingIntent);
+                Log.d(TAG, "AlarmManager ticker stopped");
+            } catch (Exception e) {
+                Log.w(TAG, "Failed to cancel ticker alarm", e);
+            }
+        }
+    }
+    
+    /**
+     * Handles ticker update (called from AlarmManager or Handler).
+     * Recomputes metrics, updates notification, and publishes to JS.
+     */
+    private void handleTickerUpdate() {
+        if (!isTracking || paused) return;
+        
+        ensureWakeLockHeld();
+        durationSec = (SystemClock.elapsedRealtime() - startedAtMs) / 1000L;
+        recomputeDerived();
+        updateNotification();
+        publishUpdate();
+        
+        // Perform periodic health checks
+        monitorLocationHealth();
+        monitorSensorHealth();
+        
+        // P4.2: Publish health status every 10 seconds
+        publishHealthStatusIfNeeded();
+    }
+    
+    /**
+     * P4.2: Publishes detailed health status to JS app for monitoring.
+     * Called every 10 seconds from ticker. Allows JS to show warnings
+     * like "GPS signal lost" or "Step sensor not responding".
+     */
+    private void publishHealthStatusIfNeeded() {
+        long now = System.currentTimeMillis();
+        if (now - lastHealthReportMs < HEALTH_REPORT_INTERVAL_MS) return;
+        lastHealthReportMs = now;
+        
+        try {
+            // Collect health metrics
+            boolean wakeLockHeld = wakeLock != null && wakeLock.isHeld();
+            boolean sensorsActive = sensorsRegistered && (stepDetectorSensor != null || stepCounterSensor != null);
+            String locationProvider = activeLocationProvider;
+            long gpsStaleSec = lastGpsFixWallMs > 0L ? (now - lastGpsFixWallMs) / 1000L : -1L;
+            long stepStaleSec = lastStepEventWallMs > 0L ? (now - lastStepEventWallMs) / 1000L : -1L;
+            boolean batteryExempt = isBatteryOptimizationExempt();
+            int fgsType = computeFgsType();
+            
+            // Determine overall health status
+            String healthStatus = "healthy";
+            String healthMessage = null;
+            
+            if (!wakeLockHeld) {
+                healthStatus = "warning";
+                healthMessage = "Wake lock not held - sensors may stop";
+            } else if (!sensorsActive && isTracking) {
+                healthStatus = "error";
+                healthMessage = "Step sensors not registered";
+            } else if (gpsStaleSec > 120L) {
+                healthStatus = "warning";
+                healthMessage = "GPS signal lost (no fix for " + gpsStaleSec + "s)";
+            } else if (stepStaleSec > 60L && isTracking) {
+                healthStatus = "warning";
+                healthMessage = "Step sensor not responding (" + stepStaleSec + "s)";
+            } else if (!batteryExempt) {
+                healthStatus = "warning";
+                healthMessage = "Battery optimization not disabled";
+            } else if (fgsType == 0) {
+                healthStatus = "error";
+                healthMessage = "No valid foreground service type";
+            }
+            
+            // Build health status object
+            org.json.JSONObject healthObj = new org.json.JSONObject();
+            healthObj.put("status", healthStatus);
+            healthObj.put("message", healthMessage != null ? healthMessage : "All systems operational");
+            healthObj.put("wakeLockHeld", wakeLockHeld);
+            healthObj.put("sensorsRegistered", sensorsActive);
+            healthObj.put("locationProvider", locationProvider);
+            healthObj.put("gpsStaleSeconds", gpsStaleSec);
+            healthObj.put("stepStaleSeconds", stepStaleSec);
+            healthObj.put("batteryOptimizationExempt", batteryExempt);
+            healthObj.put("foregroundServiceType", fgsType == 0 ? "none" : (fgsType == 8 ? "location" : "health"));
+            healthObj.put("timestamp", now);
+            
+            // Publish via WalkServicePlugin
+            WalkServicePlugin.publishHealth(healthObj.toString());
+            
+            // Log to diagnostics
+            if (diagnostics != null && !healthStatus.equals("healthy")) {
+                diagnostics.warn(WalkDiagnostics.CAT_LIFECYCLE, "Health: " + healthStatus + " - " + healthMessage);
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to publish health status", e);
+        }
     }
 
     /** True when Google Play Services (fused location provider) is available. */
@@ -702,6 +1220,18 @@ public class WalkService extends Service implements LocationListener, SensorEven
         // is missing or the request fails (device, test, or provider quirk).
         if (fusedLocationClient != null && isFusedLocationAvailable()) {
             try {
+                // CRITICAL: Remove any existing requests first to clean up dead callbacks
+                // from previous service instances (process death). Without this, duplicate
+                // requests pile up and drain battery.
+                if (isFusedLocationRequestActive) {
+                    try {
+                        fusedLocationClient.removeLocationUpdates(fusedLocationCallback);
+                        Log.d(TAG, "Removed previous fused location request");
+                    } catch (Exception e) {
+                        Log.w(TAG, "Failed to remove previous fused request (may not exist)", e);
+                    }
+                }
+                
                 LocationRequest request = new LocationRequest.Builder(
                         Priority.PRIORITY_HIGH_ACCURACY,
                         2000L // 2s interval — responsive walking deltas
@@ -711,11 +1241,20 @@ public class WalkService extends Service implements LocationListener, SensorEven
                         .setMinUpdateDistanceMeters(0f) // all fixes — native filters
                         .build();
                 fusedLocationClient.requestLocationUpdates(request, fusedLocationCallback, null);
+                isFusedLocationRequestActive = true;
+                activeLocationProvider = "fused";
+                persistState();
+                Log.d(TAG, "FusedLocationProviderClient registered successfully");
+                
+                // Schedule health check to detect if Play Services crashes
+                schedulePlayServicesHealthCheck();
                 return;
             } catch (SecurityException e) {
                 Log.w(TAG, "SecurityException requesting fused location updates", e);
+                isFusedLocationRequestActive = false;
             } catch (Exception e) {
                 Log.w(TAG, "Failed to register fused location updates, falling back to LocationManager", e);
+                isFusedLocationRequestActive = false;
             }
         }
 
@@ -733,6 +1272,7 @@ public class WalkService extends Service implements LocationListener, SensorEven
                         this
                 );
                 anyProvider = true;
+                activeLocationProvider = "gps";
             }
 
             // Network provider works with either FINE or COARSE
@@ -745,6 +1285,9 @@ public class WalkService extends Service implements LocationListener, SensorEven
                         this
                 );
                 anyProvider = true;
+                if (!"gps".equals(activeLocationProvider)) {
+                    activeLocationProvider = "network";
+                }
             }
 
             // Fallback: if no provider enabled, try GPS anyway (with FINE permission)
@@ -755,6 +1298,12 @@ public class WalkService extends Service implements LocationListener, SensorEven
                         0,
                         this
                 );
+                activeLocationProvider = "gps";
+            }
+            
+            if (anyProvider) {
+                persistState();
+                Log.d(TAG, "LocationManager registered with provider: " + activeLocationProvider);
             }
             } catch (SecurityException e) {
                 Log.w(TAG, "SecurityException requesting GPS location updates", e);
@@ -768,6 +1317,7 @@ public class WalkService extends Service implements LocationListener, SensorEven
         if (fusedLocationClient != null && fusedLocationCallback != null) {
             try {
                 fusedLocationClient.removeLocationUpdates(fusedLocationCallback);
+                isFusedLocationRequestActive = false;
             } catch (Exception e) {
                 Log.w(TAG, "Failed to remove fused location updates", e);
             }
@@ -779,15 +1329,253 @@ public class WalkService extends Service implements LocationListener, SensorEven
                 Log.w(TAG, "SecurityException removing location updates", e);
             }
         }
+        activeLocationProvider = "none";
+        persistState();
+    }
+    
+    /* ── Location Provider Health Monitoring ──────────────────────────────── */
+    
+    /**
+     * Monitors GPS health and switches providers when necessary.
+     * Called periodically from ticker. Detects stale GPS and triggers recovery.
+     */
+    private void monitorLocationHealth() {
+        if (!isTracking || paused) return;
+        
+        long now = System.currentTimeMillis();
+        
+        // Only check every 60 seconds to avoid excessive overhead
+        if (now - lastGpsHealthCheckMs < GPS_HEALTH_CHECK_INTERVAL_MS) return;
+        lastGpsHealthCheckMs = now;
+        
+        long timeSinceLastFix = now - lastGpsFixWallMs;
+        
+        // If no GPS fix for 60+ seconds and we're tracking, GPS is stale
+        if (timeSinceLastFix > GPS_STALE_THRESHOLD_MS && lastGpsFixWallMs > 0L) {
+            Log.w(TAG, "GPS stale (no fix for " + (timeSinceLastFix / 1000L) + "s), attempting recovery");
+            
+            // Recovery sequence: remove and re-register location updates
+            removeLocationUpdates();
+            
+            // Wait 2 seconds for cleanup
+            sensorRetryHandler.postDelayed(new Runnable() {
+                @Override
+                public void run() {
+                    if (isTracking && !paused) {
+                        registerLocationUpdates();
+                        publishUpdate("gps_recovery_attempted");
+                    }
+                }
+            }, 2000L);
+        }
+        
+        // Check Play Services health if using fused provider
+        if ("fused".equals(activeLocationProvider)) {
+            checkPlayServicesHealth();
+        }
+    }
+    
+    /**
+     * Schedules periodic Play Services health check to detect crashes.
+     * Called after successful fused location registration.
+     */
+    private void schedulePlayServicesHealthCheck() {
+        if (sensorRetryHandler != null) {
+            sensorRetryHandler.postDelayed(new Runnable() {
+                @Override
+                public void run() {
+                    if (isTracking && !paused && "fused".equals(activeLocationProvider)) {
+                        checkPlayServicesHealth();
+                        // Reschedule for next check
+                        schedulePlayServicesHealthCheck();
+                    }
+                }
+            }, PLAY_SERVICES_CHECK_INTERVAL_MS);
+        }
+    }
+    
+    /**
+     * Checks if Google Play Services is still available and healthy.
+     * If crashed or unavailable, switches to GPS LocationManager.
+     */
+    private void checkPlayServicesHealth() {
+        long now = System.currentTimeMillis();
+        
+        // Don't check too frequently
+        if (now - lastPlayServicesCheckMs < PLAY_SERVICES_CHECK_INTERVAL_MS) return;
+        lastPlayServicesCheckMs = now;
+        
+        if (!isFusedLocationAvailable()) {
+            Log.w(TAG, "Play Services no longer available, switching to GPS LocationManager");
+            switchToGpsLocationProvider();
+            publishUpdate("play_services_unavailable");
+        } else {
+            // Check if fused provider is stuck (no callbacks despite being active)
+            long timeSinceLastFix = now - lastGpsFixWallMs;
+            if (isFusedLocationRequestActive && timeSinceLastFix > GPS_STALE_THRESHOLD_MS && lastGpsFixWallMs > 0L) {
+                Log.w(TAG, "Fused provider stuck (no fix for " + (timeSinceLastFix / 1000L) + "s), switching to GPS");
+                switchToGpsLocationProvider();
+            }
+        }
+    }
+    
+    /**
+     * Switches to FusedLocationProviderClient for better battery efficiency
+     * when network is available. Called when network connectivity is restored.
+     */
+    private void switchToFusedLocationProvider() {
+        if (!isFusedLocationAvailable()) {
+            Log.d(TAG, "Cannot switch to fused provider, Play Services unavailable");
+            return;
+        }
+        
+        Log.d(TAG, "Switching to FusedLocationProviderClient");
+        removeLocationUpdates();
+        
+        // Wait for cleanup before registering new provider
+        sensorRetryHandler.postDelayed(new Runnable() {
+            @Override
+            public void run() {
+                if (isTracking && !paused) {
+                    registerLocationUpdates();
+                    activeLocationProvider = "fused";
+                    persistState();
+                }
+            }
+        }, 1000L);
+    }
+    
+    /**
+     * Switches to pure GPS LocationManager for reliability when network is lost
+     * or FusedLocationProviderClient is failing.
+     */
+    private void switchToGpsLocationProvider() {
+        Log.d(TAG, "Switching to GPS-only LocationManager");
+        removeLocationUpdates();
+        
+        // Wait for cleanup before registering new provider
+        sensorRetryHandler.postDelayed(new Runnable() {
+            @Override
+            public void run() {
+                if (isTracking && !paused && locationManager != null) {
+                    try {
+                        boolean hasFineLocation = ContextCompat.checkSelfPermission(
+                            WalkService.this, 
+                            Manifest.permission.ACCESS_FINE_LOCATION
+                        ) == PackageManager.PERMISSION_GRANTED;
+                        
+                        if (hasFineLocation && locationManager.isProviderEnabled(LocationManager.GPS_PROVIDER)) {
+                            locationManager.requestLocationUpdates(
+                                LocationManager.GPS_PROVIDER,
+                                2000,
+                                0,
+                                WalkService.this
+                            );
+                            activeLocationProvider = "gps";
+                            persistState();
+                            Log.d(TAG, "GPS provider registered successfully");
+                        }
+                    } catch (Exception e) {
+                        Log.e(TAG, "Failed to register GPS provider", e);
+                    }
+                }
+            }
+        }, 1000L);
     }
 
     private void registerStepListeners() {
-        if (sensorManager != null) {
-            if (stepDetectorSensor != null) {
-                sensorManager.registerListener(this, stepDetectorSensor, SensorManager.SENSOR_DELAY_UI);
+        registerStepListenersWithRetry(0);
+    }
+    
+    /**
+     * Registers step sensors with validation and retry logic.
+     * Ensures sensors actually work after registration by waiting for first event.
+     */
+    private void registerStepListenersWithRetry(final int attemptNumber) {
+        if (sensorManager == null) {
+            Log.e(TAG, "SensorManager is null, cannot register step listeners");
+            sensorsRegistered = false;
+            publishUpdate("sensors_unavailable");
+            return;
+        }
+        
+        // Unregister first to prevent double-registration
+        try {
+            sensorManager.unregisterListener(this);
+        } catch (Exception e) {
+            Log.w(TAG, "Failed to unregister sensors before re-registration", e);
+        }
+        
+        boolean anyRegistered = false;
+        
+        if (stepDetectorSensor != null) {
+            boolean registered = sensorManager.registerListener(this, stepDetectorSensor, SensorManager.SENSOR_DELAY_UI);
+            if (registered) {
+                Log.d(TAG, "Step detector registered (attempt " + (attemptNumber + 1) + ")");
+                anyRegistered = true;
             }
-            if (stepCounterSensor != null) {
-                sensorManager.registerListener(this, stepCounterSensor, SensorManager.SENSOR_DELAY_UI);
+        }
+        
+        if (stepCounterSensor != null) {
+            boolean registered = sensorManager.registerListener(this, stepCounterSensor, SensorManager.SENSOR_DELAY_UI);
+            if (registered) {
+                Log.d(TAG, "Step counter registered (attempt " + (attemptNumber + 1) + ")");
+                anyRegistered = true;
+            }
+        }
+        
+        if (!anyRegistered) {
+            Log.e(TAG, "No step sensors available or registration failed");
+            sensorsRegistered = false;
+            publishUpdate("sensors_unavailable");
+            return;
+        }
+        
+        sensorsRegistered = true;
+        sensorRegistrationAttempts = attemptNumber + 1;
+        
+        // Validate sensors are working by checking for first event within 5 seconds
+        if (attemptNumber < MAX_SENSOR_RETRIES) {
+            final long registrationTime = System.currentTimeMillis();
+            sensorRetryHandler.postDelayed(new Runnable() {
+                @Override
+                public void run() {
+                    // If no step event received within 5 seconds, retry
+                    if (lastStepEventWallMs < registrationTime && isTracking && !paused) {
+                        Log.w(TAG, "No step event received after registration, retrying...");
+                        registerStepListenersWithRetry(attemptNumber + 1);
+                    } else {
+                        Log.d(TAG, "Step sensors validated successfully");
+                    }
+                }
+            }, 5000L);
+        }
+        
+        persistState();
+    }
+    
+    /**
+     * Monitors step sensor health and recovers from HAL failures.
+     * Called periodically from ticker. Detects stalled sensor streams.
+     */
+    private void monitorSensorHealth() {
+        if (!isTracking || paused || !sensorsRegistered) return;
+        
+        long now = System.currentTimeMillis();
+        long timeSinceLastStep = now - lastStepEventWallMs;
+        
+        // If GPS shows movement (speed > 0.5 m/s) but no step events for 30+ seconds,
+        // sensor stream likely stalled
+        if (timeSinceLastStep > 30_000L && lastLocation != null) {
+            float speed = lastLocation.hasSpeed() ? lastLocation.getSpeed() : 0f;
+            
+            if (speed > 0.5f) {
+                Log.w(TAG, "Sensor stream stalled (no steps for " + (timeSinceLastStep / 1000L) + "s but GPS shows movement), attempting recovery");
+                
+                // Force re-registration
+                sensorsRegistered = false;
+                registerStepListenersWithRetry(0);
+                publishUpdate("sensor_recovery_attempted");
             }
         }
     }
@@ -895,6 +1683,24 @@ public class WalkService extends Service implements LocationListener, SensorEven
         lastCounterTotal = -1L;
         gpsDistanceKm = 0.0;
         isVehicleFlagged = false;
+        sensorsRegistered = false;
+        isFusedLocationRequestActive = false;
+        activeLocationProvider = "none";
+        batteryOptimizationWarningShown = false;
+        
+        // Stop AlarmManager ticker
+        stopAlarmTicker();
+        
+        // Stop connectivity monitoring
+        if (connectivityMonitor != null) {
+            connectivityMonitor.stopMonitoring();
+        }
+        
+        // Clear retry handler callbacks
+        if (sensorRetryHandler != null) {
+            sensorRetryHandler.removeCallbacksAndMessages(null);
+        }
+        
         unregisterScreenOnReceiver();
         removeLocationUpdates();
         if (sensorManager != null) {
@@ -970,29 +1776,33 @@ public class WalkService extends Service implements LocationListener, SensorEven
     private long startedAtMs = 0L;
     private long accumulatedMs = 0L;
 
-    /** Recomputes elapsed time and pushes a notification + event every second. */
+    /** 
+     * Handler-based ticker (fallback when AlarmManager unavailable).
+     * Note: This ticker is NOT Doze-exempt and may be deferred in deep Doze.
+     * AlarmManager ticker (startAlarmTicker) is preferred for reliability.
+     */
     private final android.os.Handler ticker =
             new android.os.Handler(android.os.Looper.getMainLooper());
     private final Runnable tick = new Runnable() {
         @Override
         public void run() {
             if (isTracking && !paused) {
-                durationSec = (SystemClock.elapsedRealtime() - startedAtMs) / 1000L;
-                recomputeDerived();
-                updateNotification();
-                publishUpdate();
-                // Re-acquire wake lock if needed for long walks (every 9 hours)
-                if (wakeLock != null && !wakeLock.isHeld() && durationSec > 0) {
-                    acquireWakeLock();
-                }
+                handleTickerUpdate();
             }
             ticker.postDelayed(this, 1000);
         }
     };
 
     private void startTicker() {
-        ticker.removeCallbacks(tick);
-        ticker.postDelayed(tick, 1000);
+        // Start AlarmManager ticker for Doze immunity if available
+        if (useAlarmTicker && alarmManager != null) {
+            startAlarmTicker();
+        } else {
+            // Fallback to Handler ticker (not Doze-exempt)
+            Log.w(TAG, "Using Handler ticker (not Doze-exempt)");
+            ticker.removeCallbacks(tick);
+            ticker.postDelayed(tick, 1000);
+        }
     }
 
     private void recomputeDerived() {
