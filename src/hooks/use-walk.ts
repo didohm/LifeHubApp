@@ -52,6 +52,15 @@ function haversineDistance(lat1: number, lon1: number, lat2: number, lon2: numbe
   return R * c;
 }
 
+// Stray-session guard: a session that finishes in under this many seconds
+// while having moved less than this many meters is an accidental start/stop
+// (mis-tap on Start, start-and-immediately-finish from the notification,
+// GPS never acquiring a fix). Such sessions are saved as "cancelled" in
+// Firestore — kept for audit, never counted as walks — so Walk History and
+// the analytics totals stop filling up with 0.00 km entries.
+const STRAY_WALK_MAX_DURATION_S = 60;
+const STRAY_WALK_MAX_DISTANCE_M = 50;
+
 export function useWalk(
   userId: string | null | undefined,
   userWeightKg: number = 70,
@@ -864,6 +873,13 @@ export function useWalk(
       const filteredPoints = filterGPSPoints(gpsPoints);
       const stats = computeWalkStats(filteredPoints, finalDuration);
 
+      // Stray-session guard (see constants above): short + no real movement
+      // → accidental start/stop. Cancelled below, never saved as a walk.
+      const recordedDistance = stats.totalDistance || finalDistance;
+      const isStraySession =
+        finalDuration < STRAY_WALK_MAX_DURATION_S &&
+        recordedDistance < STRAY_WALK_MAX_DISTANCE_M;
+
       // Encode polyline for efficient storage
       const encodedPolyline = filteredPoints.length > 0 ? encodePolyline(filteredPoints) : null;
 
@@ -915,11 +931,20 @@ export function useWalk(
         elevation_change: split.elevationChange,
       }));
 
-      // Save to local SQLite (no Firestore sync)
-      try {
-        await saveWalkSummary(summary, splits);
-      } catch (error) {
-        console.error("Failed to save walk summary locally:", error);
+      // Save to local SQLite (no Firestore sync) — skipped for stray trips.
+      // A stray session is cancelled in Firestore instead (same status the
+      // abandoned-session cleanup already uses), so it never shows up in
+      // history, never counts toward stats, and stays only as an audit log.
+      if (!isStraySession) {
+        try {
+          await saveWalkSummary(summary, splits);
+        } catch (error) {
+          console.error("Failed to save walk summary locally:", error);
+        }
+      } else {
+        cancelWalkSession(activeSession.id, userId).catch((error) =>
+          console.error("Failed to cancel stray walk session:", error),
+        );
       }
 
       // Clean up state
@@ -946,6 +971,10 @@ export function useWalk(
       if (isNative) {
         WalkServicePlugin.clearRoutePoints({ sessionId: activeSession.id }).catch(() => {});
       }
+
+      // Stray (accidental) sessions return null — no summary modal, no
+      // completion chime; the caller simply ignores the result.
+      if (isStraySession) return null;
 
       // Create a finished session object for the callback
       const finishedSession: WalkSession = {

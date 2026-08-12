@@ -1,11 +1,13 @@
-import { useState, useEffect, lazy, Suspense } from "react";
-import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { ChevronLeft, MapPin, Clock, Footprints, TrendingUp, Calendar, Filter } from "lucide-react";
+import { useState, lazy, Suspense } from "react";
+import { createFileRoute } from "@tanstack/react-router";
+import { MapPin, Clock, Footprints, Calendar, Filter } from "lucide-react";
 import { Screen, ScreenHeader } from "@/components/lifehub/Screen";
 import { useAuth } from "@/hooks/use-auth";
-import { getWalkSummaries } from "@/lib/walk-storage";
-import type { WalkSummary } from "@/lib/types";
-import { formatPace, formatDuration, formatDistance } from "@/lib/walk-gps-utils";
+import { useData } from "@/lib/data-context";
+import { getWalkSummary } from "@/lib/walk-storage";
+import { WalkSummaryModal } from "@/routes/walk";
+import type { WalkSession, WalkSummary } from "@/lib/types";
+import { formatPace, formatDuration } from "@/lib/walk-gps-utils";
 
 const EnhancedWalkSummary = lazy(() => import("@/components/lifehub/EnhancedWalkSummary"));
 const RouteMapGL = lazy(() => import("@/components/lifehub/RouteMapGL"));
@@ -19,48 +21,53 @@ export const Route = createFileRoute("/walk/history")({
 
 function WalkHistoryPage() {
   const { user } = useAuth();
-  const navigate = useNavigate();
-  const [summaries, setSummaries] = useState<WalkSummary[]>([]);
-  const [loading, setLoading] = useState(true);
+  const { walkSessions } = useData();
   const [selectedSummary, setSelectedSummary] = useState<WalkSummary | null>(null);
+  const [selectedSession, setSelectedSession] = useState<WalkSession | null>(null);
   const [filter, setFilter] = useState<"all" | "week" | "month">("all");
 
-  useEffect(() => {
-    if (user?.id) {
-      loadHistory();
-    }
-  }, [user?.id]);
+  // Same Firestore source as the Walking page's history section, so "View All"
+  // always lists exactly what the main screen counts (never diverged by a
+  // wiped local SQLite database).
+  const sessions = walkSessions
+    .filter((s) => s.status === "finished")
+    .sort((a, b) =>
+      (b.finished_at || b.started_at || b.created_at).localeCompare(
+        a.finished_at || a.started_at || a.created_at,
+      ),
+    );
 
-  async function loadHistory() {
-    if (!user?.id) return;
-    setLoading(true);
-    try {
-      const data = await getWalkSummaries(user.id, 100);
-      setSummaries(data);
-    } catch (error) {
-      console.error("Failed to load walk history:", error);
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  const filteredSummaries = summaries.filter((s) => {
+  const filteredSessions = sessions.filter((s) => {
     if (filter === "all") return true;
     const walkDate = new Date(s.day);
     const now = new Date();
     const diffDays = Math.floor((now.getTime() - walkDate.getTime()) / (1000 * 60 * 60 * 24));
-    
+
     if (filter === "week") return diffDays <= 7;
     if (filter === "month") return diffDays <= 30;
     return true;
   });
 
+  // Single completion experience: prefer the full local summary (splits,
+  // elevation, route map) but fall back to the session itself when the
+  // local SQLite summary is missing (e.g. right after a reinstall).
+  const handleSelect = async (session: WalkSession) => {
+    try {
+      const summary = await getWalkSummary(session.id);
+      if (summary) {
+        setSelectedSummary(summary);
+      } else {
+        setSelectedSession(session);
+      }
+    } catch (error) {
+      console.error("Failed to load walk summary:", error);
+      setSelectedSession(session);
+    }
+  };
+
   return (
     <Screen>
-      <ScreenHeader
-        title="Walk History"
-        showBack
-      />
+      <ScreenHeader title="Walk History" showBack />
 
       <div className="px-4 py-4 space-y-4">
         {/* Filter tabs */}
@@ -99,20 +106,11 @@ function WalkHistoryPage() {
 
         {/* Summary count */}
         <div className="text-sm font-bold text-[#64748B]">
-          {filteredSummaries.length} {filteredSummaries.length === 1 ? "walk" : "walks"}
+          {filteredSessions.length} {filteredSessions.length === 1 ? "walk" : "walks"}
         </div>
 
-        {/* Loading state */}
-        {loading && (
-          <div className="space-y-3">
-            {[1, 2, 3].map((i) => (
-              <div key={i} className="h-32 rounded-xl bg-slate-100 animate-pulse" />
-            ))}
-          </div>
-        )}
-
         {/* Empty state */}
-        {!loading && filteredSummaries.length === 0 && (
+        {filteredSessions.length === 0 && (
           <div className="flex flex-col items-center justify-center py-12 px-6 text-center">
             <MapPin className="size-12 text-[#64748B]/40 mb-3" />
             <p className="text-sm font-black text-[#0A0E27]">No walks yet</p>
@@ -123,20 +121,20 @@ function WalkHistoryPage() {
         )}
 
         {/* Walk list */}
-        {!loading && filteredSummaries.length > 0 && (
+        {filteredSessions.length > 0 && (
           <div className="space-y-3 pb-20">
-            {filteredSummaries.map((summary) => (
+            {filteredSessions.map((session) => (
               <WalkHistoryCard
-                key={summary.id}
-                summary={summary}
-                onClick={() => setSelectedSummary(summary)}
+                key={session.id}
+                session={session}
+                onClick={() => handleSelect(session)}
               />
             ))}
           </div>
         )}
       </div>
 
-      {/* Detail modal */}
+      {/* Detail modal — full summary when available */}
       {selectedSummary && (
         <Suspense fallback={null}>
           <EnhancedWalkSummary
@@ -145,20 +143,33 @@ function WalkHistoryPage() {
           />
         </Suspense>
       )}
+
+      {/* Fallback legacy summary modal if no local summary exists */}
+      {!selectedSummary && selectedSession && (
+        <WalkSummaryModal session={selectedSession} onClose={() => setSelectedSession(null)} />
+      )}
     </Screen>
   );
 }
 
 function WalkHistoryCard({
-  summary,
+  session,
   onClick,
 }: {
-  summary: WalkSummary;
+  session: WalkSession;
   onClick: () => void;
 }) {
-  const hasRoute = !!summary.encoded_polyline || (summary.start_lat && summary.start_lng);
-  const date = new Date(summary.finished_at || summary.started_at);
+  const path = session.path && session.path.length >= 2 ? session.path : null;
+  const hasRoute = !!path;
+  const first = path ? path[0] : null;
+  const last = path ? path[path.length - 1] : null;
+  const date = new Date(session.finished_at || session.started_at || session.created_at);
   const isToday = new Date().toDateString() === date.toDateString();
+
+  const avgPace =
+    (session.distance || 0) >= 100 && (session.duration || 0) > 0
+      ? (session.duration || 0) / ((session.distance || 0) / 1000)
+      : null;
 
   return (
     <button
@@ -166,7 +177,7 @@ function WalkHistoryCard({
       className="w-full text-left rounded-xl bg-white border border-slate-200 overflow-hidden hover:border-[#7C5CFC] hover:shadow-lg transition-all active:scale-[0.98]"
     >
       {/* Thumbnail map */}
-      {hasRoute ? (
+      {hasRoute && first && last ? (
         <Suspense
           fallback={
             <div className="h-32 bg-slate-100 flex items-center justify-center">
@@ -176,11 +187,10 @@ function WalkHistoryCard({
         >
           <div className="h-32 relative">
             <RouteMapGL
-              encodedPolyline={summary.encoded_polyline || undefined}
-              startLat={summary.start_lat}
-              startLng={summary.start_lng}
-              endLat={summary.end_lat}
-              endLng={summary.end_lng}
+              startLat={first.lat}
+              startLng={first.lng}
+              endLat={last.lat}
+              endLng={last.lng}
               height={128}
               interactive={false}
               showMarkers={false}
@@ -207,7 +217,7 @@ function WalkHistoryCard({
               {date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
             </span>
           </div>
-          {summary.vehicle_flagged && (
+          {session.vehicle && (
             <span className="inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-[9px] font-black text-amber-800">
               Vehicle
             </span>
@@ -217,7 +227,7 @@ function WalkHistoryCard({
         {/* Primary metric */}
         <div className="flex items-end gap-1.5 mb-3">
           <span className="text-3xl font-black tabular-nums text-[#0A0E27]">
-            {(summary.distance / 1000).toFixed(2)}
+            {((session.distance || 0) / 1000).toFixed(2)}
           </span>
           <span className="pb-1 text-sm font-bold text-[#64748B]">km</span>
         </div>
@@ -229,17 +239,17 @@ function WalkHistoryCard({
             <div>
               <p className="text-[10px] font-bold uppercase text-[#64748B]">Time</p>
               <p className="text-xs font-black tabular-nums text-[#0A0E27]">
-                {formatDuration(summary.duration)}
+                {formatDuration(session.duration || 0)}
               </p>
             </div>
           </div>
 
           <div className="flex items-center gap-1.5">
-            <TrendingUp className="size-3.5 text-[#22C55E]" />
+            <Filter className="size-3.5 text-[#22C55E]" />
             <div>
               <p className="text-[10px] font-bold uppercase text-[#64748B]">Pace</p>
               <p className="text-xs font-black tabular-nums text-[#0A0E27]">
-                {summary.avg_pace ? formatPace(summary.avg_pace) : "--:--"}
+                {avgPace ? formatPace(avgPace) : "--:--"}
               </p>
             </div>
           </div>
@@ -249,7 +259,7 @@ function WalkHistoryCard({
             <div>
               <p className="text-[10px] font-bold uppercase text-[#64748B]">Steps</p>
               <p className="text-xs font-black tabular-nums text-[#0A0E27]">
-                {summary.steps.toLocaleString()}
+                {(session.steps || 0).toLocaleString()}
               </p>
             </div>
           </div>

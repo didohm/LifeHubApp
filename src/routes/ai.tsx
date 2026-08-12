@@ -271,25 +271,25 @@ function renderInline(text: string): React.ReactNode {
 function TypingIndicator() {
   return (
     <div className="flex items-start gap-3">
-      <div className="flex size-9 shrink-0 items-center justify-center rounded-full bg-ink text-card shadow-sm">
+      <div className="flex size-8 shrink-0 items-center justify-center rounded-full bg-lavender text-ink shadow-sm">
         <Bot className="size-4" />
       </div>
-      <div className="flex items-center gap-3 rounded-2xl rounded-tl-md bg-card border border-border/30 px-4 py-3.5 text-xs text-muted-foreground shadow-sm">
+      <div className="flex items-center gap-3 rounded-3xl rounded-tl-md bg-lavender-soft border border-[#7C5CFC]/15 px-4 py-3 text-xs text-muted-foreground shadow-sm">
         <span className="flex gap-1">
           <span
-            className="size-1.5 animate-bounce rounded-full bg-ink/40"
+            className="size-1.5 animate-bounce rounded-full bg-[#7C5CFC]/60"
             style={{ animationDelay: "0ms" }}
           />
           <span
-            className="size-1.5 animate-bounce rounded-full bg-ink/40"
+            className="size-1.5 animate-bounce rounded-full bg-[#7C5CFC]/60"
             style={{ animationDelay: "150ms" }}
           />
           <span
-            className="size-1.5 animate-bounce rounded-full bg-ink/40"
+            className="size-1.5 animate-bounce rounded-full bg-[#7C5CFC]/60"
             style={{ animationDelay: "300ms" }}
           />
         </span>
-        <span className="text-[11px] font-medium text-muted-foreground">Thinking...</span>
+        <span className="text-[11px] font-semibold text-[#6B7280]">Thinking...</span>
       </div>
     </div>
   );
@@ -307,7 +307,6 @@ function AiPage() {
   const [messages, setMessages] = useState<AiMessage[]>([]);
   const [inputPrompt, setInputPrompt] = useState("");
   const [loading, setLoading] = useState(false);
-  const [streamingText, setStreamingText] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
 
   // Load conversations
@@ -342,7 +341,7 @@ function AiPage() {
   // Scroll to bottom
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, streamingText]);
+  }, [messages]);
 
   // Auto-resize textarea
   useEffect(() => {
@@ -357,10 +356,10 @@ function AiPage() {
   const handleSend = async (customPrompt?: string) => {
     const promptToSend = customPrompt || inputPrompt.trim();
     if (!promptToSend || !user || !activeConvId) return;
+    if (loading) return; // guard against double-sends (Enter spam etc.)
 
     setInputPrompt("");
     setLoading(true);
-    setStreamingText("");
 
     try {
       const userMsg = await addAiMessage(activeConvId, "user", promptToSend, user.id);
@@ -382,18 +381,10 @@ function AiPage() {
         })),
       });
 
-      // Streaming effect
-      const words = replyText.split(" ");
-      let revealed = "";
-      for (let i = 0; i < words.length; i++) {
-        revealed += (i === 0 ? "" : " ") + words[i];
-        setStreamingText(revealed);
-        if (words.length > 5) await new Promise((r) => setTimeout(r, 12));
-      }
-
+      // Show the reply as soon as it's ready — a fake word-by-word reveal
+      // only adds dead time after the response already arrived.
       const aiMsg = await addAiMessage(activeConvId, "assistant", replyText, user.id);
       setMessages((prev) => [...prev, aiMsg]);
-      setStreamingText("");
     } catch {
       toast.error("Couldn't get a response right now. Please try again.");
     } finally {
@@ -461,7 +452,7 @@ function AiPage() {
     }
   };
 
-  const hasConversation = messages.length > 0 || streamingText;
+  const hasConversation = messages.length > 0;
 
   const focusRing =
     "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background";
@@ -720,11 +711,11 @@ function AiPage() {
               {messages.map((m) => (
                 <motion.div
                   key={m.id}
-                  initial={{ opacity: 0, y: 12, scale: 0.98 }}
-                  animate={{ opacity: 1, y: 0, scale: 1 }}
-                  transition={{ duration: 0.25, ease: "easeOut" }}
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ duration: 0.18, ease: "easeOut" }}
                   className={cn(
-                    "flex items-start gap-3",
+                    "flex items-start gap-2.5",
                     m.role === "user" ? "flex-row-reverse" : "",
                   )}
                 >
@@ -745,10 +736,10 @@ function AiPage() {
                   {/* Message Bubble */}
                   <div
                     className={cn(
-                      "relative max-w-[85%] p-4 text-xs leading-relaxed shadow-sm",
+                      "relative max-w-[85%] px-4 py-3 text-[13px] leading-relaxed shadow-sm",
                       m.role === "user"
                         ? "bg-ink text-card rounded-3xl rounded-tr-md"
-                        : "card-soft bg-card border border-border/30 text-foreground rounded-3xl rounded-tl-md",
+                        : "bg-lavender-soft border border-[#7C5CFC]/15 text-foreground rounded-3xl rounded-tl-md",
                     )}
                   >
                     {m.role === "assistant" ? (
@@ -757,16 +748,16 @@ function AiPage() {
                       <p className="whitespace-pre-line">{m.content}</p>
                     )}
 
-                    {/* Message actions (assistant only) */}
+                    {/* Copy action (assistant only) */}
                     {m.role === "assistant" && (
-                      <div className="mt-3 flex items-center gap-2 border-t border-border/20 pt-2.5">
+                      <div className="mt-2 flex justify-end">
                         <button
                           onClick={() => {
                             sounds.playClick();
                             handleCopy(m.content);
                           }}
                           className={cn(
-                            "inline-flex items-center gap-1 text-[11px] font-medium text-muted-foreground hover:text-foreground transition-colors",
+                            "inline-flex items-center gap-1 rounded-md text-[10px] font-semibold text-[#7C5CFC]/70 hover:text-[#7C5CFC] hover:bg-[#7C5CFC]/10 px-1.5 py-1 transition-colors",
                             focusRing,
                           )}
                           aria-label="Copy message"
@@ -774,7 +765,6 @@ function AiPage() {
                           <Copy className="size-3" />
                           Copy
                         </button>
-
                       </div>
                     )}
                   </div>
@@ -782,32 +772,8 @@ function AiPage() {
               ))}
             </AnimatePresence>
 
-            {/* Streaming message */}
-            <AnimatePresence>
-              {streamingText && (
-                <motion.div
-                  initial={{ opacity: 0, y: 12 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0 }}
-                  className="flex items-start gap-3"
-                >
-                  <div className="flex size-8 shrink-0 items-center justify-center rounded-full bg-lavender text-ink shadow-sm">
-                    <Bot className="size-4" />
-                  </div>
-                  <div className="card-soft max-w-[85%] bg-card border border-border/30 p-4 text-xs leading-relaxed shadow-sm text-foreground">
-                    <MarkdownContent content={streamingText} />
-                    <motion.span
-                      animate={{ opacity: [1, 0.3] }}
-                      transition={{ duration: 0.8, repeat: Infinity }}
-                      className="inline-block ml-0.5 size-1.5 rounded-full bg-ink"
-                    />
-                  </div>
-                </motion.div>
-              )}
-            </AnimatePresence>
-
             {/* Typing indicator */}
-            <AnimatePresence>{loading && !streamingText && <TypingIndicator />}</AnimatePresence>
+            <AnimatePresence>{loading && <TypingIndicator />}</AnimatePresence>
 
             <div ref={chatEndRef} />
           </div>
@@ -839,9 +805,8 @@ function AiPage() {
             placeholder="Ask about medications, appointments, bills..."
             rows={1}
             aria-label="Message input"
-            className="flex-1 resize-none bg-transparent py-1.5 text-xs text-foreground outline-none placeholder:text-muted-foreground leading-relaxed max-h-[120px]"
+            className="flex-1 resize-none bg-transparent py-1.5 text-[13px] text-foreground outline-none placeholder:text-muted-foreground leading-relaxed max-h-[120px]"
             style={{ scrollbarWidth: "thin" }}
-            disabled={loading}
           />
 
           <motion.button

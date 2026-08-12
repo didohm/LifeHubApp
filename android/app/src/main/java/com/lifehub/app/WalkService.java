@@ -152,6 +152,9 @@ public class WalkService extends Service implements LocationListener, SensorEven
     // fresh, the step counter is the cadence ground truth for distance
     // arbitration; when stale (screen-off stalls, no sensor), GPS takes over.
     private long lastStepEventWallMs = 0L;
+    // CRITICAL: Timestamp of last processed location to prevent GPS/Fused double-counting
+    // Both providers can report the same fix with identical timestamp - only process once
+    private long lastProcessedLocationTimeMs = 0L;
 
     private final IBinder binder = new LocalBinder();
     private NotificationManager notificationManager;
@@ -193,13 +196,17 @@ public class WalkService extends Service implements LocationListener, SensorEven
     private int sensorRegistrationAttempts = 0;
     private static final int MAX_SENSOR_RETRIES = 3;
     private Handler sensorRetryHandler;
+    private boolean isSensorRecoveryInProgress = false;
+    private Runnable pendingSensorValidation = null;
 
     // Location provider health monitoring
     private long lastGpsHealthCheckMs = 0L;
     private static final long GPS_HEALTH_CHECK_INTERVAL_MS = 60_000L;
     private static final long GPS_STALE_THRESHOLD_MS = 60_000L;
     private boolean isFusedLocationRequestActive = false;
+    private boolean isLocationManagerRequestActive = false;
     private String activeLocationProvider = "none";
+    private boolean isLocationRecoveryInProgress = false;
 
     // Wake lock maintenance
     private long wakeLockAcquiredAtMs = 0L;
@@ -743,6 +750,25 @@ public class WalkService extends Service implements LocationListener, SensorEven
             }
         }
         
+        // CRITICAL: Compute FGS type FIRST before creating notification
+        int fgsType = computeFgsType();
+        if (fgsType == 0) {
+            // CRITICAL: No valid FGS type means we CANNOT run as a foreground service.
+            // This is a FATAL configuration error - location tracking REQUIRES a valid FGS.
+            // Do NOT silently degrade to a regular notification and pretend tracking works.
+            Log.e(TAG, "FATAL: No valid foreground service type - cannot start location tracking service");
+            Log.e(TAG, "Required: ACCESS_FINE_LOCATION or ACCESS_COARSE_LOCATION");
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                Log.e(TAG, "Required on Android 14+: ACCESS_BACKGROUND_LOCATION");
+            }
+            publishUpdate("foreground_service_cannot_start");
+            
+            // Stop the service - it cannot function without proper FGS
+            stopForegroundTracking();
+            stopSelf();
+            return;
+        }
+        
         // Create the notification builder only once when entering foreground
         if (notificationBuilder == null) {
             createNotificationBuilder();
@@ -759,19 +785,6 @@ public class WalkService extends Service implements LocationListener, SensorEven
         }
         
         Notification notification = notificationBuilder.build();
-        int fgsType = computeFgsType();
-        if (fgsType == 0) {
-            // No valid foreground-service type for the granted permissions: we
-            // cannot legally start a foreground service, so we degrade to a
-            // normal (non-ongoing) notification so tracking still surfaces.
-            Log.w(TAG, "No valid foreground service type, using regular notification");
-            publishUpdate("no_foreground_permission");
-            if (notificationManager != null) {
-                notificationManager.notify(NOTIFICATION_ID, notification);
-            }
-            isInForeground = true;
-            return;
-        }
         
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
@@ -780,29 +793,42 @@ public class WalkService extends Service implements LocationListener, SensorEven
                 startForeground(NOTIFICATION_ID, notification);
             }
             isInForeground = true;
+            Log.d(TAG, "Successfully entered foreground with FGS type: " + fgsType);
+        } catch (SecurityException e) {
+            // CRITICAL: SecurityException means wrong FGS type for granted permissions
+            // This should never happen if computeFgsType() is correct, but catch it explicitly
+            Log.e(TAG, "FATAL: SecurityException starting foreground service - permission/type mismatch", e);
+            publishUpdate("foreground_service_security_error");
+            
+            // Stop the service - cannot recover from permission mismatch
+            stopForegroundTracking();
+            stopSelf();
         } catch (Exception e) {
             // P3.1: Android 12+ can throw ForegroundServiceStartNotAllowedException
-            Log.e(TAG, "Failed to start foreground service", e);
+            Log.e(TAG, "FATAL: Failed to start foreground service", e);
             publishUpdate("foreground_service_start_failed");
             
-            // Fallback: show regular notification
-            if (notificationManager != null) {
-                notificationManager.notify(NOTIFICATION_ID, notification);
-            }
-            isInForeground = false;
+            // Do NOT fall back to regular notification - stop the service
+            // A location tracking service that cannot be foreground WILL be killed by the OS
+            stopForegroundTracking();
+            stopSelf();
         }
     }
 
     /**
      * P3.4: Enhanced foreground service type selection.
      * Picks a valid foreground-service type from the permissions actually held:
-     *  - `location` when ACCESS_FINE/COARSE_LOCATION is granted (the common case)
-     *  - `health`   when ACTIVITY_RECOGNITION is granted (step-only tracking)
-     *  - 0          when neither is granted (caller should not start FGS)
+     *  - `location` when ACCESS_FINE/COARSE_LOCATION is granted
+     *  - Combined `location | health` when both location and activity recognition granted
+     *  - 0 when required permissions are missing (caller MUST NOT start FGS)
      * 
-     * Android 14+ (API 34+) requires ACCESS_BACKGROUND_LOCATION for location type.
-     * A fixed `location` type throws SecurityException on Android 14+ without
-     * the location permission, which previously crashed the app on start.
+     * CRITICAL: Android 14+ (API 34+) requires ACCESS_BACKGROUND_LOCATION for 
+     * FOREGROUND_SERVICE_TYPE_LOCATION. Without it, startForeground() throws 
+     * SecurityException and the service dies immediately.
+     * 
+     * This service performs GPS-based location tracking, so LOCATION is the 
+     * PRIMARY required FGS type. HEALTH (step counter) is supplementary but 
+     * cannot substitute for location tracking.
      */
     private int computeFgsType() {
         boolean hasFineLocation = ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION)
@@ -810,37 +836,57 @@ public class WalkService extends Service implements LocationListener, SensorEven
         boolean hasCoarseLocation = ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION)
                         == PackageManager.PERMISSION_GRANTED;
         boolean hasLocation = hasFineLocation || hasCoarseLocation;
+        boolean hasActivity = ContextCompat.checkSelfPermission(this, Manifest.permission.ACTIVITY_RECOGNITION)
+                        == PackageManager.PERMISSION_GRANTED;
         
         // Android 14+ requires background location permission for FOREGROUND_SERVICE_TYPE_LOCATION
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) { // API 34
             boolean hasBackgroundLocation = ContextCompat.checkSelfPermission(this, 
                     Manifest.permission.ACCESS_BACKGROUND_LOCATION) == PackageManager.PERMISSION_GRANTED;
             
-            if (hasLocation && hasBackgroundLocation) {
-                Log.d(TAG, "Using FOREGROUND_SERVICE_TYPE_LOCATION (Android 14+)");
-                return android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION;
-            } else if (hasLocation && !hasBackgroundLocation) {
-                Log.w(TAG, "Background location not granted on Android 14+, falling back to health type");
+            if (!hasLocation) {
+                // No location permission at all - cannot do GPS tracking
+                Log.e(TAG, "No location permission on Android 14+ - cannot start FGS for location tracking");
+                publishUpdate("location_permission_required");
+                return 0;
+            }
+            
+            if (!hasBackgroundLocation) {
+                // Have location but not background location - CANNOT use LOCATION type on Android 14+
+                Log.e(TAG, "Background location permission required on Android 14+ for FGS location type");
                 publishUpdate("background_location_required");
+                return 0;
             }
+            
+            // Have both location and background location - use LOCATION type
+            // Combine with HEALTH if activity recognition also granted (matches manifest: location|health)
+            int fgsType = android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION;
+            if (hasActivity) {
+                fgsType |= android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_HEALTH;
+                Log.d(TAG, "Using FOREGROUND_SERVICE_TYPE_LOCATION | HEALTH (Android 14+)");
+            } else {
+                Log.d(TAG, "Using FOREGROUND_SERVICE_TYPE_LOCATION (Android 14+)");
+            }
+            return fgsType;
         } else {
-            // Android 10-13: location permission sufficient
-            if (hasLocation) {
-                Log.d(TAG, "Using FOREGROUND_SERVICE_TYPE_LOCATION");
-                return android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION;
+            // Android 10-13: location permission sufficient (no background location requirement)
+            if (!hasLocation) {
+                Log.e(TAG, "No location permission - cannot start FGS for location tracking");
+                publishUpdate("location_permission_required");
+                return 0;
             }
+            
+            // Have location permission - use LOCATION type
+            // Combine with HEALTH if activity recognition also granted
+            int fgsType = android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION;
+            if (hasActivity && Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                fgsType |= android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_HEALTH;
+                Log.d(TAG, "Using FOREGROUND_SERVICE_TYPE_LOCATION | HEALTH");
+            } else {
+                Log.d(TAG, "Using FOREGROUND_SERVICE_TYPE_LOCATION");
+            }
+            return fgsType;
         }
-        
-        // Fallback to health type if activity recognition granted
-        boolean hasActivity = ContextCompat.checkSelfPermission(this, Manifest.permission.ACTIVITY_RECOGNITION)
-                        == PackageManager.PERMISSION_GRANTED;
-        if (hasActivity && Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            Log.d(TAG, "Using FOREGROUND_SERVICE_TYPE_HEALTH");
-            return android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_HEALTH;
-        }
-        
-        Log.e(TAG, "No valid foreground service type - missing required permissions");
-        return 0;
     }
 
     private void startForegroundTracking(
@@ -1259,6 +1305,12 @@ public class WalkService extends Service implements LocationListener, SensorEven
     }
 
     private void registerLocationUpdates() {
+        // CRITICAL: Prevent duplicate registration during recovery
+        if (isLocationRecoveryInProgress) {
+            Log.d(TAG, "Location recovery already in progress, skipping duplicate registration");
+            return;
+        }
+        
         // Check for either FINE or COARSE location permission
         boolean hasFineLocation =
                 ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION)
@@ -1267,7 +1319,10 @@ public class WalkService extends Service implements LocationListener, SensorEven
                 ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION)
                         == PackageManager.PERMISSION_GRANTED;
 
-        if (!hasFineLocation && !hasCoarseLocation) return;
+        if (!hasFineLocation && !hasCoarseLocation) {
+            Log.w(TAG, "No location permission, cannot register location updates");
+            return;
+        }
 
         // Preferred path: FusedLocationProviderClient (battery-efficient,
         // sensor-fused GPS). Falls back to LocationManager when Play Services
@@ -1280,6 +1335,7 @@ public class WalkService extends Service implements LocationListener, SensorEven
                 if (isFusedLocationRequestActive) {
                     try {
                         fusedLocationClient.removeLocationUpdates(fusedLocationCallback);
+                        isFusedLocationRequestActive = false;
                         Log.d(TAG, "Removed previous fused location request");
                     } catch (Exception e) {
                         Log.w(TAG, "Failed to remove previous fused request (may not exist)", e);
@@ -1296,6 +1352,7 @@ public class WalkService extends Service implements LocationListener, SensorEven
                         .build();
                 fusedLocationClient.requestLocationUpdates(request, fusedLocationCallback, null);
                 isFusedLocationRequestActive = true;
+                isLocationManagerRequestActive = false;
                 activeLocationProvider = "fused";
                 persistState();
                 Log.d(TAG, "FusedLocationProviderClient registered successfully");
@@ -1313,6 +1370,17 @@ public class WalkService extends Service implements LocationListener, SensorEven
         }
 
         if (locationManager == null) return;
+
+        // CRITICAL: Remove existing LocationManager listeners to prevent duplicates
+        if (isLocationManagerRequestActive) {
+            try {
+                locationManager.removeUpdates(this);
+                isLocationManagerRequestActive = false;
+                Log.d(TAG, "Removed previous LocationManager listeners");
+            } catch (Exception e) {
+                Log.w(TAG, "Failed to remove previous LocationManager listeners", e);
+            }
+        }
 
         try {
             boolean anyProvider = false;
@@ -1353,37 +1421,57 @@ public class WalkService extends Service implements LocationListener, SensorEven
                         this
                 );
                 activeLocationProvider = "gps";
+                anyProvider = true;
             }
             
             if (anyProvider) {
+                isLocationManagerRequestActive = true;
+                isFusedLocationRequestActive = false;
                 persistState();
                 Log.d(TAG, "LocationManager registered with provider: " + activeLocationProvider);
+            } else {
+                Log.w(TAG, "No location providers available or enabled");
+                activeLocationProvider = "none";
             }
-            } catch (SecurityException e) {
-                Log.w(TAG, "SecurityException requesting GPS location updates", e);
-            } catch (Exception e) {
-                Log.w(TAG, "Failed to register location updates", e);
-            }
+        } catch (SecurityException e) {
+            Log.w(TAG, "SecurityException requesting GPS location updates", e);
+            isLocationManagerRequestActive = false;
+        } catch (Exception e) {
+            Log.w(TAG, "Failed to register location updates", e);
+            isLocationManagerRequestActive = false;
+        }
     }
 
-    /** Stops BOTH location sources (fused + legacy) — safe to call from any path. */
+    /** 
+     * Stops BOTH location sources (fused + legacy) — safe to call from any path.
+     * CRITICAL: Properly tracks state to prevent duplicate listeners on re-registration.
+     */
     private void removeLocationUpdates() {
-        if (fusedLocationClient != null && fusedLocationCallback != null) {
+        if (fusedLocationClient != null && fusedLocationCallback != null && isFusedLocationRequestActive) {
             try {
                 fusedLocationClient.removeLocationUpdates(fusedLocationCallback);
                 isFusedLocationRequestActive = false;
+                Log.d(TAG, "Removed fused location updates");
             } catch (Exception e) {
                 Log.w(TAG, "Failed to remove fused location updates", e);
+                isFusedLocationRequestActive = false;
             }
         }
-        if (locationManager != null) {
+        if (locationManager != null && isLocationManagerRequestActive) {
             try {
                 locationManager.removeUpdates(this);
+                isLocationManagerRequestActive = false;
+                Log.d(TAG, "Removed LocationManager updates");
             } catch (SecurityException e) {
                 Log.w(TAG, "SecurityException removing location updates", e);
+                isLocationManagerRequestActive = false;
+            } catch (Exception e) {
+                Log.w(TAG, "Failed to remove LocationManager updates", e);
+                isLocationManagerRequestActive = false;
             }
         }
         activeLocationProvider = "none";
+        isLocationRecoveryInProgress = false;
         persistState();
     }
     
@@ -1392,9 +1480,16 @@ public class WalkService extends Service implements LocationListener, SensorEven
     /**
      * Monitors GPS health and switches providers when necessary.
      * Called periodically from ticker. Detects stale GPS and triggers recovery.
+     * CRITICAL: Prevents duplicate recovery attempts using isLocationRecoveryInProgress flag.
      */
     private void monitorLocationHealth() {
         if (!isTracking || paused) return;
+        
+        // CRITICAL: Do not start new recovery if one is already in progress
+        if (isLocationRecoveryInProgress) {
+            Log.d(TAG, "Location recovery already in progress, skipping health check");
+            return;
+        }
         
         long now = System.currentTimeMillis();
         
@@ -1408,10 +1503,13 @@ public class WalkService extends Service implements LocationListener, SensorEven
         if (timeSinceLastFix > GPS_STALE_THRESHOLD_MS && lastGpsFixWallMs > 0L) {
             Log.w(TAG, "GPS stale (no fix for " + (timeSinceLastFix / 1000L) + "s), attempting recovery");
             
+            // Mark recovery in progress to prevent duplicate attempts
+            isLocationRecoveryInProgress = true;
+            
             // Recovery sequence: remove and re-register location updates
             removeLocationUpdates();
             
-            // Wait 2 seconds for cleanup
+            // Wait 2 seconds for cleanup, then re-register
             sensorRetryHandler.postDelayed(new Runnable() {
                 @Override
                 public void run() {
@@ -1419,6 +1517,8 @@ public class WalkService extends Service implements LocationListener, SensorEven
                         registerLocationUpdates();
                         publishUpdate("gps_recovery_attempted");
                     }
+                    // Clear recovery flag after completion (whether successful or not)
+                    isLocationRecoveryInProgress = false;
                 }
             }, 2000L);
         }
@@ -1544,6 +1644,7 @@ public class WalkService extends Service implements LocationListener, SensorEven
     /**
      * Registers step sensors with validation and retry logic.
      * Ensures sensors actually work after registration by waiting for first event.
+     * CRITICAL: Prevents duplicate registration attempts and cleans up pending validations.
      */
     private void registerStepListenersWithRetry(final int attemptNumber) {
         if (sensorManager == null) {
@@ -1553,9 +1654,27 @@ public class WalkService extends Service implements LocationListener, SensorEven
             return;
         }
         
+        // CRITICAL: Prevent duplicate registration if already in progress
+        if (isSensorRecoveryInProgress && attemptNumber > 0) {
+            Log.d(TAG, "Sensor recovery already in progress, skipping duplicate attempt");
+            return;
+        }
+        
+        // Mark recovery in progress for retry attempts
+        if (attemptNumber > 0) {
+            isSensorRecoveryInProgress = true;
+        }
+        
+        // Cancel any pending sensor validation from previous attempt
+        if (pendingSensorValidation != null) {
+            sensorRetryHandler.removeCallbacks(pendingSensorValidation);
+            pendingSensorValidation = null;
+        }
+        
         // Unregister first to prevent double-registration
         try {
             sensorManager.unregisterListener(this);
+            sensorsRegistered = false;
         } catch (Exception e) {
             Log.w(TAG, "Failed to unregister sensors before re-registration", e);
         }
@@ -1581,6 +1700,7 @@ public class WalkService extends Service implements LocationListener, SensorEven
         if (!anyRegistered) {
             Log.e(TAG, "No step sensors available or registration failed");
             sensorsRegistered = false;
+            isSensorRecoveryInProgress = false;
             publishUpdate("sensors_unavailable");
             return;
         }
@@ -1591,7 +1711,7 @@ public class WalkService extends Service implements LocationListener, SensorEven
         // Validate sensors are working by checking for first event within 5 seconds
         if (attemptNumber < MAX_SENSOR_RETRIES) {
             final long registrationTime = System.currentTimeMillis();
-            sensorRetryHandler.postDelayed(new Runnable() {
+            pendingSensorValidation = new Runnable() {
                 @Override
                 public void run() {
                     // If no step event received within 5 seconds, retry
@@ -1600,9 +1720,15 @@ public class WalkService extends Service implements LocationListener, SensorEven
                         registerStepListenersWithRetry(attemptNumber + 1);
                     } else {
                         Log.d(TAG, "Step sensors validated successfully");
+                        isSensorRecoveryInProgress = false;
                     }
+                    pendingSensorValidation = null;
                 }
-            }, 5000L);
+            };
+            sensorRetryHandler.postDelayed(pendingSensorValidation, 5000L);
+        } else {
+            // Max retries reached, clear recovery flag
+            isSensorRecoveryInProgress = false;
         }
         
         persistState();
@@ -1611,22 +1737,30 @@ public class WalkService extends Service implements LocationListener, SensorEven
     /**
      * Monitors step sensor health and recovers from HAL failures.
      * Called periodically from ticker. Detects stalled sensor streams.
+     * CRITICAL: Prevents duplicate recovery attempts using isSensorRecoveryInProgress flag.
      */
     private void monitorSensorHealth() {
         if (!isTracking || paused || !sensorsRegistered) return;
+        
+        // CRITICAL: Do not start new recovery if one is already in progress
+        if (isSensorRecoveryInProgress) {
+            Log.d(TAG, "Sensor recovery already in progress, skipping health check");
+            return;
+        }
         
         long now = System.currentTimeMillis();
         long timeSinceLastStep = now - lastStepEventWallMs;
         
         // If GPS shows movement (speed > 0.5 m/s) but no step events for 30+ seconds,
         // sensor stream likely stalled
-        if (timeSinceLastStep > 30_000L && lastLocation != null) {
+        if (timeSinceLastStep > 30_000L && lastStepEventWallMs > 0L && lastLocation != null) {
             float speed = lastLocation.hasSpeed() ? lastLocation.getSpeed() : 0f;
             
             if (speed > 0.5f) {
                 Log.w(TAG, "Sensor stream stalled (no steps for " + (timeSinceLastStep / 1000L) + "s but GPS shows movement), attempting recovery");
                 
-                // Force re-registration
+                // Mark recovery in progress and force re-registration
+                isSensorRecoveryInProgress = true;
                 sensorsRegistered = false;
                 registerStepListenersWithRetry(0);
                 publishUpdate("sensor_recovery_attempted");
@@ -1739,8 +1873,11 @@ public class WalkService extends Service implements LocationListener, SensorEven
         isVehicleFlagged = false;
         sensorsRegistered = false;
         isFusedLocationRequestActive = false;
+        isLocationManagerRequestActive = false;
         activeLocationProvider = "none";
         batteryOptimizationWarningShown = false;
+        isLocationRecoveryInProgress = false;
+        isSensorRecoveryInProgress = false;
         
         // Stop AlarmManager ticker
         stopAlarmTicker();
@@ -1750,15 +1887,31 @@ public class WalkService extends Service implements LocationListener, SensorEven
             connectivityMonitor.stopMonitoring();
         }
         
-        // Clear retry handler callbacks
+        // CRITICAL: Clear ALL pending callbacks from retry handler to prevent
+        // stale callbacks from firing after tracking stops
         if (sensorRetryHandler != null) {
             sensorRetryHandler.removeCallbacksAndMessages(null);
+        }
+        
+        // Cancel pending sensor validation
+        if (pendingSensorValidation != null) {
+            sensorRetryHandler.removeCallbacks(pendingSensorValidation);
+            pendingSensorValidation = null;
+        }
+        
+        // Stop Handler ticker
+        if (ticker != null) {
+            ticker.removeCallbacks(tick);
         }
         
         unregisterScreenOnReceiver();
         removeLocationUpdates();
         if (sensorManager != null) {
-            sensorManager.unregisterListener(this);
+            try {
+                sensorManager.unregisterListener(this);
+            } catch (Exception e) {
+                Log.w(TAG, "Failed to unregister sensors during stop", e);
+            }
         }
         releaseWakeLock();
         if (notificationManager != null) {
@@ -1898,6 +2051,14 @@ public class WalkService extends Service implements LocationListener, SensorEven
         if (Math.abs(nowWall - location.getTime()) > 10_000) return; // stale fix
         // Tighter accuracy threshold: reject fixes with > 15m accuracy for Strava-level GPS route quality
         if (location.getAccuracy() > 15.0f) return;
+        
+        // CRITICAL: Prevent GPS/Fused double-counting - both providers can report the same fix
+        // If timestamp matches last processed location (within 100ms), it's a duplicate
+        if (Math.abs(location.getTime() - lastProcessedLocationTimeMs) < 100) {
+            Log.d(TAG, "Duplicate location with same timestamp, skipping (prevents GPS/Fused double-count)");
+            return;
+        }
+        lastProcessedLocationTimeMs = location.getTime();
 
         if (lastLocation != null) {
             float distMeters = lastLocation.distanceTo(location);
@@ -2039,6 +2200,49 @@ public class WalkService extends Service implements LocationListener, SensorEven
 
     @Override
     public void onProviderDisabled(String provider) {
+        // CRITICAL: When user explicitly disables location provider (GPS/network),
+        // stop attempting to register location updates for that provider.
+        // The service will resume automatically when provider is re-enabled via onProviderEnabled().
+        Log.w(TAG, "Location provider disabled: " + provider);
+        
+        if (LocationManager.GPS_PROVIDER.equals(provider)) {
+            if ("gps".equals(activeLocationProvider)) {
+                Log.w(TAG, "GPS provider disabled while active, location tracking paused");
+                publishUpdate("gps_disabled");
+                // Do NOT endlessly retry registration - wait for onProviderEnabled
+                activeLocationProvider = "none";
+                persistState();
+            }
+        } else if (LocationManager.NETWORK_PROVIDER.equals(provider)) {
+            if ("network".equals(activeLocationProvider)) {
+                Log.w(TAG, "Network provider disabled while active, attempting GPS fallback");
+                // Try GPS as fallback if available
+                if (isTracking && !paused && locationManager != null) {
+                    boolean hasFineLocation = ContextCompat.checkSelfPermission(this, 
+                            Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED;
+                    if (hasFineLocation && locationManager.isProviderEnabled(LocationManager.GPS_PROVIDER)) {
+                        try {
+                            locationManager.requestLocationUpdates(
+                                LocationManager.GPS_PROVIDER,
+                                2000,
+                                0,
+                                this
+                            );
+                            activeLocationProvider = "gps";
+                            persistState();
+                            Log.d(TAG, "Switched to GPS provider");
+                        } catch (Exception e) {
+                            Log.e(TAG, "Failed to switch to GPS provider", e);
+                            activeLocationProvider = "none";
+                            publishUpdate("location_unavailable");
+                        }
+                    } else {
+                        activeLocationProvider = "none";
+                        publishUpdate("location_unavailable");
+                    }
+                }
+            }
+        }
     }
 
     // SensorEventListener callbacks
@@ -2061,11 +2265,7 @@ public class WalkService extends Service implements LocationListener, SensorEven
             // is the last hardware value WE saw (persisted across process death);
             // the difference total − lastCounterTotal is exactly the steps taken
             // while the stream was dead (screen-off stall, killed process) and
-            // must be credited on the FIRST event after resume — the old code
-            // only advanced when `calculatedSteps > currentSteps`, which is false
-            // exactly when the counter is at the baseline, leaving the count
-            // frozen at its persisted value (e.g. 30) until a second event
-            // arrived (and permanently frozen if the stream died again first).
+            // must be credited on the FIRST event after resume.
             long total = (long) event.values[0];
             lastStepEventWallMs = System.currentTimeMillis();
             Log.d(TAG, "step: counter raw=" + total
@@ -2076,16 +2276,20 @@ public class WalkService extends Service implements LocationListener, SensorEven
             boolean changed = false;
             boolean rebased = false;
 
-            // First event of this walk, or device rebooted (counter restarts near
+            // CRITICAL: First event of this walk, or device rebooted (counter restarts near
             // zero) — establish/re-establish the baseline from the walk's CURRENT
             // step count so the walk is never double-counted on resume and never
             // loses earned steps on reboot.
             if (initialStepCounterValue < 0 || total < initialStepCounterValue) {
+                // Fresh baseline: set it such that (total - baseline) = currentSteps
+                // This ensures that when we restore from process death with currentSteps=30
+                // and receive total=1050, we set baseline=1020 so calculation gives us 30
                 initialStepCounterValue = (int) (total - currentSteps);
                 lastCounterTotal = total;
                 rebased = true;
-                changed = true;
-                Log.d(TAG, "step: counter REBASED baseline=" + initialStepCounterValue + " at total=" + total);
+                Log.d(TAG, "step: counter REBASED baseline=" + initialStepCounterValue + " at total=" + total + " (preserving currentSteps=" + currentSteps + ")");
+                // Do NOT change currentSteps on rebase - we're just establishing the baseline
+                // changed remains false
             } else {
                 // Baseline is valid: derive the authoritative step count from the
                 // hardware accumulator. This path handles both live counting and
@@ -2097,22 +2301,28 @@ public class WalkService extends Service implements LocationListener, SensorEven
                 // and the counter only provides drift correction — applying catch-up
                 // here would double-count steps the detector already credited.
                 if (stepDetectorSensor == null) {
-                    // Counter-only device: credit any steps accumulated since the
-                    // last event (e.g., screen-off stall, process death). Guarded
-                    // by total > lastCounterTotal so a reboot can never subtract.
+                    // Counter-only device: use delta-based catch-up for robustness
                     if (lastCounterTotal >= 0L && total > lastCounterTotal) {
+                        // CRITICAL: Credit the delta (new steps since last event)
                         int catchUpSteps = (int) (total - lastCounterTotal);
                         currentSteps += catchUpSteps;
                         lastCounterTotal = total;
                         changed = true;
                         Log.d(TAG, "step: counter CATCH-UP +" + catchUpSteps + " steps (total=" + currentSteps + ")");
-                    } else if (calculatedSteps > currentSteps) {
-                        // Baseline-derived count jumped ahead: apply it (handles
-                        // initial counting before lastCounterTotal is set).
+                    } else if (lastCounterTotal < 0L && calculatedSteps > currentSteps) {
+                        // First event after establishing baseline (lastCounterTotal not set yet):
+                        // Sync to baseline-derived count if it's higher
                         currentSteps = calculatedSteps;
                         lastCounterTotal = total;
                         changed = true;
-                        Log.d(TAG, "step: counter BASELINE-SYNC to " + currentSteps);
+                        Log.d(TAG, "step: counter INITIAL-SYNC to " + currentSteps);
+                    } else if (lastCounterTotal >= 0L && total == lastCounterTotal) {
+                        // Same counter value as before - no new steps
+                        Log.d(TAG, "step: counter unchanged (no new steps)");
+                    } else if (lastCounterTotal < 0L) {
+                        // First counter event, just set lastCounterTotal for future deltas
+                        lastCounterTotal = total;
+                        Log.d(TAG, "step: counter lastCounterTotal initialized to " + total);
                     }
                 } else {
                     // Dual-sensor device: detector is authoritative for live counting,
@@ -2123,6 +2333,10 @@ public class WalkService extends Service implements LocationListener, SensorEven
                         lastCounterTotal = total;
                         changed = true;
                         Log.d(TAG, "step: counter DRIFT-CORRECTION to " + currentSteps);
+                    } else if (lastCounterTotal < 0L) {
+                        // Initialize lastCounterTotal for dual-sensor device
+                        lastCounterTotal = total;
+                        Log.d(TAG, "step: counter lastCounterTotal initialized to " + total + " (dual-sensor)");
                     }
                 }
             }

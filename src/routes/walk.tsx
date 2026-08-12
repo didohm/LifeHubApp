@@ -17,7 +17,6 @@ import {
   Car,
   Gauge,
   Satellite,
-  BarChart3,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Screen, ScreenHeader } from "@/components/lifehub/Screen";
@@ -34,7 +33,7 @@ import { getWalkSummary } from "@/lib/walk-storage";
 
 const RouteMap = lazy(() => import("@/components/lifehub/RouteMap"));
 const EnhancedWalkSummary = lazy(() => import("@/components/lifehub/EnhancedWalkSummary"));
-const PersonalStats = lazy(() => import("@/components/lifehub/PersonalStats"));
+import PersonalStats, { StatCard } from "@/components/lifehub/PersonalStats";
 
 export const Route = createFileRoute("/walk")({
   head: () => ({
@@ -68,7 +67,7 @@ function formatPace(durationSec: number, distanceMeters: number): string {
 }
 
 /** Strava-style summary modal shown right after a walk/run finishes. */
-function WalkSummaryModal({ session, onClose }: { session: WalkSession; onClose: () => void }) {
+export function WalkSummaryModal({ session, onClose }: { session: WalkSession; onClose: () => void }) {
   const hasRoute = !!session.path && session.path.length >= 2;
   const averagePace = formatPace(session.duration || 0, session.distance || 0);
   const hadMetrics = (session.distance || 0) > 0 || (session.steps || 0) > 0;
@@ -310,14 +309,20 @@ function WalkPage() {
     };
   }, [walkSessions, statsPeriod]);
 
-  // Recent finished walks — every completed session, newest first. Each item
-  // opens the same summary modal (metrics + route map) when tapped.
+  // Recent finished walks — the 5 newest sessions on the main screen, newest
+  // first. Each item opens the same summary modal (metrics + route map) when
+  // tapped. The full list lives on /walk/history ("View All").
   const walkHistory = useMemo(() => {
     return walkSessions
       .filter((s) => s.status === "finished")
       .sort((a, b) => (b.started_at || b.created_at).localeCompare(a.started_at || a.created_at))
-      .slice(0, 20);
+      .slice(0, 5);
   }, [walkSessions]);
+
+  const totalFinishedWalks = useMemo(
+    () => walkSessions.filter((s) => s.status === "finished").length,
+    [walkSessions],
+  );
 
   return (
     <Screen>
@@ -494,60 +499,40 @@ function WalkPage() {
         </div>
       </div>
 
-      <div className="grid grid-cols-2 gap-3 mb-5">
-        <div className="card-soft bg-white p-4 border border-black/5 shadow-xs">
-          <span className="text-xs font-extrabold text-[#6B7280]">Total Distance</span>
-          <p className="mt-1 text-2xl font-black text-[#12131A]">
-            {formatKm(stats.totalDistance)} <span className="text-xs font-bold">km</span>
-          </p>
-          <span className="text-[10px] text-[#6B7280] font-semibold mt-1 block">
-            {stats.count} walk session{stats.count === 1 ? "" : "s"}
-          </span>
-        </div>
-
-        <div className="card-soft bg-white p-4 border border-black/5 shadow-xs">
-          <span className="text-xs font-extrabold text-[#6B7280]">Calories Burned</span>
-          <p className="mt-1 text-2xl font-black text-orange-600">
-            {stats.totalCalories} <span className="text-xs font-bold">kcal</span>
-          </p>
-          <span className="text-[10px] text-[#6B7280] font-semibold mt-1 block">
-            {stats.count} walk session{stats.count === 1 ? "" : "s"} total
-          </span>
-        </div>
-      </div>
-
-      <div className="grid grid-cols-2 gap-3 mb-5">
-        <div className="card-soft bg-white p-4 border border-black/5 shadow-xs">
-          <span className="text-xs font-extrabold text-[#6B7280]">Total Duration</span>
-          <p className="mt-1 text-2xl font-black text-[#12131A]">
-            {formatDuration(stats.totalDuration)}
-          </p>
-          <span className="text-[10px] text-[#6B7280] font-semibold mt-1 block">
-            across all sessions
-          </span>
-        </div>
-
-        <div className="card-soft bg-white p-4 border border-black/5 shadow-xs">
-          <span className="text-xs font-extrabold text-[#6B7280]">Total Steps</span>
-          <p className="mt-1 text-2xl font-black text-emerald-600">
-            {stats.totalSteps.toLocaleString()} <span className="text-xs font-bold">steps</span>
-          </p>
-          <span className="text-[10px] text-[#6B7280] font-semibold mt-1 block">
-            combined from all walks
-          </span>
+      <div className="space-y-4 mb-5">
+        <div className="grid grid-cols-2 gap-3">
+          <StatCard
+            icon={<TrendingUp className="size-5 text-[#22C55E]" />}
+            label="Total Distance"
+            value={`${formatKm(stats.totalDistance)} km`}
+            color="green"
+          />
+          <StatCard
+            icon={<Flame className="size-5 text-[#F97316]" />}
+            label="Calories Burned"
+            value={`${stats.totalCalories} kcal`}
+            color="orange"
+          />
+          <StatCard
+            icon={<Clock className="size-5 text-[#EAB308]" />}
+            label="Total Duration"
+            value={formatDuration(stats.totalDuration)}
+            color="yellow"
+          />
+          <StatCard
+            icon={<Footprints className="size-5 text-[#7C5CFC]" />}
+            label="Total Steps"
+            value={stats.totalSteps.toLocaleString()}
+            color="purple"
+          />
         </div>
       </div>
 
-      {/* Personal All-Time Stats & Weekly Trends */}
+      {/* Personal Records & Last 7 Days trend */}
       {user?.id && (
         <div className="mb-5">
-          <div className="flex items-center justify-between mb-3">
-            <h2 className="text-lg font-extrabold text-[#12131A] flex items-center gap-2">
-              <BarChart3 className="size-4.5 text-[#7C5CFC]" /> Personal Analytics
-            </h2>
-          </div>
           <Suspense fallback={<div className="h-40 bg-slate-100 rounded-xl animate-pulse" />}>
-            <PersonalStats userId={user.id} />
+            <PersonalStats userId={user.id} walkSessions={walkSessions} />
           </Suspense>
         </div>
       )}
@@ -561,7 +546,7 @@ function WalkPage() {
           onClick={() => navigate({ to: "/walk/history" })}
           className="text-xs font-extrabold text-[#7C5CFC] hover:underline flex items-center gap-1"
         >
-          View All ({walkHistory.length}) &rarr;
+          View All ({totalFinishedWalks}) &rarr;
         </button>
       </div>
 

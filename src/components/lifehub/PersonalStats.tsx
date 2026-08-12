@@ -1,79 +1,86 @@
-import { useEffect, useState } from "react";
+import { useMemo } from "react";
 import { BarChart, Bar, XAxis, YAxis, ResponsiveContainer, Cell } from "recharts";
-import { TrendingUp, Footprints, Clock, Zap, Award, Target } from "lucide-react";
-import { getAggregatedStats, getWalkSummaries } from "@/lib/walk-storage";
-import type { AggregatedWalkStats, WalkSummary } from "@/lib/types";
-import { formatPace, formatDuration } from "@/lib/walk-gps-utils";
+import { Award, Target } from "lucide-react";
+import type { WalkSession, AggregatedWalkStats } from "@/lib/types";
+import { formatPace } from "@/lib/walk-gps-utils";
+import { todayLocalDate } from "@/lib/api";
 
 interface PersonalStatsProps {
   userId: string;
+  /**
+   * Finished walk sessions loaded from Firestore — the SAME source used by
+   * Walk History. Previously this component aggregated the local SQLite
+   * walk_summaries table, which diverged from Firestore (e.g. after an
+   * app reinstall wiped SQLite): History showed 18 walks while Analytics
+   * reported "No walks recorded yet".
+   */
+  walkSessions: WalkSession[];
 }
 
 /**
- * Personal fitness stats view with weekly/monthly charts.
+ * Personal records + last-7-days trend card.
  * Clean, data-focused design—no social features.
+ *
+ * All aggregates are computed from the Firestore walk sessions (status
+ * "finished" only, matching the Walk History filter), so the records and
+ * the history list always show identical numbers.
  */
-export default function PersonalStats({ userId }: PersonalStatsProps) {
-  const [stats, setStats] = useState<AggregatedWalkStats | null>(null);
-  const [weeklyData, setWeeklyData] = useState<{ day: string; distance: number }[]>([]);
-  const [loading, setLoading] = useState(true);
+export default function PersonalStats({ userId, walkSessions }: PersonalStatsProps) {
+  const finished = useMemo(
+    () => walkSessions.filter((s) => s.status === "finished"),
+    [walkSessions],
+  );
 
-  useEffect(() => {
-    if (userId) {
-      loadStats();
-    }
-  }, [userId]);
+  // Mirrors the SQL aggregation previously done in WalkDatabaseHelper:
+  // total_walks / total_distance / total_duration / total_steps over all
+  // finished sessions, plus avg pace (average of per-walk pace, sec/km),
+  // longest distance and fastest pace.
+  const stats: AggregatedWalkStats = useMemo(() => {
+    const totalDistance = finished.reduce((sum, w) => sum + (w.distance || 0), 0);
+    const totalDuration = finished.reduce((sum, w) => sum + (w.duration || 0), 0);
+    const totalSteps = finished.reduce((sum, w) => sum + (w.steps || 0), 0);
 
-  async function loadStats() {
-    setLoading(true);
-    try {
-      const aggregated = await getAggregatedStats(userId);
-      setStats(aggregated);
+    const paces = finished
+      .map((w) => {
+        const km = (w.distance || 0) / 1000;
+        return km >= 0.1 && (w.duration || 0) > 0 ? (w.duration || 0) / km : null;
+      })
+      .filter((p): p is number => p !== null);
 
-      // Get last 7 days of walks for chart
-      const allSummaries = await getWalkSummaries(userId, 100);
-      const last7Days = getLast7Days();
-      
-      const weeklyChart = last7Days.map((date) => {
-        const dayWalks = allSummaries.filter(
-          (s) => s.day === date && s.status === "finished"
-        );
-        const totalDistance = dayWalks.reduce((sum, w) => sum + w.distance, 0);
-        
-        return {
-          day: new Date(date).toLocaleDateString("en-US", { weekday: "short" }),
-          distance: totalDistance / 1000, // Convert to km
-        };
-      });
+    return {
+      total_walks: finished.length,
+      total_distance: totalDistance,
+      total_duration: totalDuration,
+      total_steps: totalSteps,
+      avg_pace:
+        paces.length > 0 ? paces.reduce((a, b) => a + b, 0) / paces.length : null,
+      longest_distance:
+        finished.length > 0
+          ? Math.max(...finished.map((w) => w.distance || 0))
+          : null,
+      fastest_pace: paces.length > 0 ? Math.min(...paces) : null,
+    };
+  }, [finished]);
 
-      setWeeklyData(weeklyChart);
-    } catch (error) {
-      console.error("Failed to load stats:", error);
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  function getLast7Days(): string[] {
-    const days: string[] = [];
+  // Last 7 days of walks for chart (local calendar days)
+  const weeklyData = useMemo(() => {
+    const dates: string[] = [];
     for (let i = 6; i >= 0; i--) {
-      const date = new Date();
-      date.setDate(date.getDate() - i);
-      days.push(date.toISOString().split("T")[0]);
+      const d = new Date();
+      d.setDate(d.getDate() - i);
+      dates.push(todayLocalDate(d));
     }
-    return days;
-  }
+    return dates.map((date) => {
+      const dayWalks = finished.filter((s) => s.day === date);
+      const totalDistance = dayWalks.reduce((sum, w) => sum + (w.distance || 0), 0);
+      return {
+        day: new Date(date).toLocaleDateString("en-US", { weekday: "short" }),
+        distance: totalDistance / 1000, // Convert to km
+      };
+    });
+  }, [finished]);
 
-  if (loading) {
-    return (
-      <div className="space-y-4">
-        <div className="h-32 rounded-xl bg-slate-100 animate-pulse" />
-        <div className="h-48 rounded-xl bg-slate-100 animate-pulse" />
-      </div>
-    );
-  }
-
-  if (!stats || stats.total_walks === 0) {
+  if (stats.total_walks === 0) {
     return (
       <div className="rounded-xl bg-white border border-slate-200 p-6 text-center">
         <Target className="size-8 text-[#64748B]/40 mx-auto mb-2" />
@@ -89,34 +96,6 @@ export default function PersonalStats({ userId }: PersonalStatsProps) {
 
   return (
     <div className="space-y-4">
-      {/* Headline metrics */}
-      <div className="grid grid-cols-2 gap-3">
-        <StatCard
-          icon={<Footprints className="size-5 text-[#7C5CFC]" />}
-          label="Total Walks"
-          value={stats.total_walks.toString()}
-          color="purple"
-        />
-        <StatCard
-          icon={<TrendingUp className="size-5 text-[#22C55E]" />}
-          label="Total Distance"
-          value={`${(stats.total_distance / 1000).toFixed(1)} km`}
-          color="green"
-        />
-        <StatCard
-          icon={<Clock className="size-5 text-[#F97316]" />}
-          label="Total Time"
-          value={formatDuration(stats.total_duration)}
-          color="orange"
-        />
-        <StatCard
-          icon={<Zap className="size-5 text-[#EAB308]" />}
-          label="Total Steps"
-          value={stats.total_steps.toLocaleString()}
-          color="yellow"
-        />
-      </div>
-
       {/* Records */}
       <div className="rounded-xl bg-white border border-slate-200 p-4">
         <h3 className="text-xs font-black uppercase tracking-wide text-[#64748B] mb-3 flex items-center gap-2">
@@ -185,7 +164,7 @@ export default function PersonalStats({ userId }: PersonalStatsProps) {
   );
 }
 
-function StatCard({
+export function StatCard({
   icon,
   label,
   value,
