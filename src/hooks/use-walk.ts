@@ -578,8 +578,10 @@ export function useWalk(
       watchIdRef.current = navigator.geolocation.watchPosition(
         (pos) => {
           const { latitude: lat, longitude: lng, accuracy, speed } = pos.coords;
-          // Filter out poor accuracy GPS readings (> 25 meters accuracy threshold)
-          if (accuracy > 25) return;
+          // Filter out very poor accuracy GPS readings (> 45 meters accuracy threshold)
+          if (accuracy && accuracy > 45) return;
+
+          const currentPoint = { lat, lng, ts: Date.now() };
 
           if (lastCoordsRef.current) {
             const distDelta = haversineDistance(
@@ -588,8 +590,8 @@ export function useWalk(
               lat,
               lng,
             );
-            // Only add valid human walking speed deltas (1.2m to 25m jump)
-            if (distDelta >= 1.2 && distDelta <= 25) {
+            // Only add valid human walking speed deltas (1.0m to 35m jump)
+            if (distDelta >= 1.0 && distDelta <= 35) {
               lastMotionTimeRef.current = Date.now();
               // Native service owns the accumulated distance while it's live;
               // the WebView fallback only fills in before the first native
@@ -604,23 +606,21 @@ export function useWalk(
                   ),
                 );
               }
-              // Keep the JS fallback trail in memory so the finished session
-              // still gets a real route when native SQLite is unavailable.
-              jsTrailRef.current.push({ lat, lng, ts: Date.now() });
+              jsTrailRef.current.push(currentPoint);
               if (isAutoPausedRef.current) {
                 setStatus("active");
                 setIsAutoPaused(false);
               }
             }
+          } else {
+            // Record first point immediately so start location is never lost
+            jsTrailRef.current.push(currentPoint);
           }
           setLastCoords({ lat, lng });
 
-          // Per-fix Firestore appends are only needed on the web fallback
-          // (no native SQLite to fall back on there). On Android the native
-          // service persists every accepted fix in SQLite and the final path
-          // is merged + saved once at finish — avoiding ~1 write per 2s.
+          // Per-fix Firestore appends on web fallback
           if (activeSession && userId && !isNative) {
-            appendWalkPoint(activeSession.id, userId, { lat, lng, ts: Date.now() }).catch(() => {});
+            appendWalkPoint(activeSession.id, userId, currentPoint).catch(() => {});
           }
         },
         (err) => {
@@ -689,6 +689,26 @@ export function useWalk(
       jsTrailRef.current = [];
       jsStepsRef.current = 0;
       gpsDistanceRef.current = 0;
+
+      // Seed initial location immediately if available
+      if (typeof window !== "undefined" && "geolocation" in navigator) {
+        navigator.geolocation.getCurrentPosition(
+          (pos) => {
+            const { latitude: lat, longitude: lng } = pos.coords;
+            const startPt = { lat, lng, ts: Date.now() };
+            setLastCoords({ lat, lng });
+            jsTrailRef.current = [startPt];
+            if (session?.id && userId && !isNative) {
+              appendWalkPoint(session.id, userId, startPt).catch(() => {});
+            }
+          },
+          (err) => {
+            console.warn("Could not get initial position:", err.message);
+          },
+          { enableHighAccuracy: true, timeout: 5000, maximumAge: 0 },
+        );
+      }
+
       // Persistent OS-level foreground notification in Android Control Center.
       // The native WalkService becomes the source of truth from here on and
       // streams "walkUpdate" events + poll snapshots back to this hook. The
@@ -871,23 +891,19 @@ export function useWalk(
 
       // Filter GPS noise and compute comprehensive stats
       const filteredPoints = filterGPSPoints(gpsPoints);
-      const stats = computeWalkStats(filteredPoints, finalDuration);
+      const pointsForStats = filteredPoints.length > 0 ? filteredPoints : gpsPoints;
+      const stats = computeWalkStats(pointsForStats, finalDuration);
 
-      // Stray-session guard (see constants above): short + no real movement
-      // → accidental start/stop. Cancelled below, never saved as a walk.
-      const recordedDistance = stats.totalDistance || finalDistance;
-      const isStraySession =
-        finalDuration < STRAY_WALK_MAX_DURATION_S &&
-        recordedDistance < STRAY_WALK_MAX_DISTANCE_M;
+      const resolvedDistance = Math.max(stats.totalDistance || 0, finalDistance || 0);
 
       // Encode polyline for efficient storage
-      const encodedPolyline = filteredPoints.length > 0 ? encodePolyline(filteredPoints) : null;
+      const encodedPolyline = pointsForStats.length > 0 ? encodePolyline(pointsForStats) : null;
 
       // Prepare start/end coordinates
-      const startLat = filteredPoints.length > 0 ? filteredPoints[0].lat : null;
-      const startLng = filteredPoints.length > 0 ? filteredPoints[0].lng : null;
-      const endLat = filteredPoints.length > 0 ? filteredPoints[filteredPoints.length - 1].lat : null;
-      const endLng = filteredPoints.length > 0 ? filteredPoints[filteredPoints.length - 1].lng : null;
+      const startLat = pointsForStats.length > 0 ? pointsForStats[0].lat : (lastCoords?.lat ?? null);
+      const startLng = pointsForStats.length > 0 ? pointsForStats[0].lng : (lastCoords?.lng ?? null);
+      const endLat = pointsForStats.length > 0 ? pointsForStats[pointsForStats.length - 1].lat : (lastCoords?.lat ?? null);
+      const endLng = pointsForStats.length > 0 ? pointsForStats[pointsForStats.length - 1].lng : (lastCoords?.lng ?? null);
 
       const finalCaloriesValue = Math.max(
         finalCalories,
@@ -901,10 +917,10 @@ export function useWalk(
         user_id: userId,
         status: "finished",
         duration: finalDuration,
-        distance: stats.totalDistance || finalDistance,
+        distance: resolvedDistance,
         calories: finalCaloriesValue,
         steps: finalSteps,
-        avg_pace: stats.avgPace,
+        avg_pace: stats.avgPace || (resolvedDistance > 0 && finalDuration > 0 ? finalDuration / (resolvedDistance / 1000) : null),
         elevation_gain: stats.elevationGain,
         elevation_loss: stats.elevationLoss,
         day: todayLocalDate(),
@@ -931,20 +947,25 @@ export function useWalk(
         elevation_change: split.elevationChange,
       }));
 
-      // Save to local SQLite (no Firestore sync) — skipped for stray trips.
-      // A stray session is cancelled in Firestore instead (same status the
-      // abandoned-session cleanup already uses), so it never shows up in
-      // history, never counts toward stats, and stays only as an audit log.
-      if (!isStraySession) {
-        try {
-          await saveWalkSummary(summary, splits);
-        } catch (error) {
-          console.error("Failed to save walk summary locally:", error);
-        }
-      } else {
-        cancelWalkSession(activeSession.id, userId).catch((error) =>
-          console.error("Failed to cancel stray walk session:", error),
-        );
+      // Save to local SQLite (for offline/native history) and update Firestore
+      try {
+        await saveWalkSummary(summary, splits);
+      } catch (error) {
+        console.error("Failed to save walk summary locally:", error);
+      }
+      try {
+        await finishWalkSession(activeSession.id, userId, {
+          duration: finalDuration,
+          distance: resolvedDistance,
+          calories: finalCaloriesValue,
+          steps: finalSteps,
+          day: activeSession.day || todayLocalDate(),
+          finished_at: now,
+          path: finalPath.length > 0 ? finalPath : null,
+          vehicle: finalVehicleFlagged,
+        });
+      } catch (error) {
+        console.error("Failed to finish walk session in Firestore:", error);
       }
 
       // Clean up state
@@ -972,16 +993,12 @@ export function useWalk(
         WalkServicePlugin.clearRoutePoints({ sessionId: activeSession.id }).catch(() => {});
       }
 
-      // Stray (accidental) sessions return null — no summary modal, no
-      // completion chime; the caller simply ignores the result.
-      if (isStraySession) return null;
-
       // Create a finished session object for the callback
       const finishedSession: WalkSession = {
         ...activeSession,
         status: "finished",
         duration: finalDuration,
-        distance: stats.totalDistance || finalDistance,
+        distance: resolvedDistance,
         calories: finalCaloriesValue,
         steps: finalSteps,
         finished_at: now,

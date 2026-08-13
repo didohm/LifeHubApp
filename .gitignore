@@ -94,6 +94,7 @@ Thumbs.db
 
 # AI assistant
 .kilo
+.opencode
 
 # Temporary files
 *.tmp

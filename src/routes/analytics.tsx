@@ -282,7 +282,9 @@ function AnalyticsPage() {
     });
     walkSessions.forEach((w) => {
       if (w.status !== "finished") return;
-      const key = keyForIso(w.started_at) ?? keyForDateOnly(w.day);
+      const walkDay =
+        w.day || (w.started_at ? w.started_at.slice(0, 10) : w.created_at ? w.created_at.slice(0, 10) : "");
+      const key = keyForIso(w.started_at) ?? keyForDateOnly(walkDay);
       if (key) add(key, "fitness");
     });
 
@@ -319,7 +321,11 @@ function AnalyticsPage() {
     const workoutsDone = workouts.filter(
       (w) => w.status === "completed" && inRangeDateOnly(w.scheduled_date),
     );
-    const walksDone = walkSessions.filter((w) => w.status === "finished" && inRangeDateOnly(w.day));
+    const walksDone = walkSessions.filter((w) => {
+      const walkDay =
+        w.day || (w.started_at ? w.started_at.slice(0, 10) : w.created_at ? w.created_at.slice(0, 10) : "");
+      return w.status === "finished" && inRangeDateOnly(walkDay);
+    });
     const waterDays = waterLogs.filter((l) => inRangeDateOnly(l.day));
 
     const elapsedDays = Math.max(1, Math.floor((nowMs - startMs) / 86_400_000) + 1);

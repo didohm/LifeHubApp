@@ -1355,6 +1355,7 @@ export async function updateWalkSession(
     "distance",
     "calories",
     "steps",
+    "day",
     "finished_at",
     "path",
     "vehicle",
@@ -1378,9 +1379,28 @@ export async function deleteWalkSession(id: string, userId: string): Promise<voi
   await deleteDoc(docRef);
 }
 
-export async function finishWalkSession(id: string, userId: string): Promise<WalkSession | null> {
+export async function finishWalkSession(
+  id: string,
+  userId: string,
+  data?: Partial<WalkSession>,
+): Promise<WalkSession | null> {
   const docRef = doc(db, "users", userId, "walk_sessions", id);
-  await updateDoc(docRef, { status: "finished", finished_at: now(), updated_at: now() });
+  const updates: any = { status: "finished", finished_at: now(), updated_at: now() };
+  if (data) {
+    for (const key of [
+      "duration",
+      "distance",
+      "calories",
+      "steps",
+      "day",
+      "finished_at",
+      "path",
+      "vehicle",
+    ] as const) {
+      if (data[key] !== undefined) updates[key] = data[key];
+    }
+  }
+  await updateDoc(docRef, updates);
   const snap = await getDoc(docRef);
   if (!snap.exists()) return null;
   const session = docToObj<WalkSession>(snap);

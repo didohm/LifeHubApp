@@ -261,8 +261,20 @@ public class WalkService extends Service implements LocationListener, SensorEven
             }
         };
         if (sensorManager != null) {
-            stepDetectorSensor = sensorManager.getDefaultSensor(Sensor.TYPE_STEP_DETECTOR);
-            stepCounterSensor = sensorManager.getDefaultSensor(Sensor.TYPE_STEP_COUNTER);
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                // Request wake-up sensors so events wake up the AP when screen is locked
+                stepDetectorSensor = sensorManager.getDefaultSensor(Sensor.TYPE_STEP_DETECTOR, true);
+                if (stepDetectorSensor == null) {
+                    stepDetectorSensor = sensorManager.getDefaultSensor(Sensor.TYPE_STEP_DETECTOR);
+                }
+                stepCounterSensor = sensorManager.getDefaultSensor(Sensor.TYPE_STEP_COUNTER, true);
+                if (stepCounterSensor == null) {
+                    stepCounterSensor = sensorManager.getDefaultSensor(Sensor.TYPE_STEP_COUNTER);
+                }
+            } else {
+                stepDetectorSensor = sensorManager.getDefaultSensor(Sensor.TYPE_STEP_DETECTOR);
+                stepCounterSensor = sensorManager.getDefaultSensor(Sensor.TYPE_STEP_COUNTER);
+            }
         }
         createNotificationChannel();
         restoreState();
@@ -1682,7 +1694,7 @@ public class WalkService extends Service implements LocationListener, SensorEven
         boolean anyRegistered = false;
         
         if (stepDetectorSensor != null) {
-            boolean registered = sensorManager.registerListener(this, stepDetectorSensor, SensorManager.SENSOR_DELAY_UI);
+            boolean registered = sensorManager.registerListener(this, stepDetectorSensor, SensorManager.SENSOR_DELAY_FASTEST);
             if (registered) {
                 Log.d(TAG, "Step detector registered (attempt " + (attemptNumber + 1) + ")");
                 anyRegistered = true;
@@ -1690,7 +1702,7 @@ public class WalkService extends Service implements LocationListener, SensorEven
         }
         
         if (stepCounterSensor != null) {
-            boolean registered = sensorManager.registerListener(this, stepCounterSensor, SensorManager.SENSOR_DELAY_UI);
+            boolean registered = sensorManager.registerListener(this, stepCounterSensor, SensorManager.SENSOR_DELAY_FASTEST);
             if (registered) {
                 Log.d(TAG, "Step counter registered (attempt " + (attemptNumber + 1) + ")");
                 anyRegistered = true;
@@ -1707,29 +1719,7 @@ public class WalkService extends Service implements LocationListener, SensorEven
         
         sensorsRegistered = true;
         sensorRegistrationAttempts = attemptNumber + 1;
-        
-        // Validate sensors are working by checking for first event within 5 seconds
-        if (attemptNumber < MAX_SENSOR_RETRIES) {
-            final long registrationTime = System.currentTimeMillis();
-            pendingSensorValidation = new Runnable() {
-                @Override
-                public void run() {
-                    // If no step event received within 5 seconds, retry
-                    if (lastStepEventWallMs < registrationTime && isTracking && !paused) {
-                        Log.w(TAG, "No step event received after registration, retrying...");
-                        registerStepListenersWithRetry(attemptNumber + 1);
-                    } else {
-                        Log.d(TAG, "Step sensors validated successfully");
-                        isSensorRecoveryInProgress = false;
-                    }
-                    pendingSensorValidation = null;
-                }
-            };
-            sensorRetryHandler.postDelayed(pendingSensorValidation, 5000L);
-        } else {
-            // Max retries reached, clear recovery flag
-            isSensorRecoveryInProgress = false;
-        }
+        isSensorRecoveryInProgress = false;
         
         persistState();
     }
@@ -2091,32 +2081,17 @@ public class WalkService extends Service implements LocationListener, SensorEven
                 }
             }
 
-            boolean stepSensorFresh = (System.currentTimeMillis() - lastStepEventWallMs) <= 12_000L;
-            boolean cadenceConsistent = true;
-            if (stepSensorFresh) {
-                double impliedSteps = distMeters / STRIDE_METERS;
-                int countedSteps = Math.max(1, currentSteps - stepsAtLastMark);
-                // For short distances (< 10m / ~13 steps), use wider tolerance due to GPS quantization
-                // For longer distances, use tighter bounds to catch GPS drift
-                double toleranceFactor = distMeters < 10.0f ? 0.5 : 0.3; // ±50% for short, ±30% for long
-                double fixedTolerance = distMeters < 10.0f ? 3.0 : 1.0; // ±3 steps for short, ±1 for long
-                double lowerBound = countedSteps * (1.0 - toleranceFactor) - fixedTolerance;
-                double upperBound = countedSteps * (1.0 + toleranceFactor) + fixedTolerance;
-                cadenceConsistent = impliedSteps >= lowerBound && impliedSteps <= upperBound;
-                
-                if (!cadenceConsistent) {
-                    Log.d(TAG, "Cadence mismatch: implied=" + String.format("%.1f", impliedSteps) 
-                        + " counted=" + countedSteps 
-                        + " dist=" + String.format("%.1f", distMeters) + "m"
-                        + " bounds=[" + String.format("%.1f", lowerBound) + ", " + String.format("%.1f", upperBound) + "]");
-                }
-            }
-
-            boolean accepted = distancePlausible && speedPlausible && cadenceConsistent;
+            boolean accepted = distancePlausible && speedPlausible;
             if (accepted) {
                 gpsDistanceKm += (distMeters / 1000.0);
                 stepsAtLastMark = currentSteps;
                 lastGpsFixWallMs = nowWall;
+
+                // Step floor: ensure step count never stalls behind GPS walking displacement during screen lock
+                int impliedSteps = (int) Math.round((gpsDistanceKm * 1000.0) / STRIDE_METERS);
+                if (impliedSteps > currentSteps) {
+                    currentSteps = impliedSteps;
+                }
 
                 // Save accepted point to SQLite DB for persistent route rendering
                 if (dbHelper != null) {
@@ -2282,62 +2257,17 @@ public class WalkService extends Service implements LocationListener, SensorEven
             // loses earned steps on reboot.
             if (initialStepCounterValue < 0 || total < initialStepCounterValue) {
                 // Fresh baseline: set it such that (total - baseline) = currentSteps
-                // This ensures that when we restore from process death with currentSteps=30
-                // and receive total=1050, we set baseline=1020 so calculation gives us 30
                 initialStepCounterValue = (int) (total - currentSteps);
                 lastCounterTotal = total;
                 rebased = true;
                 Log.d(TAG, "step: counter REBASED baseline=" + initialStepCounterValue + " at total=" + total + " (preserving currentSteps=" + currentSteps + ")");
-                // Do NOT change currentSteps on rebase - we're just establishing the baseline
-                // changed remains false
             } else {
-                // Baseline is valid: derive the authoritative step count from the
-                // hardware accumulator. This path handles both live counting and
-                // catch-up after stream suspension (screen-off, process death).
                 int calculatedSteps = (int) (total - initialStepCounterValue);
-                
-                // Only apply catch-up when step DETECTOR is absent (single-sensor
-                // devices). On dual-sensor devices the detector is authoritative
-                // and the counter only provides drift correction — applying catch-up
-                // here would double-count steps the detector already credited.
-                if (stepDetectorSensor == null) {
-                    // Counter-only device: use delta-based catch-up for robustness
-                    if (lastCounterTotal >= 0L && total > lastCounterTotal) {
-                        // CRITICAL: Credit the delta (new steps since last event)
-                        int catchUpSteps = (int) (total - lastCounterTotal);
-                        currentSteps += catchUpSteps;
-                        lastCounterTotal = total;
-                        changed = true;
-                        Log.d(TAG, "step: counter CATCH-UP +" + catchUpSteps + " steps (total=" + currentSteps + ")");
-                    } else if (lastCounterTotal < 0L && calculatedSteps > currentSteps) {
-                        // First event after establishing baseline (lastCounterTotal not set yet):
-                        // Sync to baseline-derived count if it's higher
-                        currentSteps = calculatedSteps;
-                        lastCounterTotal = total;
-                        changed = true;
-                        Log.d(TAG, "step: counter INITIAL-SYNC to " + currentSteps);
-                    } else if (lastCounterTotal >= 0L && total == lastCounterTotal) {
-                        // Same counter value as before - no new steps
-                        Log.d(TAG, "step: counter unchanged (no new steps)");
-                    } else if (lastCounterTotal < 0L) {
-                        // First counter event, just set lastCounterTotal for future deltas
-                        lastCounterTotal = total;
-                        Log.d(TAG, "step: counter lastCounterTotal initialized to " + total);
-                    }
-                } else {
-                    // Dual-sensor device: detector is authoritative for live counting,
-                    // counter only corrects drift. If counter is significantly ahead
-                    // (> 3 steps), trust it (handles detector misses / HAL bugs).
-                    if (calculatedSteps > currentSteps + 3) {
-                        currentSteps = calculatedSteps;
-                        lastCounterTotal = total;
-                        changed = true;
-                        Log.d(TAG, "step: counter DRIFT-CORRECTION to " + currentSteps);
-                    } else if (lastCounterTotal < 0L) {
-                        // Initialize lastCounterTotal for dual-sensor device
-                        lastCounterTotal = total;
-                        Log.d(TAG, "step: counter lastCounterTotal initialized to " + total + " (dual-sensor)");
-                    }
+                if (calculatedSteps > currentSteps) {
+                    currentSteps = calculatedSteps;
+                    lastCounterTotal = total;
+                    changed = true;
+                    Log.d(TAG, "step: counter sync to " + currentSteps);
                 }
             }
 

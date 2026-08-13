@@ -39,7 +39,10 @@ function WalkHistoryPage() {
 
   const filteredSessions = sessions.filter((s) => {
     if (filter === "all") return true;
-    const walkDate = new Date(s.day);
+    const walkDay =
+      s.day || (s.started_at ? s.started_at.slice(0, 10) : s.created_at ? s.created_at.slice(0, 10) : "");
+    if (!walkDay) return true;
+    const walkDate = new Date(walkDay);
     const now = new Date();
     const diffDays = Math.floor((now.getTime() - walkDate.getTime()) / (1000 * 60 * 60 * 24));
 
@@ -134,19 +137,18 @@ function WalkHistoryPage() {
         )}
       </div>
 
-      {/* Detail modal — full summary when available */}
-      {selectedSummary && (
+      {/* Detail modal — full Strava summary */}
+      {(selectedSummary || selectedSession) && (
         <Suspense fallback={null}>
           <EnhancedWalkSummary
             summary={selectedSummary}
-            onClose={() => setSelectedSummary(null)}
+            session={selectedSession}
+            onClose={() => {
+              setSelectedSummary(null);
+              setSelectedSession(null);
+            }}
           />
         </Suspense>
-      )}
-
-      {/* Fallback legacy summary modal if no local summary exists */}
-      {!selectedSummary && selectedSession && (
-        <WalkSummaryModal session={selectedSession} onClose={() => setSelectedSession(null)} />
       )}
     </Screen>
   );
@@ -187,13 +189,17 @@ function WalkHistoryCard({
         >
           <div className="h-32 relative">
             <RouteMapGL
+              points={path}
               startLat={first.lat}
               startLng={first.lng}
               endLat={last.lat}
               endLng={last.lng}
               height={128}
               interactive={false}
-              showMarkers={false}
+              showMarkers={true}
+              showKmMarkers={false}
+              allowFullscreen={false}
+              allowLayerToggle={false}
             />
             <div className="absolute inset-0 bg-gradient-to-t from-black/10 to-transparent pointer-events-none" />
           </div>

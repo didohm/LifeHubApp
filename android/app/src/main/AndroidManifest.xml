@@ -106,6 +106,8 @@
 
     <!-- Step counter & Activity Recognition (Walk service step counter) -->
     <uses-permission android:name="android.permission.ACTIVITY_RECOGNITION" />
+    <uses-permission android:name="android.permission.BODY_SENSORS" />
+    <uses-permission android:name="android.permission.HIGH_SAMPLING_RATE_SENSORS" />
 
     <!-- Foreground services for background tracking -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
@@ -122,6 +124,9 @@
          app uses it (optional — the service degrades to GPS-only otherwise). -->
     <uses-feature
         android:name="android.hardware.sensor.stepcounter"
+        android:required="false" />
+    <uses-feature
+        android:name="android.hardware.sensor.stepdetector"
         android:required="false" />
 
 </manifest>

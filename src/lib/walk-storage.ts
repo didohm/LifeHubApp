@@ -6,7 +6,8 @@
  */
 
 import { registerPlugin, Capacitor } from "@capacitor/core";
-import type { WalkSummary, WalkSplit, AggregatedWalkStats } from "./types";
+import type { WalkSummary, WalkSplit, AggregatedWalkStats, WalkSession } from "./types";
+import { todayLocalDate, updateWalkSession } from "./api";
 
 interface WalkServicePlugin {
   saveWalkSummary(options: {
@@ -364,4 +365,67 @@ export async function getMonthlyStats(
     duration: monthSummaries.reduce((sum, s) => sum + s.duration, 0),
     walks: monthSummaries.length,
   };
+}
+
+/**
+ * Merge locally stored SQLite walk summaries into a list of Firestore WalkSessions.
+ * Ensures completed walks stored in SQLite on native devices are counted in stats
+ * and history even if Firestore sync was delayed, offline, or desynced.
+ */
+export async function mergeLocalWalkSummaries(
+  userId: string,
+  firestoreSessions: WalkSession[],
+): Promise<WalkSession[]> {
+  if (!Capacitor.isNativePlatform()) return firestoreSessions;
+
+  try {
+    const localSummaries = await getWalkSummaries(userId, 500);
+    if (!localSummaries || localSummaries.length === 0) return firestoreSessions;
+
+    const firestoreMap = new Map<string, WalkSession>(firestoreSessions.map((s) => [s.id, s]));
+    let hasChanges = false;
+
+    for (const local of localSummaries) {
+      if (local.status !== "finished") continue;
+      const existing = firestoreMap.get(local.id);
+      if (!existing || existing.status !== "finished") {
+        hasChanges = true;
+        const mergedSession: WalkSession = {
+          id: local.id,
+          user_id: local.user_id,
+          status: "finished",
+          duration: local.duration,
+          distance: local.distance,
+          calories: local.calories,
+          steps: local.steps,
+          day: local.day || (local.started_at ? local.started_at.slice(0, 10) : todayLocalDate()),
+          started_at: local.started_at,
+          finished_at: local.finished_at,
+          path: null,
+          vehicle: local.vehicle_flagged,
+          created_at: local.created_at,
+          updated_at: local.updated_at,
+        };
+        firestoreMap.set(local.id, mergedSession);
+
+        // Backfill Firestore in background if missing or active
+        updateWalkSession(local.id, userId, {
+          status: "finished",
+          duration: local.duration,
+          distance: local.distance,
+          calories: local.calories,
+          steps: local.steps,
+          day: mergedSession.day,
+          finished_at: local.finished_at || undefined,
+          vehicle: local.vehicle_flagged,
+        }).catch(() => {});
+      }
+    }
+
+    if (!hasChanges) return firestoreSessions;
+    return Array.from(firestoreMap.values());
+  } catch (err) {
+    console.warn("Failed to merge local SQLite walk summaries:", err);
+    return firestoreSessions;
+  }
 }

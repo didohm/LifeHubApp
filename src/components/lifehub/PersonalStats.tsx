@@ -71,7 +71,11 @@ export default function PersonalStats({ userId, walkSessions }: PersonalStatsPro
       dates.push(todayLocalDate(d));
     }
     return dates.map((date) => {
-      const dayWalks = finished.filter((s) => s.day === date);
+      const dayWalks = finished.filter((s) => {
+        const walkDay =
+          s.day || (s.started_at ? s.started_at.slice(0, 10) : s.created_at ? s.created_at.slice(0, 10) : "");
+        return walkDay === date;
+      });
       const totalDistance = dayWalks.reduce((sum, w) => sum + (w.distance || 0), 0);
       return {
         day: new Date(date).toLocaleDateString("en-US", { weekday: "short" }),

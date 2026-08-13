@@ -60,9 +60,10 @@ import {
   WaterLog,
   DocumentItem,
 } from "./types";
-import { Notifications } from "./notifications-integration";
-import { PERMISSIONS_CHANGED_EVENT } from "./permissions";
 import { sounds } from "./sound";
+import { Notifications } from "./notifications-integration";
+import { mergeLocalWalkSummaries } from "./walk-storage";
+import { PERMISSIONS_CHANGED_EVENT } from "./permissions";
 import { useRef } from "react";
 
 // Utility: deduplicate an array of objects with `id` field
@@ -401,11 +402,12 @@ export function DataProvider({ userId, children }: { userId: string | null; chil
     if (!userId) return;
     setFitnessLoading(true);
     try {
-      const [programs, workoutList, walks] = await Promise.all([
+      const [programs, workoutList, rawWalks] = await Promise.all([
         getWorkoutPrograms(userId),
         getWorkouts(userId),
         getWalkSessions(userId),
       ]);
+      const walks = await mergeLocalWalkSummaries(userId, rawWalks);
       setWorkoutPrograms(dedupeById(programs));
       setWorkouts(dedupeById(workoutList));
       setWalkSessions(dedupeById(walks));
@@ -503,9 +505,11 @@ export function DataProvider({ userId, children }: { userId: string | null; chil
         if (!active) return;
         commitSnapshot(setWorkouts, items);
       }),
-      subscribeWalkSessions(userId, (items) => {
+      subscribeWalkSessions(userId, async (items) => {
         if (!active) return;
-        commitSnapshot(setWalkSessions, items);
+        const merged = await mergeLocalWalkSummaries(userId, items);
+        if (!active) return;
+        commitSnapshot(setWalkSessions, merged);
         setFitnessLoading(false);
       }),
       subscribeActivityLogs(userId, (items) => {

@@ -67,139 +67,20 @@ function formatPace(durationSec: number, distanceMeters: number): string {
 }
 
 /** Strava-style summary modal shown right after a walk/run finishes. */
-export function WalkSummaryModal({ session, onClose }: { session: WalkSession; onClose: () => void }) {
-  const hasRoute = !!session.path && session.path.length >= 2;
-  const averagePace = formatPace(session.duration || 0, session.distance || 0);
-  const hadMetrics = (session.distance || 0) > 0 || (session.steps || 0) > 0;
-
-  useEffect(() => registerOverlay(), []);
-
-  const modal = (
-    <div
-      className="fixed inset-0 z-[80] flex items-end justify-center bg-black/60 backdrop-blur-sm p-0 sm:items-center sm:p-6"
-      onClick={onClose}
-    >
-      <div
-        role="dialog"
-        aria-modal="true"
-        className="w-full max-w-md min-h-0 max-h-full overflow-y-auto overscroll-contain rounded-t-3xl sm:rounded-3xl bg-white shadow-2xl animate-in fade-in slide-in-from-bottom-4 duration-200"
-        onClick={(e) => e.stopPropagation()}
-      >
-        {/* Header */}
-        <div className="bg-gradient-to-br from-[#12131A] via-[#1A1C28] to-[#2E3146] px-6 pt-6 pb-5 text-white relative">
-          <button
-            onClick={onClose}
-            className="absolute right-4 top-4 flex size-8 items-center justify-center rounded-full bg-white/10 text-white/80 hover:bg-white/20"
-            aria-label="Close summary"
-          >
-            <X className="size-4" />
-          </button>
-          <div className="flex items-center gap-2 text-emerald-400">
-            <Footprints className="size-5" />
-            <span className="text-xs font-black uppercase tracking-widest">Walk Complete</span>
-          </div>
-          <div className="mt-3 flex items-end gap-1.5">
-            <span className="text-5xl font-black tracking-tight">{formatKm(session.distance)}</span>
-            <span className="pb-1.5 text-lg font-bold text-white/60">km</span>
-          </div>
-          <p className="mt-1 text-[11px] font-semibold text-white/50">
-            {new Date(session.finished_at || session.started_at).toLocaleString([], {
-              dateStyle: "medium",
-              timeStyle: "short",
-            })}
-          </p>
-        </div>
-
-        {/* Stats grid (Strava-style) */}
-        <div className="grid grid-cols-3 divide-x divide-slate-100 border-b border-slate-100 bg-white">
-          <div className="px-3 py-4 text-center">
-            <Clock className="mx-auto size-4 text-[#7C5CFC]" />
-            <p className="mt-1 text-base font-black text-[#12131A]">
-              {formatDuration(session.duration)}
-            </p>
-            <p className="text-[10px] font-bold uppercase tracking-wide text-[#9CA3AF]">Elapsed</p>
-          </div>
-          <div className="px-3 py-4 text-center">
-            <Gauge className="mx-auto size-4 text-amber-500" />
-            <p className="mt-1 text-base font-black text-[#12131A]">{averagePace}</p>
-            <p className="text-[10px] font-bold uppercase tracking-wide text-[#9CA3AF]">Pace /km</p>
-          </div>
-          <div className="px-3 py-4 text-center">
-            <Footprints className="mx-auto size-4 text-emerald-500" />
-            <p className="mt-1 text-base font-black text-[#12131A]">
-              {session.steps?.toLocaleString() ?? 0}
-            </p>
-            <p className="text-[10px] font-bold uppercase tracking-wide text-[#9CA3AF]">Steps</p>
-          </div>
-        </div>
-
-        {/* Calories + vehicle flag */}
-        <div className="flex items-center justify-between px-6 py-3.5 bg-slate-50/70">
-          <div className="flex items-center gap-2 text-sm font-extrabold text-[#12131A]">
-            <Flame className="size-4 text-orange-500" />
-            {session.calories || 0} kcal burned
-          </div>
-          {session.vehicle && (
-            <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2.5 py-1 text-[10px] font-black text-amber-700">
-              <Car className="size-3" /> Vehicle detected
-            </span>
-          )}
-        </div>
-
-        {/* Route map */}
-        <div className="px-4 pb-5 pt-3">
-          {hasRoute ? (
-            <Suspense
-              fallback={
-                <div className="flex h-[260px] w-full items-center justify-center rounded-xl bg-slate-100 text-xs font-bold text-[#6B7280]">
-                  Loading route map…
-                </div>
-              }
-            >
-              <div className="overflow-hidden rounded-xl border border-slate-200">
-                <RouteMap points={(session.path as WalkRoutePoint[]) ?? []} height={260} />
-              </div>
-            </Suspense>
-          ) : (
-            <div className="flex h-[120px] w-full flex-col items-center justify-center gap-1 rounded-xl border border-dashed border-slate-200 bg-slate-50 text-center px-6">
-              <MapPin className="size-5 text-[#9CA3AF]" />
-              <p className="text-xs font-black text-[#6B7280]">No GPS route was recorded</p>
-              <p className="text-[11px] font-semibold text-[#9CA3AF]">
-                {hadMetrics
-                  ? "GPS signal was lost or too weak during this walk — your distance and steps were still counted."
-                  : "Location was unavailable or permission was denied, so no map trail was captured."}
-              </p>
-            </div>
-          )}
-          {hasRoute && (
-            <div className="mt-2 flex items-center justify-center gap-4 text-[10px] font-bold text-[#6B7280]">
-              <span className="flex items-center gap-1">
-                <span className="size-2 rounded-full bg-emerald-500" /> Start
-              </span>
-              <span className="flex items-center gap-1">
-                <span className="size-2 rounded-full bg-rose-500" /> Finish
-              </span>
-            </div>
-          )}
-        </div>
-
-        <button
-          onClick={onClose}
-          className="w-full py-4 text-sm font-black text-white bg-[#7C5CFC] hover:bg-[#6c4de8] active:scale-[0.99] transition-transform"
-        >
-          Done
-        </button>
-      </div>
-    </div>
+export function WalkSummaryModal({
+  session,
+  summary,
+  onClose,
+}: {
+  session?: WalkSession | null;
+  summary?: WalkSummary | null;
+  onClose: () => void;
+}) {
+  return (
+    <Suspense fallback={null}>
+      <EnhancedWalkSummary session={session} summary={summary} onClose={onClose} />
+    </Suspense>
   );
-
-  // Render through a portal onto <body> so the overlay is positioned against
-  // the real viewport. The walk page container carries `will-change: transform`
-  // (page fade animation), which makes it the containing block for
-  // `position: fixed` descendants — without the portal the "Walk Complete"
-  // panel anchors to the bottom of the whole scrollable page, forcing the
-  // user to scroll down to see the summary.
-  return createPortal(modal, document.body);
 }
 
 function WalkPage() {
@@ -291,9 +172,11 @@ function WalkPage() {
           ? startOfPeriod(6)
           : startOfPeriod(29);
 
-    const filtered = walkSessions.filter(
-      (s) => s.status === "finished" && !!s.day && s.day >= periodStart && s.day <= todayStr,
-    );
+    const filtered = walkSessions.filter((s) => {
+      const walkDay =
+        s.day || (s.started_at ? s.started_at.slice(0, 10) : s.created_at ? s.created_at.slice(0, 10) : "");
+      return s.status === "finished" && !!walkDay && walkDay >= periodStart && walkDay <= todayStr;
+    });
 
     const totalDistance = filtered.reduce((sum, s) => sum + (s.distance || 0), 0);
     const totalDuration = filtered.reduce((sum, s) => sum + (s.duration || 0), 0);
@@ -614,19 +497,18 @@ function WalkPage() {
         )}
       </div>
 
-      {/* Enhanced summary modal for finished/selected walks */}
-      {completedSummary && (
+      {/* Strava-style summary modal for finished/selected walks */}
+      {(completedSummary || completedSession) && (
         <Suspense fallback={null}>
           <EnhancedWalkSummary
             summary={completedSummary}
-            onClose={() => setCompletedSummary(null)}
+            session={completedSession}
+            onClose={() => {
+              setCompletedSummary(null);
+              setCompletedSession(null);
+            }}
           />
         </Suspense>
-      )}
-
-      {/* Fallback legacy summary modal if summary unavailable */}
-      {!completedSummary && completedSession && (
-        <WalkSummaryModal session={completedSession} onClose={() => setCompletedSession(null)} />
       )}
     </Screen>
   );
