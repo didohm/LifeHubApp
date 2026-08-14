@@ -642,8 +642,10 @@ export async function updateUserProfile(userId: string, data: Partial<User>): Pr
     const userSnap = await getDoc(userRef);
 
     if (userSnap.exists()) {
-      // Update existing user
-      const updates: any = { updated_at: now() };
+      // Update existing user. The rules require `user_id` to match the owner
+      // on every update, and legacy docs (created before the rules hardening)
+      // may lack it — always writing it keeps the write legal and repairs them.
+      const updates: any = { updated_at: now(), user_id: userId };
       if (data.full_name !== undefined) updates.full_name = data.full_name;
       if (data.avatar_url !== undefined) updates.avatar_url = data.avatar_url;
       if (data.date_of_birth !== undefined) updates.date_of_birth = data.date_of_birth;
@@ -660,9 +662,13 @@ export async function updateUserProfile(userId: string, data: Partial<User>): Pr
         updates.accessibility_mode = data.accessibility_mode;
       await updateDoc(userRef, updates);
     } else {
-      // Create new user document
+      // Create new user document. `user_id` MUST be present — the Firestore
+      // rules (`isDataOwnedBy`) reject any profile create/update that does not
+      // carry the owner's uid, which previously made onboarding silently fail
+      // and re-appear after every sign-out.
       await setDoc(userRef, {
         id: userId,
+        user_id: userId,
         email: data.email || "",
         full_name: data.full_name || "User",
         avatar_url: data.avatar_url || null,

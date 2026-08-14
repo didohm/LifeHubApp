@@ -61,11 +61,15 @@ function OnboardingPage() {
     setSubmitting(true);
     setError("");
     try {
-      await updateUserProfile(user.id, {
+      // A null result means Firestore rejected the write (e.g. rules) — treat
+      // it as a failure instead of silently proceeding with local-only state,
+      // which made onboarding re-appear after every sign-out.
+      const saved = await updateUserProfile(user.id, {
         date_of_birth: dob,
         height: heightNum,
         weight: weightNum,
       });
+      if (!saved) throw new Error("Profile write rejected");
       updateUserField("date_of_birth", dob);
       updateUserField("height", heightNum);
       updateUserField("weight", weightNum);

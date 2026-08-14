@@ -83,6 +83,9 @@ export function useWalk(
   const timerRef = useRef<number | null>(null);
   const lastCoordsRef = useRef<{ lat: number; lng: number } | null>(null);
   lastCoordsRef.current = lastCoords;
+  // Wall-clock of the last accepted JS GPS fix — feeds the displacement/time
+  // speed estimate used by the motion gate when the provider omits `speed`.
+  const lastFixTimeRef = useRef<number>(0);
 
   // JS-side fallback trackers. These ONLY fill the gap before the native
   // service reports its first real progress (or on platforms without the
@@ -195,15 +198,19 @@ export function useWalk(
     }
 
     // The native service is the single source of truth the moment it reports
-    // ANY real progress — a GPS fix (updateCount > 0), a step (steps > 0), or
-    // accumulated distance (distanceKm > 0).
-    const hasProgress = data.updateCount > 0 || data.steps > 0 || data.distanceKm > 0;
+    // REAL progress (a step or accumulated distance). A service that is
+    // tracking but has produced nothing yet (no accepted GPS fix, dead step
+    // sensor) must NOT disable the JS fallback counters — otherwise a walk
+    // can freeze at 0.00 km / 0 steps while the native side silently accepts
+    // nothing. Once real values arrive, the merge below is monotonic
+    // (Math.max), so the earlier JS fallback can never double-count.
+    const hasRealProgress = data.steps > 0 || data.distanceKm > 0;
 
     if (typeof data.isVehicleFlagged === "boolean") {
       setVehicleFlagged(data.isVehicleFlagged);
     }
 
-    if (data.tracking && (hasProgress || data.updateCount > 0)) {
+    if (data.tracking && hasRealProgress) {
       const becameNativeActive = !nativeActiveRef.current;
       nativeActiveRef.current = true;
       setNativeTracking(true);
@@ -582,6 +589,7 @@ export function useWalk(
           if (accuracy && accuracy > 45) return;
 
           const currentPoint = { lat, lng, ts: Date.now() };
+          const nowTs = pos.timestamp || currentPoint.ts;
 
           if (lastCoordsRef.current) {
             const distDelta = haversineDistance(
@@ -592,11 +600,18 @@ export function useWalk(
             );
             // Motion evidence gate: a GPS delta is only real movement when
             // the step sensor registered a step recently (a walking cadence
-            // fires continuously) OR the reported speed implies actual motion.
-            // Standing still with GPS wobble (>3m fix-to-fix jitter) must not
-            // inflate distance while the step counter shows zero.
+            // fires continuously) OR the fix implies walking speed. Speed is
+            // the provider-reported value when present, otherwise a
+            // displacement/time estimate — many fused providers omit `speed`,
+            // so without this fallback real walks stayed at 0.00 km whenever
+            // the step-sensor stream was unavailable. Standing still with GPS
+            // wobble (>3m fix-to-fix jitter) stays rejected by the >= 1.0m
+            // displacement and 35m jump caps.
             const stepFresh = Date.now() - lastStepTimeRef.current < 15000;
-            const speedMoving = typeof speed === "number" && speed >= 0.5;
+            const dtMs = lastFixTimeRef.current > 0 ? nowTs - lastFixTimeRef.current : 0;
+            const reportedSpeed = typeof speed === "number" && Number.isFinite(speed) ? speed : 0;
+            const computedSpeed = dtMs > 0 ? (distDelta * 1000) / dtMs : 0;
+            const speedMoving = Math.max(reportedSpeed, computedSpeed) >= 0.5;
             const motionPlausible = stepFresh || speedMoving;
             // Only add valid human walking speed deltas (1.0m to 35m jump)
             if (distDelta >= 1.0 && distDelta <= 35 && motionPlausible) {
@@ -624,6 +639,7 @@ export function useWalk(
             // Record first point immediately so start location is never lost
             jsTrailRef.current.push(currentPoint);
           }
+          lastFixTimeRef.current = nowTs;
           setLastCoords({ lat, lng });
 
           // Per-fix Firestore appends on web fallback
@@ -689,6 +705,7 @@ export function useWalk(
       setCalories(0);
       setSteps(0);
       setLastCoords(null);
+      lastFixTimeRef.current = 0;
       lastMotionTimeRef.current = Date.now();
       nativeActiveRef.current = false;
       setNativeTracking(false);
@@ -1076,6 +1093,7 @@ export function useWalk(
     setCalories(0);
     setSteps(0);
     setLastCoords(null);
+    lastFixTimeRef.current = 0;
     setVehicleFlagged(false);
     nativeActiveRef.current = false;
     setNativeTracking(false);

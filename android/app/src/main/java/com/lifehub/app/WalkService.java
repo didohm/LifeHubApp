@@ -2095,13 +2095,17 @@ public class WalkService extends Service implements LocationListener, SensorEven
 
             // Motion evidence gate: a GPS delta only counts as real movement
             // when the step sensors confirm an active walking cadence (a step
-            // event within the last 15s) OR the provider reports an actual
-            // walking speed. Standing still with GPS wobble — 10-15m accuracy
-            // fixes that jump >3m while the step counter stays at zero — must
-            // never inflate the distance.
+            // event within the last 15s) OR the fix implies walking speed.
+            // `speedMs` already falls back to a displacement/time estimate when
+            // the provider omits speed (common with the fused provider), so a
+            // real walk still counts on devices whose step-sensor stream never
+            // registers (no sensor / denied / HAL quirk) — previously such
+            // walks stayed frozen at 0.00 km. Stationary GPS wobble stays
+            // rejected by the 3m minimum displacement + <=7 m/s caps below.
             boolean stepsFresh = nowWall - lastStepEventWallMs < 15_000L;
             boolean providerSpeedMoving = location.hasSpeed() && location.getSpeed() >= 0.5f;
-            boolean motionPlausible = stepsFresh || providerSpeedMoving;
+            boolean computedSpeedMoving = speedMs >= 0.5f;
+            boolean motionPlausible = stepsFresh || providerSpeedMoving || computedSpeedMoving;
 
             // Vehicle detection flag: sustained speed > 15 km/h (4.16 m/s) with minimal step activity
             // Only flag if: speed exceeds threshold AND less than 5 steps in 20 seconds
