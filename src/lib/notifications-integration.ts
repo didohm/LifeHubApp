@@ -528,6 +528,11 @@ export const Notifications = {
         sessionId,
         paused,
       });
+      // Honest started flag: the plugin now reports false when the foreground
+      // service could not be dispatched (Android 12+ background-launch
+      // restriction, missing permissions). Treat that exactly like an
+      // exception — activate the JS fallback notification + counters so the
+      // walk never silently freezes at 0.00 km.
       if (!result.started) {
         walkFallbackActive = true;
         this.scheduleWalkReminder(

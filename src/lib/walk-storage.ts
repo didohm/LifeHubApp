@@ -1,6 +1,6 @@
 /**
  * Local SQLite storage layer for walk summaries and splits
- * 
+ *
  * All walk history is stored locally in SQLite for maximum performance
  * and full offline support. No Firestore sync.
  */
@@ -44,26 +44,15 @@ interface WalkServicePlugin {
     elevation_change?: number;
   }): Promise<{ saved: boolean }>;
 
-  getWalkSummaries(options: {
-    user_id: string;
-    limit: number;
-  }): Promise<{ summaries: string }>;
+  getWalkSummaries(options: { user_id: string; limit: number }): Promise<{ summaries: string }>;
 
-  getWalkSummary(options: {
-    session_id: string;
-  }): Promise<{ summary: string | null }>;
+  getWalkSummary(options: { session_id: string }): Promise<{ summary: string | null }>;
 
-  getWalkSplits(options: {
-    session_id: string;
-  }): Promise<{ splits: string }>;
+  getWalkSplits(options: { session_id: string }): Promise<{ splits: string }>;
 
-  deleteWalkSummary(options: {
-    session_id: string;
-  }): Promise<{ deleted: boolean }>;
+  deleteWalkSummary(options: { session_id: string }): Promise<{ deleted: boolean }>;
 
-  getAggregatedStats(options: {
-    user_id: string;
-  }): Promise<{ stats: string }>;
+  getAggregatedStats(options: { user_id: string }): Promise<{ stats: string }>;
 }
 
 let walkServicePlugin: WalkServicePlugin | null = null;
@@ -75,10 +64,7 @@ if (Capacitor.isNativePlatform()) {
 /**
  * Save a walk summary with splits to local SQLite
  */
-export async function saveWalkSummary(
-  summary: WalkSummary,
-  splits: WalkSplit[]
-): Promise<void> {
+export async function saveWalkSummary(summary: WalkSummary, splits: WalkSplit[]): Promise<void> {
   if (!walkServicePlugin) {
     console.warn("WalkService plugin not available - skipping summary save");
     return;
@@ -131,10 +117,7 @@ export async function saveWalkSummary(
 /**
  * Get walk summaries for a user (most recent first)
  */
-export async function getWalkSummaries(
-  userId: string,
-  limit = 50
-): Promise<WalkSummary[]> {
+export async function getWalkSummaries(userId: string, limit = 50): Promise<WalkSummary[]> {
   if (!walkServicePlugin) {
     console.warn("WalkService plugin not available - returning empty array");
     return [];
@@ -180,9 +163,7 @@ export async function getWalkSummaries(
 /**
  * Get a single walk summary by session ID
  */
-export async function getWalkSummary(
-  sessionId: string
-): Promise<WalkSummary | null> {
+export async function getWalkSummary(sessionId: string): Promise<WalkSummary | null> {
   if (!walkServicePlugin) {
     console.warn("WalkService plugin not available");
     return null;
@@ -278,9 +259,7 @@ export async function deleteWalkSummary(sessionId: string): Promise<void> {
 /**
  * Get aggregated stats across all walks for a user
  */
-export async function getAggregatedStats(
-  userId: string
-): Promise<AggregatedWalkStats> {
+export async function getAggregatedStats(userId: string): Promise<AggregatedWalkStats> {
   if (!walkServicePlugin) {
     console.warn("WalkService plugin not available - returning zero stats");
     return {
@@ -328,10 +307,10 @@ export async function getAggregatedStats(
  */
 export async function getWeeklyStats(
   userId: string,
-  startDate: string
+  startDate: string,
 ): Promise<{ distance: number; duration: number; walks: number }> {
   const allSummaries = await getWalkSummaries(userId, 1000);
-  
+
   const startTime = new Date(startDate).getTime();
   const endTime = startTime + 7 * 24 * 60 * 60 * 1000;
 
@@ -352,12 +331,12 @@ export async function getWeeklyStats(
  */
 export async function getMonthlyStats(
   userId: string,
-  month: string
+  month: string,
 ): Promise<{ distance: number; duration: number; walks: number }> {
   const allSummaries = await getWalkSummaries(userId, 1000);
-  
+
   const monthSummaries = allSummaries.filter(
-    (s) => s.day.startsWith(month) && s.status === "finished"
+    (s) => s.day.startsWith(month) && s.status === "finished",
   );
 
   return {
@@ -372,11 +351,31 @@ export async function getMonthlyStats(
  * Ensures completed walks stored in SQLite on native devices are counted in stats
  * and history even if Firestore sync was delayed, offline, or desynced.
  */
+let lastMergeKey = "";
+/** Set when a local summary is saved (finish flow) so the next merge always
+ *  runs even if the Firestore snapshot did not change yet (offline write). */
+let localSummariesDirty = false;
+
+/** Marks the local SQLite summaries as changed — next merge must re-read them. */
+export function markLocalWalkSummariesDirty(): void {
+  localSummariesDirty = true;
+}
+
 export async function mergeLocalWalkSummaries(
   userId: string,
   firestoreSessions: WalkSession[],
 ): Promise<WalkSession[]> {
   if (!Capacitor.isNativePlatform()) return firestoreSessions;
+
+  // Cheap guard: this runs on every Firestore snapshot (and refreshFitness).
+  // When the snapshot content is unchanged AND no local summary was saved
+  // since the last merge, skip the 500-row SQLite read + JSON parse entirely.
+  const key = `${userId}:${firestoreSessions
+    .map((s) => `${s.id}:${s.status}:${s.duration}:${s.distance}`)
+    .join("|")}`;
+  if (!localSummariesDirty && key === lastMergeKey) return firestoreSessions;
+  lastMergeKey = key;
+  localSummariesDirty = false;
 
   try {
     const localSummaries = await getWalkSummaries(userId, 500);

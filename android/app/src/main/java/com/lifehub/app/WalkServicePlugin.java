@@ -178,8 +178,17 @@ public class WalkServicePlugin extends Plugin {
             intent.putExtra(WalkService.EXTRA_CALORIES, calories);
             intent.putExtra(WalkService.EXTRA_PACE, pace);
             intent.putExtra(WalkService.EXTRA_WEIGHT_KG, weightKg);
-            startServiceSafe(intent);
-            ret.put("started", true);
+            boolean ok = startServiceSafe(intent);
+            // Honest result: previously this ALWAYS resolved `started: true`
+            // even when the FGS could not start (Android 12+ background-launch
+            // restriction, missing permissions), so JS believed the native
+            // service was tracking and never activated its fallback path —
+            // walks froze at 0.00 km with no warning.
+            ret.put("started", ok);
+            if (!ok) {
+                ret.put("error", "foreground_service_restricted");
+                ret.put("message", "Walk tracking could not start — open the app and try again from the Walk screen.");
+            }
         } catch (Exception e) {
             ret.put("started", false);
             ret.put("error", e.getMessage());
@@ -525,9 +534,10 @@ public class WalkServicePlugin extends Plugin {
      * P3.1: Safe service start with Android 12+ foreground service launch restrictions.
      * Checks if app is in foreground before attempting startForegroundService().
      * On Android 12+, starting foreground service from background throws
-     * ForegroundServiceStartNotAllowedException.
+     * ForegroundServiceStartNotAllowedException. Returns true only when the
+     * service intent was actually dispatched.
      */
-    private void startServiceSafe(Intent intent) {
+    private boolean startServiceSafe(Intent intent) {
         try {
             // P3.1: Check if app is in foreground on Android 12+
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) { // API 31 (Android 12)
@@ -541,7 +551,7 @@ public class WalkServicePlugin extends Plugin {
                         result.put("message", "Android 12+ requires app to be in foreground to start walk tracking");
                         instance.notifyListeners("walkUpdate", result);
                     }
-                    return;
+                    return false;
                 }
             }
             
@@ -550,6 +560,7 @@ public class WalkServicePlugin extends Plugin {
             } else {
                 getContext().startService(intent);
             }
+            return true;
         } catch (Exception e) {
             android.util.Log.w("WalkServicePlugin", "Failed to start foreground service: " + e.getClass().getSimpleName(), e);
             
@@ -562,14 +573,16 @@ public class WalkServicePlugin extends Plugin {
                     result.put("error", "foreground_service_restricted");
                     instance.notifyListeners("walkUpdate", result);
                 }
-                return;
+                return false;
             }
             
             // Pre-Android 12: try regular service as fallback
             try {
                 getContext().startService(intent);
+                return true;
             } catch (Exception e2) {
                 android.util.Log.e("WalkServicePlugin", "Failed to start service completely", e2);
+                return false;
             }
         }
     }

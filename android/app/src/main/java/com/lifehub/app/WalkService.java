@@ -2071,8 +2071,10 @@ public class WalkService extends Service implements LocationListener, SensorEven
         if (location == null || !isTracking || paused) return;
         long nowWall = System.currentTimeMillis();
         if (Math.abs(nowWall - location.getTime()) > 10_000) return; // stale fix
-        // Tighter accuracy threshold: reject fixes with > 15m accuracy for Strava-level GPS route quality
-        if (location.getAccuracy() > 15.0f) return;
+        // Accuracy threshold: reject only severely degraded fixes (> 30m). Real
+        // devices routinely report 16-30m accuracy indoors/urban canyon — a
+        // stricter 15m gate rejected almost every fix and froze walks at 0.00 km.
+        if (location.getAccuracy() > 30.0f) return;
         
         // CRITICAL: Prevent GPS/Fused double-counting - both providers can report the same fix
         // If timestamp matches last processed location (within 100ms), it's a duplicate
@@ -2088,8 +2090,10 @@ public class WalkService extends Service implements LocationListener, SensorEven
             long dtMs = lastFixElapsedRealtime > 0L ? nowElapsed - lastFixElapsedRealtime : 0L;
             float speedMs = location.hasSpeed() ? location.getSpeed() : (dtMs > 0L ? (distMeters * 1000f) / (float) dtMs : 0f);
 
-            // Minimum displacement gate: ignore points < 3m from previous point to eliminate stationary GPS jitter
-            boolean distancePlausible = distMeters >= 3.0f && distMeters <= 50.0f;
+            // Minimum displacement gate: ignore points < 1m from previous point to eliminate stationary GPS jitter
+            // (was 3m — too aggressive for slow walking and short indoor steps; the
+            // JS fallback uses 1.0m, so keep both engines aligned).
+            boolean distancePlausible = distMeters >= 1.0f && distMeters <= 50.0f;
             // Max speed gate: human walking/running max ~25.2 km/h (7.0 m/s). Rejects GPS teleport/jump spikes.
             boolean speedPlausible = speedMs <= 7.0f;
 

@@ -104,9 +104,13 @@ function WalkPage() {
     async (result: WalkSession) => {
       if (!result) return;
       refreshFitness();
-      // Stray sessions (accidental start/stop, <60s and <50m) are saved as
-      // "cancelled" — no summary modal, no chime, just refreshed stats.
-      if (result.status === "cancelled") return;
+      // Stray sessions (accidental start/stop, <60s and <50m with no steps)
+      // are saved as "cancelled" — no summary modal, no chime, just refreshed
+      // stats. Surface a toast instead of silence so Finish never looks dead.
+      if (result.status === "cancelled") {
+        toast.info("Walk cancelled — too short to record. Tap Start to begin again.");
+        return;
+      }
       sounds.playSuccess();
       // Load the full summary from local SQLite (includes splits, elevation, etc.)
       try {
@@ -146,8 +150,17 @@ function WalkPage() {
   // the same handler above so the summary always appears.
 
   const handleFinish = async () => {
-    const result = await finishWalk();
-    if (result) handleWalkComplete(result);
+    try {
+      const result = await finishWalk();
+      if (result) {
+        await handleWalkComplete(result);
+      } else {
+        toast.error("Could not finish the walk — please try again.");
+      }
+    } catch (error) {
+      console.error("Failed to finish walk:", error);
+      toast.error("Could not finish the walk — please try again.");
+    }
   };
 
   // Calculate stats based on real database records.

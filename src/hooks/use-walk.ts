@@ -23,7 +23,7 @@ import {
   encodePolyline,
   type GPSPoint,
 } from "@/lib/walk-gps-utils";
-import { saveWalkSummary } from "@/lib/walk-storage";
+import { saveWalkSummary, markLocalWalkSummariesDirty } from "@/lib/walk-storage";
 
 export interface StepCounterPluginInterface {
   isAvailable(): Promise<{ available: boolean; hasCounter: boolean; hasDetector: boolean }>;
@@ -60,6 +60,21 @@ function haversineDistance(lat1: number, lon1: number, lat2: number, lon2: numbe
 // the analytics totals stop filling up with 0.00 km entries.
 const STRAY_WALK_MAX_DURATION_S = 60;
 const STRAY_WALK_MAX_DISTANCE_M = 50;
+
+/**
+ * Bounds a Firestore write so a slow/offline device can never leave the
+ * Finish flow hanging forever (the web SDK queues offline writes and their
+ * promises only resolve when connectivity returns — with no timeout the
+ * Finish button stayed disabled and no summary modal ever appeared).
+ */
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>((_, reject) =>
+      setTimeout(() => reject(new Error(`Timed out after ${ms}ms: ${label}`)), ms),
+    ),
+  ]);
+}
 
 export function useWalk(
   userId: string | null | undefined,
@@ -210,6 +225,20 @@ export function useWalk(
       setVehicleFlagged(data.isVehicleFlagged);
     }
 
+    // Duration and calories are wall-clock derived on the native side and
+    // must stay in sync with the UI even while the GPS/step sensors have not
+    // produced their first accepted fix (indoor start, sensors denied). They
+    // are NOT gated behind hasRealProgress — otherwise a walk whose sensors
+    // never fire freezes the whole card at 0.00 while the native clock runs.
+    if (data.tracking) {
+      if (data.durationSec > 0) {
+        setDuration((prev) => Math.max(prev, data.durationSec));
+      }
+      if (data.calories > 0) {
+        setCalories((prev) => Math.max(prev, Math.round(data.calories)));
+      }
+    }
+
     if (data.tracking && hasRealProgress) {
       const becameNativeActive = !nativeActiveRef.current;
       nativeActiveRef.current = true;
@@ -244,18 +273,6 @@ export function useWalk(
 
       if (data.steps > 0) {
         setSteps((prev) => Math.max(prev, data.steps));
-      }
-
-      // The native service owns elapsed time (it uses a wall-clock reference
-      // that advances while the app is backgrounded / screen-locked), so a
-      // minimized app no longer freezes the duration at the last foreground
-      // tick.
-      if (data.durationSec > 0) {
-        setDuration((prev) => Math.max(prev, data.durationSec));
-      }
-
-      if (data.calories > 0) {
-        setCalories((prev) => Math.max(prev, Math.round(data.calories)));
       }
 
       // Feed native GPS fixes into the JS coordinate trail so the path
@@ -927,26 +944,35 @@ export function useWalk(
       // notification, GPS never acquiring a fix). Save such sessions as
       // "cancelled" in Firestore — kept for audit, never counted as walks —
       // and skip the local summary so history/analytics stop filling up with
-      // 0.00 km entries.
+      // 0.00 km entries. A session that registered STEPS is a real (if short)
+      // walk — never cancelled: that previously ate real walks whose GPS was
+      // weak and left "nothing happened" after Finish.
       const isStray =
-        finalDuration <= STRAY_WALK_MAX_DURATION_S && resolvedDistance <= STRAY_WALK_MAX_DISTANCE_M;
+        finalDuration <= STRAY_WALK_MAX_DURATION_S &&
+        resolvedDistance <= STRAY_WALK_MAX_DISTANCE_M &&
+        finalSteps === 0;
 
-      // Encode polyline for efficient storage
-      const encodedPolyline = pointsForStats.length > 0 ? encodePolyline(pointsForStats) : null;
+      // Encode polyline for efficient storage. When the strict noise filter
+      // drops everything (short walk, indoor GPS), fall back to the raw trail
+      // so the summary map still renders a route instead of an empty box.
+      const pointsForEncoding = pointsForStats.length > 0 ? pointsForStats : gpsPoints;
+      const encodedPolyline =
+        pointsForEncoding.length > 0 ? encodePolyline(pointsForEncoding) : null;
 
-      // Prepare start/end coordinates
-      const startLat =
-        pointsForStats.length > 0 ? pointsForStats[0].lat : (lastCoords?.lat ?? null);
-      const startLng =
-        pointsForStats.length > 0 ? pointsForStats[0].lng : (lastCoords?.lng ?? null);
-      const endLat =
+      // Prepare start/end coordinates — prefer the filtered trail, then the
+      // raw trail, then the last live fix.
+      const routeStart =
+        pointsForStats.length > 0 ? pointsForStats[0] : finalPath.length > 0 ? finalPath[0] : null;
+      const routeEnd =
         pointsForStats.length > 0
-          ? pointsForStats[pointsForStats.length - 1].lat
-          : (lastCoords?.lat ?? null);
-      const endLng =
-        pointsForStats.length > 0
-          ? pointsForStats[pointsForStats.length - 1].lng
-          : (lastCoords?.lng ?? null);
+          ? pointsForStats[pointsForStats.length - 1]
+          : finalPath.length > 0
+            ? finalPath[finalPath.length - 1]
+            : null;
+      const startLat = routeStart?.lat ?? lastCoords?.lat ?? null;
+      const startLng = routeStart?.lng ?? lastCoords?.lng ?? null;
+      const endLat = routeEnd?.lat ?? lastCoords?.lat ?? null;
+      const endLng = routeEnd?.lng ?? lastCoords?.lng ?? null;
 
       const finalCaloriesValue = Math.max(
         finalCalories,
@@ -1005,21 +1031,33 @@ export function useWalk(
       } else {
         try {
           await saveWalkSummary(summary, splits);
+          // Tell the next mergeLocalWalkSummaries call to re-read SQLite even
+          // if the Firestore snapshot has not changed yet (offline write).
+          markLocalWalkSummariesDirty();
         } catch (error) {
           console.error("Failed to save walk summary locally:", error);
         }
         try {
-          await finishWalkSession(activeSession.id, userId, {
-            duration: finalDuration,
-            distance: resolvedDistance,
-            calories: finalCaloriesValue,
-            steps: finalSteps,
-            day: activeSession.day || todayLocalDate(),
-            finished_at: now,
-            path: finalPath.length > 0 ? finalPath : null,
-            vehicle: finalVehicleFlagged,
-          });
+          await withTimeout(
+            finishWalkSession(activeSession.id, userId, {
+              duration: finalDuration,
+              distance: resolvedDistance,
+              calories: finalCaloriesValue,
+              steps: finalSteps,
+              day: activeSession.day || todayLocalDate(),
+              finished_at: now,
+              path: finalPath.length > 0 ? finalPath : null,
+              vehicle: finalVehicleFlagged,
+            }),
+            8_000,
+            "finishWalkSession",
+          );
         } catch (error) {
+          // The local SQLite summary above is already saved — the walk is not
+          // lost. The Firestore finish is retried by the merge/backfill path
+          // (mergeLocalWalkSummaries) and by the realtime subscription's
+          // upsert, so a timeout/offline write converges once connectivity is
+          // back.
           console.error("Failed to finish walk session in Firestore:", error);
         }
       }

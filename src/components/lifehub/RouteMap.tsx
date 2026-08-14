@@ -2,7 +2,13 @@ import { useEffect, useRef, useState, useMemo } from "react";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import { Maximize2, Minimize2, Layers, MapPin, Navigation } from "lucide-react";
-import { decodePolyline, haversineDistance, formatPace, formatDuration, formatDistance } from "@/lib/walk-gps-utils";
+import {
+  decodePolyline,
+  haversineDistance,
+  formatPace,
+  formatDuration,
+  formatDistance,
+} from "@/lib/walk-gps-utils";
 
 export interface RoutePoint {
   lat: number;
@@ -35,22 +41,28 @@ export interface RouteMapProps {
 
 type TileLayerType = "voyager" | "satellite" | "dark" | "osm";
 
-const TILE_LAYERS: Record<TileLayerType, { name: string; url: string; attribution: string; subdomains?: string[] }> = {
+const TILE_LAYERS: Record<
+  TileLayerType,
+  { name: string; url: string; attribution: string; subdomains?: string[] }
+> = {
   voyager: {
     name: "Street",
     url: "https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png",
-    attribution: '&copy; <a href="https://carto.com/">CARTO</a>, &copy; <a href="https://www.openstreetmap.org/copyright">OSM</a>',
+    attribution:
+      '&copy; <a href="https://carto.com/">CARTO</a>, &copy; <a href="https://www.openstreetmap.org/copyright">OSM</a>',
     subdomains: ["a", "b", "c", "d"],
   },
   satellite: {
     name: "Satellite",
     url: "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
-    attribution: "&copy; Esri &mdash; Source: Esri, i-cubed, USDA, USGS, AEX, GeoEye, Getmapping, Aerogrid, IGN, IGP, UPR-EGP, and the GIS User Community",
+    attribution:
+      "&copy; Esri &mdash; Source: Esri, i-cubed, USDA, USGS, AEX, GeoEye, Getmapping, Aerogrid, IGN, IGP, UPR-EGP, and the GIS User Community",
   },
   dark: {
     name: "Dark",
     url: "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png",
-    attribution: '&copy; <a href="https://carto.com/">CARTO</a>, &copy; <a href="https://www.openstreetmap.org/copyright">OSM</a>',
+    attribution:
+      '&copy; <a href="https://carto.com/">CARTO</a>, &copy; <a href="https://www.openstreetmap.org/copyright">OSM</a>',
     subdomains: ["a", "b", "c", "d"],
   },
   osm: {
@@ -114,13 +126,18 @@ export default function RouteMap({
 
   // Try to acquire user's current location if no points exist
   useEffect(() => {
-    if (parsedPoints.length === 0 && !userLocation && typeof window !== "undefined" && "geolocation" in navigator) {
+    if (
+      parsedPoints.length === 0 &&
+      !userLocation &&
+      typeof window !== "undefined" &&
+      "geolocation" in navigator
+    ) {
       navigator.geolocation.getCurrentPosition(
         (pos) => {
           setUserLocation({ lat: pos.coords.latitude, lng: pos.coords.longitude });
         },
         () => {},
-        { timeout: 4000, maximumAge: 60000 }
+        { timeout: 4000, maximumAge: 60000 },
       );
     }
   }, [parsedPoints, userLocation]);
@@ -130,8 +147,11 @@ export default function RouteMap({
     if (!container) return;
 
     // Filter valid coordinates
-    const validPoints = (parsedPoints.length > 0 ? parsedPoints : (userLocation ? [userLocation] : []))
-      .filter((p) => Number.isFinite(p.lat) && Number.isFinite(p.lng) && !(p.lat === 0 && p.lng === 0));
+    const validPoints = (
+      parsedPoints.length > 0 ? parsedPoints : userLocation ? [userLocation] : []
+    ).filter(
+      (p) => Number.isFinite(p.lat) && Number.isFinite(p.lng) && !(p.lat === 0 && p.lng === 0),
+    );
 
     const latLngs = validPoints.map((p) => [p.lat, p.lng] as [number, number]);
 
@@ -408,9 +428,10 @@ export default function RouteMap({
       {parsedPoints.length === 0 && !userLocation && (
         <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-slate-100/90 p-4 text-center">
           <MapPin className="size-8 text-[#94A3B8] mb-1.5 animate-bounce" />
-          <p className="text-xs font-black text-[#1E293B]">Map Ready</p>
+          <p className="text-xs font-black text-[#1E293B]">No route recorded</p>
           <p className="text-[11px] font-semibold text-[#64748B] max-w-xs">
-            Location GPS data is being acquired. Start walking to see your live Strava trail!
+            GPS signal was unavailable during this walk — no route was captured. Enable location
+            next time to see your trail here.
           </p>
         </div>
       )}
