@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { Cake, Check, Loader2 } from "lucide-react";
+import { Check, Loader2, Ruler, Weight } from "lucide-react";
 import { toast } from "sonner";
 import { Screen } from "@/components/lifehub/Screen";
 import { useAuth } from "@/hooks/use-auth";
@@ -15,12 +15,18 @@ export const Route = createFileRoute("/onboarding")({
 });
 
 const MIN_DATE = "1900-01-01";
+const MIN_HEIGHT_CM = 100;
+const MAX_HEIGHT_CM = 250;
+const MIN_WEIGHT_KG = 30;
+const MAX_WEIGHT_KG = 300;
 
 function OnboardingPage() {
   const { user, loading: authLoading, isNewUser, updateUserField } = useAuth();
   const navigate = useNavigate();
 
   const [dob, setDob] = useState("");
+  const [height, setHeight] = useState("");
+  const [weight, setWeight] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
 
@@ -42,7 +48,11 @@ function OnboardingPage() {
 
   const isFuture = dob !== "" && dob > todayStr;
   const isTooOld = dob !== "" && dob < MIN_DATE;
-  const isValid = dob !== "" && !isFuture && !isTooOld;
+  const heightNum = height === "" ? 0 : Number(height);
+  const weightNum = weight === "" ? 0 : Number(weight);
+  const heightValid = heightNum >= MIN_HEIGHT_CM && heightNum <= MAX_HEIGHT_CM;
+  const weightValid = weightNum >= MIN_WEIGHT_KG && weightNum <= MAX_WEIGHT_KG;
+  const isValid = dob !== "" && !isFuture && !isTooOld && heightValid && weightValid;
   const age = calculateAge(dob);
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -51,12 +61,18 @@ function OnboardingPage() {
     setSubmitting(true);
     setError("");
     try {
-      await updateUserProfile(user.id, { date_of_birth: dob });
+      await updateUserProfile(user.id, {
+        date_of_birth: dob,
+        height: heightNum,
+        weight: weightNum,
+      });
       updateUserField("date_of_birth", dob);
+      updateUserField("height", heightNum);
+      updateUserField("weight", weightNum);
       toast.success("Welcome to LifeHub! 🎉");
       navigate({ to: "/" });
     } catch {
-      setError("Could not save your date of birth. Please try again.");
+      setError("Could not save your profile details. Please try again.");
     } finally {
       setSubmitting(false);
     }
@@ -81,7 +97,7 @@ function OnboardingPage() {
             Welcome to LifeHub
           </h1>
           <p className="mt-1 text-center text-xs font-medium text-[#6B7280] leading-relaxed">
-            One last step — tell us your date of birth to complete your profile.
+            One last step — tell us your date of birth, height and weight to complete your profile.
           </p>
 
           <form onSubmit={handleSubmit} className="mt-6 space-y-3">
@@ -115,6 +131,65 @@ function OnboardingPage() {
                   </span>
                 </p>
               )}
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="text-xs font-bold text-[#12131A]">
+                  Height (cm) <span className="text-rose-500">*</span>
+                </label>
+                <div className="relative mt-1">
+                  <Ruler className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-[#7C5CFC]/50" />
+                  <input
+                    type="number"
+                    required
+                    min={MIN_HEIGHT_CM}
+                    max={MAX_HEIGHT_CM}
+                    inputMode="numeric"
+                    placeholder="e.g. 170"
+                    value={height}
+                    onChange={(e) => {
+                      setHeight(e.target.value);
+                      setError("");
+                    }}
+                    className="w-full rounded-xl border border-black/10 bg-[#F9F9FD] py-2.5 pl-9 pr-3 text-xs outline-none focus:border-[#7C5CFC] placeholder:text-[#9CA3AF]"
+                  />
+                </div>
+                {height !== "" && !heightValid && (
+                  <p className="mt-1.5 text-[11px] font-bold text-rose-500">
+                    Height must be between {MIN_HEIGHT_CM} and {MAX_HEIGHT_CM} cm.
+                  </p>
+                )}
+              </div>
+
+              <div>
+                <label className="text-xs font-bold text-[#12131A]">
+                  Weight (kg) <span className="text-rose-500">*</span>
+                </label>
+                <div className="relative mt-1">
+                  <Weight className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-[#7C5CFC]/50" />
+                  <input
+                    type="number"
+                    required
+                    min={MIN_WEIGHT_KG}
+                    max={MAX_WEIGHT_KG}
+                    inputMode="decimal"
+                    step="0.1"
+                    placeholder="e.g. 70"
+                    value={weight}
+                    onChange={(e) => {
+                      setWeight(e.target.value);
+                      setError("");
+                    }}
+                    className="w-full rounded-xl border border-black/10 bg-[#F9F9FD] py-2.5 pl-9 pr-3 text-xs outline-none focus:border-[#7C5CFC] placeholder:text-[#9CA3AF]"
+                  />
+                </div>
+                {weight !== "" && !weightValid && (
+                  <p className="mt-1.5 text-[11px] font-bold text-rose-500">
+                    Weight must be between {MIN_WEIGHT_KG} and {MAX_WEIGHT_KG} kg.
+                  </p>
+                )}
+              </div>
             </div>
 
             {error && (

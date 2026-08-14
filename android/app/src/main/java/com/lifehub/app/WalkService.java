@@ -111,7 +111,6 @@ public class WalkService extends Service implements LocationListener, SensorEven
     private static final String KEY_CALORIES = "calories";
     private static final String KEY_PACE = "pace";
     private static final String KEY_STARTED_AT = "started_at";
-    private static final String KEY_ACCUMULATED = "accumulated_ms";
     private static final String KEY_LAT = "lat";
     private static final String KEY_LNG = "lng";
     private static final String KEY_ACC = "acc";
@@ -129,19 +128,19 @@ public class WalkService extends Service implements LocationListener, SensorEven
     private static final String KEY_SENSOR_REGISTRATION_FAILURES = "sensor_failures";
     private static final String KEY_LOCATION_PROVIDER_TYPE = "location_provider_type";
 
-    // Average adult step length in meters (standard average stride — the app
-    // has no height/gender profile data, so this fixed constant is the only
-    // calibration available). Distance is derived from the CURRENT step total
-    // (steps × stride) on every recompute, so it can never stall at 0.00 km
-    // while the step counter is counting, and can never drift out of sync
-    // with the step counter by being accumulated separately.
+    // Average adult step length in meters (standard average stride). Height is
+    // collected at onboarding, but a fixed constant is deliberately used on
+    // BOTH sides (native and JS fallback use the same 0.762) so distance never
+    // differs between engines or between sessions. Distance is derived from
+    // the CURRENT step total (steps × stride) on every recompute, so it can
+    // never stall at 0.00 km while the step counter is counting, and can never
+    // drift out of sync with the step counter by being accumulated separately.
     private static final double STRIDE_METERS = 0.762;
     // MET value for moderate walking pace (kcal per kg per hour). Drives the
     // calorie formula: MET × weight × duration_hours.
     private static final double MET_WALKING = 3.5;
     private static final String TAG = "LifeHubWalk";
 
-    private int stepsAtLastMark = 0;
     // SystemClock.elapsedRealtime() of the last accepted fix — feeds the GPS
     // speed gate that rejects jittery (implausibly fast) fix-to-fix jumps.
     private long lastFixElapsedRealtime = 0L;
@@ -278,15 +277,17 @@ public class WalkService extends Service implements LocationListener, SensorEven
         }
         createNotificationChannel();
         restoreState();
+
+        // Initialize AlarmManager and retry handler BEFORE startTicker() so the
+        // Doze-exempt alarm ticker is the one chosen (never the fallback Handler
+        // ticker, which would keep running alongside the alarm ticker later).
+        alarmManager = (AlarmManager) getSystemService(Context.ALARM_SERVICE);
+        sensorRetryHandler = new Handler(Looper.getMainLooper());
         startTicker();
         
         // Initialize diagnostic logging (P4.1)
         diagnostics = new WalkDiagnostics(this);
         diagnostics.info(WalkDiagnostics.CAT_LIFECYCLE, "WalkService created");
-        
-        // Initialize AlarmManager for Doze-exempt ticker
-        alarmManager = (AlarmManager) getSystemService(Context.ALARM_SERVICE);
-        sensorRetryHandler = new Handler(Looper.getMainLooper());
         
         // Initialize connectivity monitor for network-aware provider switching
         connectivityMonitor = new ConnectivityMonitor(this);
@@ -332,7 +333,6 @@ public class WalkService extends Service implements LocationListener, SensorEven
             .putFloat(KEY_CALORIES, (float) currentCalories)
             .putFloat(KEY_PACE, (float) currentPace)
             .putLong(KEY_STARTED_AT, startedAtMs)
-            .putLong(KEY_ACCUMULATED, accumulatedMs)
             .putFloat(KEY_LAT, lastLocation != null ? (float) lastLocation.getLatitude() : 0f)
             .putFloat(KEY_LNG, lastLocation != null ? (float) lastLocation.getLongitude() : 0f)
             .putFloat(KEY_ACC, lastLocation != null && lastLocation.hasAccuracy() ? lastLocation.getAccuracy() : 0f)
@@ -362,7 +362,6 @@ public class WalkService extends Service implements LocationListener, SensorEven
         currentCalories = p.getFloat(KEY_CALORIES, 0f);
         currentPace = p.getFloat(KEY_PACE, 0f);
         startedAtMs = p.getLong(KEY_STARTED_AT, 0);
-        accumulatedMs = p.getLong(KEY_ACCUMULATED, 0);
         updateCount = p.getInt(KEY_UPDATES, 0);
         initialStepCounterValue = p.getInt(KEY_STEP_INITIAL, -1);
         lastCounterTotal = p.getLong(KEY_STEP_TOTAL, -1L);
@@ -490,7 +489,6 @@ public class WalkService extends Service implements LocationListener, SensorEven
                     // Re-base the wall clock so the resumed duration continues
                     // from the (merged) baseline instead of counting the pause.
                     startedAtMs = SystemClock.elapsedRealtime() - durationSec * 1000L;
-                    accumulatedMs = durationSec * 1000L;
                     resumeTrackingEnginesIfNeeded();
                     updateNotification();
                     publishUpdate();
@@ -583,8 +581,6 @@ public class WalkService extends Service implements LocationListener, SensorEven
         // from the first fresh fix/step instead of re-crediting the persisted
         // totals. The step-counter baseline was persisted, so the hardware
         // accumulator resumes seamlessly.
-        stepsAtLastMark = currentSteps;
-        // UI learns the restored native state immediately.
         publishUpdate();
     }
     
@@ -928,9 +924,7 @@ public class WalkService extends Service implements LocationListener, SensorEven
         // the notification. A fresh walk starts with paused=false as before.
         paused = startPaused;
         startedAtMs = SystemClock.elapsedRealtime() - this.durationSec * 1000L;
-        accumulatedMs = this.durationSec * 1000L;
         lastLocation = null; // first fix after (re)start only sets the baseline
-        stepsAtLastMark = currentSteps;
         updateCount = 0;
         isVehicleFlagged = false;
         lastVehicleCheckWallMs = 0L;
@@ -1142,6 +1136,13 @@ public class WalkService extends Service implements LocationListener, SensorEven
             return;
         }
 
+        // Already scheduled — never double-register (alarm ticker + Handler
+        // ticker running at once would recompute/publish twice per second).
+        if (tickerPendingIntent != null) {
+            ticker.removeCallbacks(tick);
+            return;
+        }
+
         try {
             Intent intent = new Intent(this, WalkTickerReceiver.class);
             intent.setAction(WalkTickerReceiver.ACTION_TICKER);
@@ -1153,6 +1154,9 @@ public class WalkService extends Service implements LocationListener, SensorEven
                 PendingIntent.FLAG_UPDATE_CURRENT | (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M ? PendingIntent.FLAG_IMMUTABLE : 0)
             );
             
+            // The alarm ticker is the single source of 1s ticks from now on —
+            // stop the fallback Handler ticker so they never run in parallel.
+            ticker.removeCallbacks(tick);
             scheduleNextTicker();
             useAlarmTicker = true;
             Log.d(TAG, "AlarmManager ticker started (Doze-exempt)");
@@ -1291,7 +1295,11 @@ public class WalkService extends Service implements LocationListener, SensorEven
             healthObj.put("gpsStaleSeconds", gpsStaleSec);
             healthObj.put("stepStaleSeconds", stepStaleSec);
             healthObj.put("batteryOptimizationExempt", batteryExempt);
-            healthObj.put("foregroundServiceType", fgsType == 0 ? "none" : (fgsType == 8 ? "location" : "health"));
+            healthObj.put("foregroundServiceType",
+                    (fgsType & android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION) != 0
+                            ? ((fgsType & android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_HEALTH) != 0
+                                    ? "location|health" : "location")
+                            : fgsType != 0 ? "health" : "none");
             healthObj.put("timestamp", now);
             
             // Publish via WalkServicePlugin
@@ -1915,6 +1923,18 @@ public class WalkService extends Service implements LocationListener, SensorEven
             dbHelper.clearPointsForSession(activeSessionId);
         }
         activeSessionId = "current_session";
+        // Reset the live counters so a getStatus() after stop never reports a
+        // finished walk's leftovers as a fresh session's values.
+        currentDistanceKm = 0.0;
+        currentSteps = 0;
+        durationSec = 0L;
+        currentCalories = 0.0;
+        currentPace = 0.0;
+        startedAtMs = 0L;
+        lastLocation = null;
+        lastGpsFixWallMs = 0L;
+        lastFixElapsedRealtime = 0L;
+        lastStepEventWallMs = 0L;
         try {
             stopForeground(true);
         } catch (Exception e) {
@@ -1960,7 +1980,7 @@ public class WalkService extends Service implements LocationListener, SensorEven
      */
     public static volatile double gpsDistanceKm = 0.0;
     /** User's body weight (kg) for calorie math, pushed from the app. */
-    public static volatile double userWeightKg = 70.0;
+    public static volatile double userWeightKg = 0.0;
     /**
      * Firestore session id the SQLite route points are stored under. Set from
      * the app at walk start so the route can be fetched and persisted into the
@@ -1975,9 +1995,10 @@ public class WalkService extends Service implements LocationListener, SensorEven
     public static volatile boolean isVehicleFlagged = false;
 
     // Wall-clock bookkeeping so elapsed time keeps advancing while the app is
-    // backgrounded or the screen is locked (a JS setInterval freezes).
+    // backgrounded or the screen is locked (a JS setInterval freezes). Duration
+    // derives from startedAtMs alone: the ticker freezes it while paused, and
+    // resume re-bases startedAtMs to continue exactly from the frozen value.
     private long startedAtMs = 0L;
-    private long accumulatedMs = 0L;
 
     /** 
      * Handler-based ticker (fallback when AlarmManager unavailable).
@@ -2022,8 +2043,11 @@ public class WalkService extends Service implements LocationListener, SensorEven
         currentPace = (km > 0.001 && durationSec > 0) ? (durationSec / 60.0) / km : 0.0;
         // Calories (kcal): MET-based formula — MET_WALKING × weight ×
         // duration_hours. Recomputed from CURRENT duration on every tick, so
-        // it can never stay at 0 while a walk is running.
-        currentCalories = MET_WALKING * userWeightKg * (durationSec / 3600.0);
+        // it can never stay at 0 while a walk is running. When the user's
+        // weight was never provided, calories stay 0 — no default is invented.
+        currentCalories = userWeightKg > 0.0
+                ? MET_WALKING * userWeightKg * (durationSec / 3600.0)
+                : 0.0;
 
         Log.d(TAG, "recompute: steps=" + currentSteps
                 + " stepKm=" + String.format(java.util.Locale.US, "%.4f", stepKm)
@@ -2061,6 +2085,16 @@ public class WalkService extends Service implements LocationListener, SensorEven
             // Max speed gate: human walking/running max ~25.2 km/h (7.0 m/s). Rejects GPS teleport/jump spikes.
             boolean speedPlausible = speedMs <= 7.0f;
 
+            // Motion evidence gate: a GPS delta only counts as real movement
+            // when the step sensors confirm an active walking cadence (a step
+            // event within the last 15s) OR the provider reports an actual
+            // walking speed. Standing still with GPS wobble — 10-15m accuracy
+            // fixes that jump >3m while the step counter stays at zero — must
+            // never inflate the distance.
+            boolean stepsFresh = nowWall - lastStepEventWallMs < 15_000L;
+            boolean providerSpeedMoving = location.hasSpeed() && location.getSpeed() >= 0.5f;
+            boolean motionPlausible = stepsFresh || providerSpeedMoving;
+
             // Vehicle detection flag: sustained speed > 15 km/h (4.16 m/s) with minimal step activity
             // Only flag if: speed exceeds threshold AND less than 5 steps in 20 seconds
             // This reduces false positives from brief GPS jumps or standing still at traffic lights
@@ -2081,16 +2115,24 @@ public class WalkService extends Service implements LocationListener, SensorEven
                 }
             }
 
-            boolean accepted = distancePlausible && speedPlausible;
+            boolean accepted = distancePlausible && speedPlausible && motionPlausible;
             if (accepted) {
                 gpsDistanceKm += (distMeters / 1000.0);
-                stepsAtLastMark = currentSteps;
+                // updateCount only grows on ACCEPTED fixes (plus the baseline
+                // first fix) — rejected stationary-jitter fixes must not look
+                // like motion, or JS would never auto-pause a stopped walk.
+                updateCount++;
                 lastGpsFixWallMs = nowWall;
 
-                // Step floor: ensure step count never stalls behind GPS walking displacement during screen lock
-                int impliedSteps = (int) Math.round((gpsDistanceKm * 1000.0) / STRIDE_METERS);
-                if (impliedSteps > currentSteps) {
-                    currentSteps = impliedSteps;
+                // Step floor: ensure step count never stalls behind GPS walking
+                // displacement during screen lock. Skipped while vehicle motion
+                // is flagged — a car ride would otherwise invent thousands of
+                // "steps" from the GPS distance (e.g. 10 km ≈ 13,000 fake steps).
+                if (!isVehicleFlagged) {
+                    int impliedSteps = (int) Math.round((gpsDistanceKm * 1000.0) / STRIDE_METERS);
+                    if (impliedSteps > currentSteps) {
+                        currentSteps = impliedSteps;
+                    }
                 }
 
                 // Save accepted point to SQLite DB for persistent route rendering
@@ -2142,7 +2184,6 @@ public class WalkService extends Service implements LocationListener, SensorEven
         }
         
         lastLocation = location;
-        updateCount++;
         recomputeDerived();
         updateNotification();
         publishUpdate();

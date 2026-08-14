@@ -701,6 +701,41 @@ function ProfilePage() {
             </div>
           ) : null}
 
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <label className="text-xs font-bold text-foreground">Height</label>
+              <div className="relative mt-1">
+                <Dumbbell className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground/60" />
+                <input
+                  type="text"
+                  readOnly
+                  value={user?.height ? `${user.height} cm` : "Not set"}
+                  className="w-full cursor-not-allowed rounded-xl border border-input bg-muted/50 py-2.5 pl-9 pr-4 text-sm font-semibold text-foreground/60 outline-none"
+                />
+              </div>
+            </div>
+            <div>
+              <label className="text-xs font-bold text-foreground">Weight</label>
+              <div className="relative mt-1">
+                <Droplets className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground/60" />
+                <input
+                  type="text"
+                  readOnly
+                  value={user?.weight ? `${user.weight} kg` : "Not set"}
+                  className="w-full cursor-not-allowed rounded-xl border border-input bg-muted/50 py-2.5 pl-9 pr-4 text-sm font-semibold text-foreground/60 outline-none"
+                />
+              </div>
+            </div>
+          </div>
+          <div className="-mt-1 flex items-center gap-2">
+            <span className="text-[11px] font-medium text-muted-foreground">
+              Used for walk calorie estimates
+            </span>
+            <span className="inline-flex items-center gap-1 rounded-full bg-primary/10 px-2.5 py-1 text-[11px] font-extrabold text-primary">
+              <ShieldCheck className="size-3" /> Set during onboarding
+            </span>
+          </div>
+
           <div className="flex gap-2 pt-3">
             <button
               type="button"

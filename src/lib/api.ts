@@ -635,6 +635,8 @@ export async function updateUserProfile(userId: string, data: Partial<User>): Pr
       if (data.full_name !== undefined) updates.full_name = data.full_name;
       if (data.avatar_url !== undefined) updates.avatar_url = data.avatar_url;
       if (data.date_of_birth !== undefined) updates.date_of_birth = data.date_of_birth;
+      if (data.height !== undefined) updates.height = data.height;
+      if (data.weight !== undefined) updates.weight = data.weight;
       if (data.theme !== undefined) updates.theme = data.theme;
       if (data.language !== undefined) updates.language = data.language;
       if (data.timezone !== undefined) updates.timezone = data.timezone;
@@ -653,6 +655,8 @@ export async function updateUserProfile(userId: string, data: Partial<User>): Pr
         full_name: data.full_name || "User",
         avatar_url: data.avatar_url || null,
         date_of_birth: data.date_of_birth || null,
+        height: data.height || null,
+        weight: data.weight || null,
         theme: data.theme || "light",
         language: data.language || "en",
         timezone: data.timezone || "UTC",
@@ -1271,14 +1275,22 @@ export async function deleteWorkout(id: string, userId: string): Promise<void> {
 //  WALK SERVICE
 // ════════════════════════════════════════════════════════════
 
-/** Simple MET-based calorie estimate for walking. */
-export function estimateWalkCalories(distanceMeters: number, durationSeconds: number): number {
+/**
+ * Simple MET-based calorie estimate for walking.
+ * `weightKg` of 0 (or below) returns 0 kcal — a made-up default weight is
+ * never used; pass the user's real weight for accurate estimates.
+ */
+export function estimateWalkCalories(
+  distanceMeters: number,
+  durationSeconds: number,
+  weightKg: number = 0,
+): number {
   const hours = Math.max(0, durationSeconds) / 3600;
   const baseMet = 3.5;
-  const weightKg = 70;
   const distanceKm = Math.max(0, distanceMeters) / 1000;
+  if (weightKg <= 0) return 0;
   const byDuration = baseMet * weightKg * hours;
-  const byDistance = distanceKm * 55; // ~55 kcal per km walked for 70kg
+  const byDistance = distanceKm * 55 * (weightKg / 70); // ~55 kcal per km walked for 70kg
   if (durationSeconds <= 0 && distanceKm > 0) return Math.round(byDistance);
   if (distanceKm <= 0 && durationSeconds > 0) return Math.round(byDuration);
   if (distanceKm <= 0 && durationSeconds <= 0) return 0;

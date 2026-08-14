@@ -90,10 +90,9 @@ function WalkPage() {
 
   const [statsPeriod, setStatsPeriod] = useState<"daily" | "weekly" | "monthly">("daily");
 
-  // Validate user weight for accurate calorie calculation. Defaults to 70kg
-  // if unavailable, but shows a warning so the user knows calories may be
-  // inaccurate. Weight should be set in the profile for correct tracking.
-  const userWeightKg = user?.weight && Number(user.weight) > 0 ? Number(user.weight) : 70;
+  // Validate user weight for accurate calorie calculation. Without it, no
+  // calorie estimate is produced (0 kcal) — never a made-up 70kg default.
+  const userWeightKg = user?.weight && Number(user.weight) > 0 ? Number(user.weight) : 0;
   const hasValidWeight = user?.weight && Number(user.weight) > 0;
 
   // Finished session shown in the summary modal.
@@ -174,7 +173,8 @@ function WalkPage() {
 
     const filtered = walkSessions.filter((s) => {
       const walkDay =
-        s.day || (s.started_at ? s.started_at.slice(0, 10) : s.created_at ? s.created_at.slice(0, 10) : "");
+        s.day ||
+        (s.started_at ? s.started_at.slice(0, 10) : s.created_at ? s.created_at.slice(0, 10) : "");
       return s.status === "finished" && !!walkDay && walkDay >= periodStart && walkDay <= todayStr;
     });
 
@@ -290,10 +290,10 @@ function WalkPage() {
             <button
               onClick={async () => {
                 sounds.playActionClick();
-                // Warn user if weight is not set (calories will use default 70kg)
+                // Warn user if weight is not set (calories won't be estimated)
                 if (!hasValidWeight) {
                   toast.warning(
-                    "Weight not set in profile — calorie estimates will use 70 kg default. Update your profile for accurate tracking.",
+                    "Weight not set — walk calories won't be estimated until you complete onboarding with your height & weight.",
                   );
                 }
                 // Feature-time permissions: if denied earlier, ask again now

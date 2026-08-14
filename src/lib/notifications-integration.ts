@@ -511,7 +511,7 @@ export const Notifications = {
     durationSec = 0,
     calories = 0,
     paceMinPerKm = 0,
-    weightKg = 70,
+    weightKg = 0,
     sessionId?: string,
     paused = false,
   ) {
@@ -584,7 +584,7 @@ export const Notifications = {
     durationSec: number,
     calories: number,
     paceMinPerKm: number,
-    weightKg = 70,
+    weightKg = 0,
   ) {
     if (!isNative()) return;
     try {

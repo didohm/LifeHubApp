@@ -63,7 +63,7 @@ const STRAY_WALK_MAX_DISTANCE_M = 50;
 
 export function useWalk(
   userId: string | null | undefined,
-  userWeightKg: number = 70,
+  userWeightKg: number = 0,
   onComplete?: (session: WalkSession) => void,
 ) {
   const [activeSession, setActiveSession] = useState<WalkSession | null>(null);
@@ -138,7 +138,7 @@ export function useWalk(
       return;
     }
     const met = 3.5;
-    const weightKg = userWeightKg || 70;
+    const weightKg = userWeightKg > 0 ? userWeightKg : 0;
     const kcal = met * weightKg * (duration / 3600);
     setCalories((prev) => Math.max(prev, Math.round(kcal)));
   }, [duration, userWeightKg]);
@@ -590,8 +590,16 @@ export function useWalk(
               lat,
               lng,
             );
+            // Motion evidence gate: a GPS delta is only real movement when
+            // the step sensor registered a step recently (a walking cadence
+            // fires continuously) OR the reported speed implies actual motion.
+            // Standing still with GPS wobble (>3m fix-to-fix jitter) must not
+            // inflate distance while the step counter shows zero.
+            const stepFresh = Date.now() - lastStepTimeRef.current < 15000;
+            const speedMoving = typeof speed === "number" && speed >= 0.5;
+            const motionPlausible = stepFresh || speedMoving;
             // Only add valid human walking speed deltas (1.0m to 35m jump)
-            if (distDelta >= 1.0 && distDelta <= 35) {
+            if (distDelta >= 1.0 && distDelta <= 35 && motionPlausible) {
               lastMotionTimeRef.current = Date.now();
               // Native service owns the accumulated distance while it's live;
               // the WebView fallback only fills in before the first native
@@ -900,14 +908,22 @@ export function useWalk(
       const encodedPolyline = pointsForStats.length > 0 ? encodePolyline(pointsForStats) : null;
 
       // Prepare start/end coordinates
-      const startLat = pointsForStats.length > 0 ? pointsForStats[0].lat : (lastCoords?.lat ?? null);
-      const startLng = pointsForStats.length > 0 ? pointsForStats[0].lng : (lastCoords?.lng ?? null);
-      const endLat = pointsForStats.length > 0 ? pointsForStats[pointsForStats.length - 1].lat : (lastCoords?.lat ?? null);
-      const endLng = pointsForStats.length > 0 ? pointsForStats[pointsForStats.length - 1].lng : (lastCoords?.lng ?? null);
+      const startLat =
+        pointsForStats.length > 0 ? pointsForStats[0].lat : (lastCoords?.lat ?? null);
+      const startLng =
+        pointsForStats.length > 0 ? pointsForStats[0].lng : (lastCoords?.lng ?? null);
+      const endLat =
+        pointsForStats.length > 0
+          ? pointsForStats[pointsForStats.length - 1].lat
+          : (lastCoords?.lat ?? null);
+      const endLng =
+        pointsForStats.length > 0
+          ? pointsForStats[pointsForStats.length - 1].lng
+          : (lastCoords?.lng ?? null);
 
       const finalCaloriesValue = Math.max(
         finalCalories,
-        Math.round(3.5 * (userWeightKg || 70) * (finalDuration / 3600)),
+        Math.round(3.5 * (userWeightKg > 0 ? userWeightKg : 0) * (finalDuration / 3600)),
       );
 
       // Create walk summary for local SQLite storage
@@ -920,7 +936,11 @@ export function useWalk(
         distance: resolvedDistance,
         calories: finalCaloriesValue,
         steps: finalSteps,
-        avg_pace: stats.avgPace || (resolvedDistance > 0 && finalDuration > 0 ? finalDuration / (resolvedDistance / 1000) : null),
+        avg_pace:
+          stats.avgPace ||
+          (resolvedDistance > 0 && finalDuration > 0
+            ? finalDuration / (resolvedDistance / 1000)
+            : null),
         elevation_gain: stats.elevationGain,
         elevation_loss: stats.elevationLoss,
         day: todayLocalDate(),
@@ -986,8 +1006,8 @@ export function useWalk(
       stepCleanupRef.current?.();
       stepCleanupRef.current = null;
       Notifications.stopWalkForeground();
-      
-      // Free the native SQLite route_points storage — the route now lives in 
+
+      // Free the native SQLite route_points storage — the route now lives in
       // walk_summaries table with encoded polyline
       if (isNative) {
         WalkServicePlugin.clearRoutePoints({ sessionId: activeSession.id }).catch(() => {});

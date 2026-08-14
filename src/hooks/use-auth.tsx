@@ -99,6 +99,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       full_name: fbUser.displayName || cached?.full_name || fbUser.email?.split("@")[0] || "User",
       avatar_url: fbUser.photoURL || cachedPhotoUrl || cached?.avatar_url || null,
       date_of_birth: cachedDob || undefined,
+      height: cached?.height ?? null,
+      weight: cached?.weight ?? null,
       theme: cached?.theme || "light",
       language: cached?.language || "en",
       timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
