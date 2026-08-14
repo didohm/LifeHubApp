@@ -29,14 +29,16 @@ public class ConnectivityMonitor {
     private final ConnectivityManager connectivityManager;
     private ConnectivityManager.NetworkCallback networkCallback;
     private BroadcastReceiver legacyReceiver;
-    private boolean isRegistered = false;
+    // Written on the service thread, read from the broadcast receiver /
+    // network callback threads — needs happens-before across threads.
+    private volatile boolean isRegistered = false;
 
     public interface ConnectivityListener {
         void onNetworkAvailable();
         void onNetworkLost();
     }
 
-    private ConnectivityListener listener;
+    private volatile ConnectivityListener listener;
 
     public ConnectivityMonitor(Context context) {
         this.context = context;

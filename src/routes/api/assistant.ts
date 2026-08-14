@@ -24,6 +24,57 @@ const FIREBASE_API_KEY = import.meta.env.VITE_FIREBASE_API_KEY ?? "";
 const FIREBASE_PROJECT_ID = import.meta.env.VITE_FIREBASE_PROJECT_ID ?? "";
 const DEFAULT_MODEL = "google/gemma-4-31b-it:free";
 
+// Only models in this allowlist may be requested through the proxy — the
+// client must never be able to name an expensive paid model billed to the
+// server's OpenRouter key. Override with ASSISTANT_ALLOWED_MODELS
+// (comma-separated) in the server environment.
+function allowedModels(): Set<string> {
+  const raw = serverEnv("ASSISTANT_ALLOWED_MODELS");
+  const list = (raw || DEFAULT_MODEL)
+    .split(",")
+    .map((m) => m.trim())
+    .filter(Boolean);
+  return new Set(list.length > 0 ? list : [DEFAULT_MODEL]);
+}
+
+// Simple in-memory sliding-window rate limiter keyed by user uid, plus a
+// global cap that protects the upstream key even under a distributed burst.
+// In-memory is fine for the single-node node-server preset; a multi-instance
+// deployment would want a shared store (e.g. Redis) instead.
+const PER_USER_LIMIT = { max: 30, windowMs: 60_000 };
+const GLOBAL_LIMIT = { max: 240, windowMs: 60_000 };
+const buckets = new Map<string, { count: number; resetAt: number }>();
+
+function takeRateLimit(key: string, limit: { max: number; windowMs: number }): boolean {
+  const now = Date.now();
+  const bucket = buckets.get(key);
+  if (!bucket || bucket.resetAt <= now) {
+    buckets.set(key, { count: 1, resetAt: now + limit.windowMs });
+    return true;
+  }
+  bucket.count += 1;
+  if (bucket.count > limit.max) {
+    // Evict stale buckets so the map can't grow unboundedly.
+    if (buckets.size > 10_000) {
+      const cutoff = now;
+      buckets.forEach((b, k) => {
+        if (b.resetAt <= cutoff) buckets.delete(k);
+      });
+    }
+    return false;
+  }
+  return true;
+}
+
+// Max total serialized size of the messages array forwarded upstream —
+// a huge prompt/conversation costs real money on the paid key.
+const MAX_MESSAGES_SIZE = 64 * 1024; // 64 KB
+const MAX_MESSAGE_COUNT = 200;
+const MAX_MESSAGE_CONTENT = 32 * 1024; // 32 KB per message
+// Upstream log lines must never echo prompt/context content — strip the body
+// and keep only the status code.
+const UPSTREAM_LOG_PREFIX = "[assistant] upstream error";
+
 // The native (Capacitor) APK is served from a WebView origin (http://localhost
 // on Android) and points at this route via VITE_ASSISTANT_ENDPOINT. CORS must
 // be open here so the phone can call the deployed backend. The route still
@@ -125,10 +176,46 @@ export const Route = createFileRoute("/api/assistant")({
           return json({ error: "Invalid request body." }, { status: 400 });
         }
 
+        // 2b) Rate limiting: per-user and global windows. Done after auth so
+        // anonymous attackers can't exhaust the bucket space.
+        if (!takeRateLimit(uid, PER_USER_LIMIT)) {
+          return json({ error: "Too many requests. Try again shortly." }, { status: 429 });
+        }
+        if (!takeRateLimit("__global__", GLOBAL_LIMIT)) {
+          return json({ error: "Service is busy. Try again shortly." }, { status: 429 });
+        }
+
+        // 2c) Sanitize the conversation before it leaves the server:
+        // only allowlist roles, cap per-message size and total payload size so
+        // nobody can run up the bill with a megabyte of prompt, and never
+        // forward injected fields (temperature, tools, ...) from the client.
+        if (body.messages.length > MAX_MESSAGE_COUNT) {
+          return json({ error: "Conversation too long." }, { status: 400 });
+        }
+        const messages: { role: "user" | "assistant" | "system"; content: string }[] = [];
+        for (const raw of body.messages) {
+          if (typeof raw !== "object" || raw === null) continue;
+          const role = (raw as { role?: unknown }).role;
+          if (role !== "user" && role !== "assistant" && role !== "system") continue;
+          const rawContent = (raw as { content?: unknown }).content;
+          if (typeof rawContent !== "string") continue;
+          const content = rawContent.slice(0, MAX_MESSAGE_CONTENT);
+          messages.push({ role: role as "user" | "assistant" | "system", content });
+        }
+        if (messages.length === 0) {
+          return json({ error: "Invalid request body." }, { status: 400 });
+        }
+        if (JSON.stringify(messages).length > MAX_MESSAGES_SIZE) {
+          return json({ error: "Conversation too long." }, { status: 400 });
+        }
+
         // 3) Forward to the external model with the server-only key.
         const endpoint =
           serverEnv("ASSISTANT_ENDPOINT") ?? "https://openrouter.ai/api/v1/chat/completions";
-        const model = typeof body.model === "string" && body.model ? body.model : DEFAULT_MODEL;
+        const requested = typeof body.model === "string" && body.model ? body.model : DEFAULT_MODEL;
+        // Client can only pick a model from the allowlist; anything else falls
+        // back to the default free model.
+        const model = allowedModels().has(requested) ? requested : DEFAULT_MODEL;
 
         const upstream = await fetch(endpoint, {
           method: "POST",
@@ -136,11 +223,12 @@ export const Route = createFileRoute("/api/assistant")({
             "Content-Type": "application/json",
             Authorization: `Bearer ${apiKey}`,
           },
-          body: JSON.stringify({ model, messages: body.messages, stream: false }),
+          body: JSON.stringify({ model, messages, stream: false }),
         });
         if (!upstream.ok) {
-          const detail = await upstream.text().catch(() => "");
-          console.error(`[assistant] upstream error ${upstream.status}: ${detail.slice(0, 500)}`);
+          // Log the status code only — the upstream error body can contain
+          // echoed prompt content, which must never reach the logs.
+          console.error(`${UPSTREAM_LOG_PREFIX} ${upstream.status}`);
           return json({ error: "Assistant model request failed." }, { status: 502 });
         }
         const data = (await upstream.json()) as {

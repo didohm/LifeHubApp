@@ -81,20 +81,21 @@ function BillsPage() {
 
     try {
       if (editingBill) {
-        // Validate status transition: prevent marking paid bills as unpaid without explicit reason
-        const newStatus = editingBill.status;
-        if (editingBill.status === 'paid' && status !== 'paid') {
+        // The edit form has no status control, so a paid bill can only be
+        // changed by deleting and recreating it — otherwise the payment
+        // history and the bill record would silently desync.
+        if (editingBill.status === "paid") {
           toast.error("Cannot change status of a paid bill. Delete and recreate if needed.");
           setSubmitting(false);
           return;
         }
-        
+
         const updated = await editBill(editingBill.id, {
           title,
           amount: parseFloat(amount) || 0,
           category,
           due_date: dueDate,
-          status: newStatus,
+          status: "unpaid",
         });
         if (updated) {
           toast.success("Bill updated!");

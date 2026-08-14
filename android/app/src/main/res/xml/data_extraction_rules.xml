@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Backup/data-transfer exclusion rules (API 31+ / dataExtractionRules).
+
+    Same rationale as backup_rules.xml: the walk database and live walk state
+    contain GPS location history and must not leave the device via cloud
+    backup or device-to-device transfer. Walk history is stored in Firestore,
+    so excluding the local cache is safe.
+-->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="database" path="lifehub_walk.db" />
+        <exclude domain="sharedpref" path="lifehub_walk_state.xml" />
+        <exclude domain="sharedpref" path="lifehub_walk_diagnostics.xml" />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="database" path="lifehub_walk.db" />
+        <exclude domain="sharedpref" path="lifehub_walk_state.xml" />
+        <exclude domain="sharedpref" path="lifehub_walk_diagnostics.xml" />
+    </device-transfer>
+</data-extraction-rules>

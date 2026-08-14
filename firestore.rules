@@ -38,47 +38,56 @@ service cloud.firestore {
 
     match /users/{userId}/appointments/{id} {
       allow create: if isOwner(userId) && isDataOwnedBy(userId);
-      allow update, delete: if isOwner(userId);
+      allow update: if isOwner(userId) && isDataOwnedBy(userId);
+      allow delete: if isOwner(userId);
     }
 
     match /users/{userId}/medications/{id} {
       allow create: if isOwner(userId) && isDataOwnedBy(userId);
-      allow update, delete: if isOwner(userId);
+      allow update: if isOwner(userId) && isDataOwnedBy(userId);
+      allow delete: if isOwner(userId);
     }
 
     match /users/{userId}/medication_logs/{id} {
       allow create: if isOwner(userId) && isDataOwnedBy(userId);
-      allow update, delete: if isOwner(userId);
+      allow update: if isOwner(userId) && isDataOwnedBy(userId);
+      allow delete: if isOwner(userId);
     }
 
     match /users/{userId}/payments/{id} {
       allow create: if isOwner(userId) && isDataOwnedBy(userId);
-      allow update, delete: if isOwner(userId);
+      allow update: if isOwner(userId) && isDataOwnedBy(userId);
+      allow delete: if isOwner(userId);
     }
 
     match /users/{userId}/documents/{id} {
       allow create: if isOwner(userId) && isDataOwnedBy(userId);
-      allow update, delete: if isOwner(userId);
+      allow update: if isOwner(userId) && isDataOwnedBy(userId);
+      allow delete: if isOwner(userId);
     }
 
     match /users/{userId}/activity_logs/{id} {
       allow create: if isOwner(userId) && isDataOwnedBy(userId);
-      allow update, delete: if isOwner(userId);
+      allow update: if isOwner(userId) && isDataOwnedBy(userId);
+      allow delete: if isOwner(userId);
     }
 
     match /users/{userId}/ai_conversations/{id} {
       allow create: if isOwner(userId) && isDataOwnedBy(userId);
-      allow update, delete: if isOwner(userId);
+      allow update: if isOwner(userId) && isDataOwnedBy(userId);
+      allow delete: if isOwner(userId);
     }
 
     match /users/{userId}/birthdays/{id} {
       allow create: if isOwner(userId) && isDataOwnedBy(userId);
-      allow update, delete: if isOwner(userId);
+      allow update: if isOwner(userId) && isDataOwnedBy(userId);
+      allow delete: if isOwner(userId);
     }
 
     match /users/{userId}/workout_programs/{id} {
       allow create: if isOwner(userId) && isDataOwnedBy(userId);
-      allow update, delete: if isOwner(userId);
+      allow update: if isOwner(userId) && isDataOwnedBy(userId);
+      allow delete: if isOwner(userId);
     }
 
     // ─── HARDENED SUBCOLLECTIONS ───
@@ -86,38 +95,39 @@ service cloud.firestore {
 
     match /users/{userId}/bills/{id} {
       allow create: if isOwner(userId) && isDataOwnedBy(userId) && request.resource.data.amount is number;
-      allow update: if isOwner(userId) && request.resource.data.amount is number;
+      allow update: if isOwner(userId) && isDataOwnedBy(userId) && request.resource.data.amount is number;
       allow delete: if isOwner(userId);
     }
 
     match /users/{userId}/todos/{id} {
       allow create: if isOwner(userId) && isDataOwnedBy(userId) && request.resource.data.completed is bool && request.resource.data.progress is number;
-      allow update: if isOwner(userId) && request.resource.data.completed is bool && request.resource.data.progress is number;
+      allow update: if isOwner(userId) && isDataOwnedBy(userId) && request.resource.data.completed is bool && request.resource.data.progress is number;
       allow delete: if isOwner(userId);
     }
 
     match /users/{userId}/workouts/{id} {
       allow create: if isOwner(userId) && isDataOwnedBy(userId) && request.resource.data.duration is number;
-      allow update: if isOwner(userId) && request.resource.data.duration is number;
+      allow update: if isOwner(userId) && isDataOwnedBy(userId) && request.resource.data.duration is number;
       allow delete: if isOwner(userId);
     }
 
     match /users/{userId}/walk_sessions/{id} {
       allow create: if isOwner(userId) && isDataOwnedBy(userId) && request.resource.data.distance is number && request.resource.data.duration is number && request.resource.data.calories is number && request.resource.data.steps is number;
-      allow update: if isOwner(userId) && request.resource.data.distance is number && request.resource.data.duration is number && request.resource.data.calories is number && request.resource.data.steps is number;
+      allow update: if isOwner(userId) && isDataOwnedBy(userId) && request.resource.data.distance is number && request.resource.data.duration is number && request.resource.data.calories is number && request.resource.data.steps is number;
       allow delete: if isOwner(userId);
     }
 
     match /users/{userId}/water_logs/{id} {
       allow create: if isOwner(userId) && isDataOwnedBy(userId) && request.resource.data.glasses is number && request.resource.data.goal is number;
-      allow update: if isOwner(userId) && request.resource.data.glasses is number && request.resource.data.goal is number;
+      allow update: if isOwner(userId) && isDataOwnedBy(userId) && request.resource.data.glasses is number && request.resource.data.goal is number;
       allow delete: if isOwner(userId);
     }
 
     // Nested subcollection: AI Messages
     match /users/{userId}/ai_conversations/{convId}/messages/{msgId} {
       allow create: if isOwner(userId) && request.resource.data.role in ['user', 'assistant', 'system'] && request.resource.data.content is string;
-      allow update, delete: if isOwner(userId);
+      allow update: if isOwner(userId) && isDataOwnedBy(userId);
+      allow delete: if isOwner(userId);
     }
   }
 }

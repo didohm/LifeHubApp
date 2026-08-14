@@ -14,6 +14,8 @@ import {
   setDoc,
   arrayUnion,
   onSnapshot,
+  runTransaction,
+  writeBatch,
   type Unsubscribe,
 } from "firebase/firestore";
 import { db } from "./firebase";
@@ -272,27 +274,37 @@ export async function payBill(
   paymentMethod: string = "Cash (Espèces)",
 ): Promise<Bill> {
   const billRef = doc(db, "users", userId, "bills", billId);
-  await updateDoc(billRef, { status: "paid", updated_at: now() });
 
-  const billSnap = await getDoc(billRef);
-  const bill = docToObj<Bill>(billSnap);
+  // Atomic: mark the bill paid and record the payment in one transaction, so
+  // a crash or a second tap can never leave a paid bill without its payment
+  // record (or vice versa). Idempotent: paying an already-paid bill keeps the
+  // original payment and just returns the bill.
+  const result = await runTransaction(db, async (transaction) => {
+    const billSnap = await transaction.get(billRef);
+    if (!billSnap.exists()) {
+      throw new Error("Bill not found");
+    }
+    const bill = docToObj<Bill>(billSnap);
+    transaction.update(billRef, { status: "paid", updated_at: now() });
+    if (bill.status !== "paid") {
+      const paymentsRef = collection(db, "users", userId, "payments");
+      transaction.set(doc(paymentsRef), {
+        user_id: userId,
+        bill_id: billId,
+        amount: bill.amount,
+        payment_date: now(),
+        payment_method: paymentMethod,
+        reference:
+          "TXN-" + Date.now().toString(36).toUpperCase() + Math.floor(Math.random() * 1000),
+        created_at: now(),
+        updated_at: now(),
+      });
+    }
+    return { ...bill, status: "paid" } as Bill;
+  });
 
-  if (bill) {
-    const paymentsRef = collection(db, "users", userId, "payments");
-    await addDoc(paymentsRef, {
-      user_id: userId,
-      bill_id: billId,
-      amount: bill.amount,
-      payment_date: now(),
-      payment_method: paymentMethod,
-      reference: "TXN-" + Date.now().toString(36).toUpperCase() + Math.floor(Math.random() * 1000),
-      created_at: now(),
-      updated_at: now(),
-    });
-    await addActivityLog(userId, "Paid Bill", `Paid $${bill.amount} for ${bill.title}`);
-  }
-
-  return bill;
+  await addActivityLog(userId, "Paid Bill", `Paid $${result.amount} for ${result.title}`);
+  return result;
 }
 
 export async function deleteBill(id: string, userId: string): Promise<void> {
@@ -690,13 +702,26 @@ export async function deleteUserAccount(userId: string): Promise<void> {
       "todos",
       "activity_logs",
       "ai_conversations",
+      "birthdays",
+      "workout_programs",
+      "workouts",
+      "walk_sessions",
+      "water_logs",
     ];
 
     for (const sub of subcollections) {
       const colRef = collection(db, "users", userId, sub);
       const snap = await getDocs(colRef);
-      const deletes = snap.docs.map((d) => deleteDoc(d.ref));
-      await Promise.all(deletes);
+      // Nested subcollection (ai_conversations/{id}/messages) must be removed
+      // before its parent conversation doc.
+      if (sub === "ai_conversations") {
+        for (const conv of snap.docs) {
+          const msgsRef = collection(db, "users", userId, sub, conv.id, "messages");
+          const msgsSnap = await getDocs(msgsRef);
+          await Promise.all(msgsSnap.docs.map((m) => deleteDoc(m.ref)));
+        }
+      }
+      await Promise.all(snap.docs.map((d) => deleteDoc(d.ref)));
     }
 
     const userRef = doc(db, "users", userId);
@@ -889,7 +914,7 @@ export async function performGlobalSearch(
     if (p.name.toLowerCase().includes(lowerTerm)) {
       results.push({
         id: p.id,
-        type: "document",
+        type: "workout",
         title: p.name,
         subtitle: `Program · ${p.workout_type || "Custom"}`,
         url: "/workouts",
@@ -908,7 +933,7 @@ export async function performGlobalSearch(
     ) {
       results.push({
         id: w.id,
-        type: "todo",
+        type: "workout",
         title: w.session_name,
         subtitle: `${w.workout_type || "Workout"} · ${w.scheduled_date}`,
         url: "/workouts",
@@ -929,6 +954,51 @@ export async function performGlobalSearch(
 
 export const DEFAULT_WATER_GOAL = 8;
 
+// Deterministic document id for a day's water log. One doc per day means
+// incrementing the glass counter is a single atomic transaction — no
+// read-modify-write race can lose glasses when two devices tap at once.
+function waterLogDocId(day: string): string {
+  return `water_${day}`;
+}
+
+/**
+ * Migrates a legacy random-id water log for today into the deterministic
+ * `water_{day}` doc. Older app versions created one doc per day with a
+ * random id, so existing users may have one for today. After migration the
+ * legacy doc is deleted and every future write goes through the fixed id.
+ */
+async function migrateLegacyWaterLog(userId: string, day: string): Promise<void> {
+  const ref = collection(db, "users", userId, "water_logs");
+  const q = query(ref, where("day", "==", day), limit(1));
+  const snap = await getDocs(q);
+  if (snap.empty) return;
+  const legacy = snap.docs[0];
+  const targetId = waterLogDocId(day);
+  if (legacy.id === targetId) return;
+
+  const targetRef = doc(db, "users", userId, "water_logs", targetId);
+  const targetSnap = await getDoc(targetRef);
+  const legacyData = legacy.data();
+  if (targetSnap.exists()) {
+    // Merge counters so no glasses are lost, then remove the legacy doc.
+    const targetData = targetSnap.data();
+    await updateDoc(targetRef, {
+      glasses: Math.max(0, (targetData.glasses ?? 0) + (legacyData.glasses ?? 0)),
+      goal: Math.max(targetData.goal ?? DEFAULT_WATER_GOAL, legacyData.goal ?? DEFAULT_WATER_GOAL),
+      updated_at: now(),
+    });
+  } else {
+    await setDoc(targetRef, {
+      ...legacyData,
+      glasses: legacyData.glasses ?? 0,
+      goal: legacyData.goal ?? DEFAULT_WATER_GOAL,
+      created_at: legacyData.created_at ?? now(),
+      updated_at: now(),
+    });
+  }
+  await deleteDoc(legacy.ref);
+}
+
 export async function getTodayWaterLog(userId: string): Promise<WaterLog | null> {
   const ref = collection(db, "users", userId, "water_logs");
   const day = todayLocalDate();
@@ -939,41 +1009,37 @@ export async function getTodayWaterLog(userId: string): Promise<WaterLog | null>
 }
 
 export async function addWaterGlass(userId: string, amount = 1): Promise<WaterLog> {
-  const ref = collection(db, "users", userId, "water_logs");
   const day = todayLocalDate();
-  const goal = DEFAULT_WATER_GOAL;
-  const existing = await getTodayWaterLog(userId);
-  let result: WaterLog;
-  let loggedGlasses = 0;
+  // One-time migration of legacy random-id docs for today.
+  await migrateLegacyWaterLog(userId, day);
 
-  if (existing) {
-    const glasses = Math.max(0, Math.min(999, existing.glasses + amount));
-    loggedGlasses = glasses;
-    const docRef = doc(db, "users", userId, "water_logs", existing.id);
-    const updates: any = { glasses, goal_reached: glasses >= goal, updated_at: now() };
-    await updateDoc(docRef, updates);
-    result = { ...existing, ...updates } as WaterLog;
-  } else {
-    const glasses = Math.max(0, amount);
-    loggedGlasses = glasses;
-    const newDoc = {
+  const docRef = doc(db, "users", userId, "water_logs", waterLogDocId(day));
+  // Atomic read-modify-write: concurrent taps from multiple devices can never
+  // overwrite each other's glasses count.
+  const updated = await runTransaction(db, async (transaction) => {
+    const snap = await transaction.get(docRef);
+    const current = snap.exists() ? (snap.data().glasses ?? 0) : 0;
+    const goal = snap.exists() ? (snap.data().goal ?? DEFAULT_WATER_GOAL) : DEFAULT_WATER_GOAL;
+    const glasses = Math.max(0, Math.min(999, current + amount));
+    const data = {
       user_id: userId,
       day,
       glasses,
       goal,
       goal_reached: glasses >= goal,
-      created_at: now(),
+      created_at: snap.exists() ? snap.data().created_at : now(),
       updated_at: now(),
     };
-    const docRef = await addDoc(ref, newDoc);
-    result = { id: docRef.id, ...newDoc } as WaterLog;
-  }
+    transaction.set(docRef, data, { merge: true });
+    return data as Omit<WaterLog, "id">;
+  });
 
+  const result = { id: docRef.id, ...updated } as WaterLog;
   if (amount > 0) {
     await addActivityLog(
       userId,
       "Drank Water",
-      `Logged ${loggedGlasses} glass${loggedGlasses === 1 ? "" : "es"} of water`,
+      `Logged ${result.glasses} glass${result.glasses === 1 ? "" : "es"} of water`,
     );
   }
   return result;
@@ -986,26 +1052,26 @@ export async function removeWaterGlass(userId: string, amount = 1): Promise<Wate
 export async function setWaterGoal(userId: string, goal: number): Promise<void> {
   const day = todayLocalDate();
   const safeGoal = Math.max(1, Math.round(goal));
-  const existing = await getTodayWaterLog(userId);
-  if (existing) {
-    const docRef = doc(db, "users", userId, "water_logs", existing.id);
-    await updateDoc(docRef, {
-      goal: safeGoal,
-      goal_reached: existing.glasses >= safeGoal,
-      updated_at: now(),
-    });
-  } else {
-    const ref = collection(db, "users", userId, "water_logs");
-    await addDoc(ref, {
-      user_id: userId,
-      day,
-      glasses: 0,
-      goal: safeGoal,
-      goal_reached: false,
-      created_at: now(),
-      updated_at: now(),
-    });
-  }
+  await migrateLegacyWaterLog(userId, day);
+
+  const docRef = doc(db, "users", userId, "water_logs", waterLogDocId(day));
+  await runTransaction(db, async (transaction) => {
+    const snap = await transaction.get(docRef);
+    const glasses = snap.exists() ? (snap.data().glasses ?? 0) : 0;
+    transaction.set(
+      docRef,
+      {
+        user_id: userId,
+        day,
+        glasses,
+        goal: safeGoal,
+        goal_reached: glasses >= safeGoal,
+        created_at: snap.exists() ? snap.data().created_at : now(),
+        updated_at: now(),
+      },
+      { merge: true },
+    );
+  });
 }
 
 export async function getWaterLogs(userId: string, limitCount = 90): Promise<WaterLog[]> {
@@ -1081,14 +1147,6 @@ export async function createWorkoutProgram(
 ): Promise<WorkoutProgram> {
   const ref = collection(db, "users", userId, "workout_programs");
 
-  // The newly created program becomes the active program — deactivate any other
-  // programs so there is always exactly one active program.
-  const existing = await getDocs(ref);
-  const deactivates = existing.docs
-    .filter((d) => d.data().is_active === true)
-    .map((d) => updateDoc(d.ref, { is_active: false, updated_at: now() }));
-  await Promise.all(deactivates);
-
   const newDoc = {
     user_id: userId,
     name: data.name || "Untitled Program",
@@ -1101,7 +1159,22 @@ export async function createWorkoutProgram(
     created_at: now(),
     updated_at: now(),
   };
-  const docRef = await addDoc(ref, newDoc);
+
+  // The newly created program becomes the active program — deactivate any
+  // other programs in the SAME batch so a crash can never leave two active
+  // programs (read + write batch shrinks the race window to zero for the
+  // write itself, though the snapshot read is still non-transactional).
+  const existing = await getDocs(ref);
+  const batch = writeBatch(db);
+  for (const d of existing.docs) {
+    if (d.data().is_active === true) {
+      batch.update(d.ref, { is_active: false, updated_at: now() });
+    }
+  }
+  const docRef = doc(ref);
+  batch.set(docRef, newDoc);
+  await batch.commit();
+
   await addActivityLog(
     userId,
     "Created Program",

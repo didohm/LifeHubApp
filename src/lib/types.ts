@@ -158,7 +158,14 @@ export interface AiMessage {
 export interface GlobalSearchResult {
   id: string;
   type:
-    "appointment" | "bill" | "medication" | "document" | "todo" | "ai_conversation" | "birthday";
+    | "appointment"
+    | "bill"
+    | "medication"
+    | "document"
+    | "todo"
+    | "workout"
+    | "ai_conversation"
+    | "birthday";
   title: string;
   subtitle: string;
   url: string;

@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Backup exclusion rules (API 22-30 / fullBackupContent).
+
+    The walk SQLite database holds GPS route points (lat/lng/time history) and
+    walk summaries (user_id, start/end coordinates, encoded polylines), and
+    lifehub_walk_state holds the live walk session counters. These are private
+    location-derived data and must never be uploaded to Google Drive backup.
+    Walk history is stored in Firestore anyway, so the local copy is a cache.
+-->
+<full-backup-content>
+    <exclude domain="database" path="lifehub_walk.db" />
+    <exclude domain="sharedpref" path="lifehub_walk_state.xml" />
+    <exclude domain="sharedpref" path="lifehub_walk_diagnostics.xml" />
+</full-backup-content>

@@ -103,6 +103,10 @@ function WalkPage() {
   const handleWalkComplete = useCallback(
     async (result: WalkSession) => {
       if (!result) return;
+      refreshFitness();
+      // Stray sessions (accidental start/stop, <60s and <50m) are saved as
+      // "cancelled" — no summary modal, no chime, just refreshed stats.
+      if (result.status === "cancelled") return;
       sounds.playSuccess();
       // Load the full summary from local SQLite (includes splits, elevation, etc.)
       try {
@@ -116,7 +120,6 @@ function WalkPage() {
         console.error("Failed to load walk summary:", error);
         setCompletedSession(result);
       }
-      refreshFitness();
     },
     [refreshFitness],
   );
@@ -297,9 +300,13 @@ function WalkPage() {
                   );
                 }
                 // Feature-time permissions: if denied earlier, ask again now
-                // that the user is actually using the walking feature.
+                // that the user is actually using the walking feature. BODY_SENSORS
+                // is requested too — it lets the foreground service combine the
+                // health FGS type with location (Android 14+ requirement); the
+                // service falls back to location-only when it is missing.
                 await PermissionManager.ensurePermission("location");
                 await PermissionManager.ensurePermission("activity");
+                await PermissionManager.ensurePermission("health");
                 startWalk();
               }}
               disabled={loading}

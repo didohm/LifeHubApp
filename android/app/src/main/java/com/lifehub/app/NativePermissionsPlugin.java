@@ -22,8 +22,11 @@ import org.json.JSONObject;
  * Native runtime permission bridge for LifeHub.
  *
  * Requests Android OS permissions outside the WebView for:
- *  - location      (walking / GPS tracking)
+ *  - location      (walking / GPS tracking — includes background location,
+ *                   required for FOREGROUND_SERVICE_TYPE_LOCATION on Android 14+)
  *  - activity      (step counter / physical activity)
+ *  - health        (body sensors — required for FOREGROUND_SERVICE_TYPE_HEALTH
+ *                   on Android 14+, used to combine with the location FGS type)
  *  - media         (documents, images — READ_MEDIA_* on 13+, legacy storage below)
  *  - audio         (voice / audio features)
  *
@@ -40,10 +43,12 @@ import org.json.JSONObject;
             alias = "location",
             strings = {
                 Manifest.permission.ACCESS_FINE_LOCATION,
-                Manifest.permission.ACCESS_COARSE_LOCATION
+                Manifest.permission.ACCESS_COARSE_LOCATION,
+                Manifest.permission.ACCESS_BACKGROUND_LOCATION
             }
         ),
         @Permission(alias = "activity", strings = { Manifest.permission.ACTIVITY_RECOGNITION }),
+        @Permission(alias = "health", strings = { Manifest.permission.BODY_SENSORS }),
         @Permission(
             alias = "media",
             strings = {
@@ -58,7 +63,7 @@ import org.json.JSONObject;
 )
 public class NativePermissionsPlugin extends Plugin {
 
-    private String pendingAlias = null;
+    private static final String CALL_DATA_ALIAS_KEY = "lifehub_permission_alias";
 
     @PluginMethod
     public void check(PluginCall call) {
@@ -76,7 +81,10 @@ public class NativePermissionsPlugin extends Plugin {
             call.reject("alias is required");
             return;
         }
-        pendingAlias = alias;
+        // Store the alias on the call itself (not a shared instance field) so
+        // two concurrent requests can never overwrite each other's callback
+        // resolution with the wrong permission state.
+        call.getData().put(CALL_DATA_ALIAS_KEY, alias);
 
         if (getPermissionState(alias) == PermissionState.GRANTED) {
             JSObject ret = new JSObject();
@@ -91,21 +99,52 @@ public class NativePermissionsPlugin extends Plugin {
 
     @PermissionCallback
     private void permissionResult(PluginCall call) {
-        PermissionState state = pendingAlias != null
-                ? getPermissionState(pendingAlias)
+        String alias = call.getData().optString(CALL_DATA_ALIAS_KEY, null);
+        PermissionState state = alias != null
+                ? getPermissionState(alias)
                 : PermissionState.DENIED;
 
         boolean granted = state == PermissionState.GRANTED;
-        // permanentlyDenied is true when the user explicitly denied and checked "Don't ask again"
-        // PermissionState.DENIED indicates either temporary denial or permanent denial
-        // We can only detect permanent denial by attempting to request again (not done here)
-        boolean permanentlyDenied = !granted && state == PermissionState.DENIED;
-        
+        // A permission is only "permanently denied" when the user chose "Don't
+        // ask again" (or the OS auto-denied): i.e. no permission in the alias
+        // is granted AND the system no longer shows a rationale for any of
+        // them. A mere temporary denial still shows a rationale, so the JS
+        // layer can ask again when the feature is next used.
+        boolean permanentlyDenied = !granted && alias != null && !shouldShowRationale(alias);
+
         JSObject ret = new JSObject();
         ret.put("granted", granted);
         ret.put("permanentlyDenied", permanentlyDenied);
-        pendingAlias = null;
         call.resolve(ret);
+    }
+
+    /** True when the OS would still show a rationale for at least one permission of the alias. */
+    private boolean shouldShowRationale(String alias) {
+        android.app.Activity activity = getActivity();
+        if (activity == null) return false;
+        String[] permissions = getPermissionStrings(alias);
+        for (String permission : permissions) {
+            try {
+                if (androidx.core.app.ActivityCompat.shouldShowRequestPermissionRationale(
+                        activity, permission)) {
+                    return true;
+                }
+            } catch (Exception e) {
+                // Unknown permission on this API level — ignore.
+            }
+        }
+        return false;
+    }
+
+    /** Returns the runtime permission strings declared for an alias. */
+    private String[] getPermissionStrings(String alias) {
+        for (com.getcapacitor.annotation.Permission p :
+                getClass().getAnnotation(CapacitorPlugin.class).permissions()) {
+            if (alias.equals(p.alias())) {
+                return p.strings();
+            }
+        }
+        return new String[0];
     }
 
     /**

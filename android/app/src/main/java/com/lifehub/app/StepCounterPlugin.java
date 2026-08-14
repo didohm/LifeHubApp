@@ -109,6 +109,8 @@ public class StepCounterPlugin extends Plugin implements SensorEventListener {
         }
 
         if (!registered) {
+            // Never leave a partially-registered listener behind.
+            sensorManager.unregisterListener(this);
             call.reject("Hardware step sensors are unavailable on this device.");
             return;
         }
@@ -142,7 +144,11 @@ public class StepCounterPlugin extends Plugin implements SensorEventListener {
         } else if (event.sensor.getType() == Sensor.TYPE_STEP_COUNTER) {
             int totalSteps = (int) event.values[0];
             if (initialStepCount < 0) {
-                initialStepCount = totalSteps;
+                // Baseline on the first counter event, but preserve any steps
+                // the step detector already counted before the counter's first
+                // callback arrived — otherwise that gap is permanently lost
+                // (totalSteps is absolute since boot, so this is always >= 0).
+                initialStepCount = totalSteps - sessionSteps;
             }
             int deltaSteps = totalSteps - initialStepCount;
             if (deltaSteps > sessionSteps) {
@@ -164,5 +170,17 @@ public class StepCounterPlugin extends Plugin implements SensorEventListener {
     @Override
     public void onAccuracyChanged(Sensor sensor, int accuracy) {
         // No action required
+    }
+
+    @Override
+    protected void handleOnDestroy() {
+        // Sensor listeners must be released when the activity is destroyed,
+        // otherwise the system keeps a stale listener (and its wake budget)
+        // until the process dies.
+        if (sensorManager != null && isListening) {
+            sensorManager.unregisterListener(this);
+            isListening = false;
+        }
+        super.handleOnDestroy();
     }
 }

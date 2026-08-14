@@ -904,6 +904,16 @@ export function useWalk(
 
       const resolvedDistance = Math.max(stats.totalDistance || 0, finalDistance || 0);
 
+      // Stray-session guard: finishing in under STRAY_WALK_MAX_DURATION_S while
+      // having moved less than STRAY_WALK_MAX_DISTANCE_M means an accidental
+      // start/stop (mis-tap on Start, start-and-immediately-finish from the
+      // notification, GPS never acquiring a fix). Save such sessions as
+      // "cancelled" in Firestore — kept for audit, never counted as walks —
+      // and skip the local summary so history/analytics stop filling up with
+      // 0.00 km entries.
+      const isStray =
+        finalDuration <= STRAY_WALK_MAX_DURATION_S && resolvedDistance <= STRAY_WALK_MAX_DISTANCE_M;
+
       // Encode polyline for efficient storage
       const encodedPolyline = pointsForStats.length > 0 ? encodePolyline(pointsForStats) : null;
 
@@ -931,7 +941,7 @@ export function useWalk(
       const summary: WalkSummary = {
         id: activeSession.id,
         user_id: userId,
-        status: "finished",
+        status: isStray ? "cancelled" : "finished",
         duration: finalDuration,
         distance: resolvedDistance,
         calories: finalCaloriesValue,
@@ -968,24 +978,33 @@ export function useWalk(
       }));
 
       // Save to local SQLite (for offline/native history) and update Firestore
-      try {
-        await saveWalkSummary(summary, splits);
-      } catch (error) {
-        console.error("Failed to save walk summary locally:", error);
-      }
-      try {
-        await finishWalkSession(activeSession.id, userId, {
-          duration: finalDuration,
-          distance: resolvedDistance,
-          calories: finalCaloriesValue,
-          steps: finalSteps,
-          day: activeSession.day || todayLocalDate(),
-          finished_at: now,
-          path: finalPath.length > 0 ? finalPath : null,
-          vehicle: finalVehicleFlagged,
-        });
-      } catch (error) {
-        console.error("Failed to finish walk session in Firestore:", error);
+      if (isStray) {
+        // Accidentally started session: record as cancelled (audit only).
+        try {
+          await cancelWalkSession(activeSession.id, userId);
+        } catch (error) {
+          console.error("Failed to cancel stray walk session in Firestore:", error);
+        }
+      } else {
+        try {
+          await saveWalkSummary(summary, splits);
+        } catch (error) {
+          console.error("Failed to save walk summary locally:", error);
+        }
+        try {
+          await finishWalkSession(activeSession.id, userId, {
+            duration: finalDuration,
+            distance: resolvedDistance,
+            calories: finalCaloriesValue,
+            steps: finalSteps,
+            day: activeSession.day || todayLocalDate(),
+            finished_at: now,
+            path: finalPath.length > 0 ? finalPath : null,
+            vehicle: finalVehicleFlagged,
+          });
+        } catch (error) {
+          console.error("Failed to finish walk session in Firestore:", error);
+        }
       }
 
       // Clean up state
@@ -1016,7 +1035,7 @@ export function useWalk(
       // Create a finished session object for the callback
       const finishedSession: WalkSession = {
         ...activeSession,
-        status: "finished",
+        status: isStray ? "cancelled" : "finished",
         duration: finalDuration,
         distance: resolvedDistance,
         calories: finalCaloriesValue,

@@ -7,6 +7,7 @@ import {
   Pill,
   FileText,
   CheckSquare,
+  Dumbbell,
   FileSearch,
   ArrowRight,
   Cake,
@@ -63,6 +64,8 @@ export function GlobalSearchModal({ isOpen, onClose, userId }: GlobalSearchModal
         return <FileText className="size-4 text-indigo-600" />;
       case "todo":
         return <CheckSquare className="size-4 text-emerald-600" />;
+      case "workout":
+        return <Dumbbell className="size-4 text-lime-600" />;
       case "birthday":
         return <Cake className="size-4 text-pink-500" />;
       default:

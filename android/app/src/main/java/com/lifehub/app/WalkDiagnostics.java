@@ -49,8 +49,13 @@ public class WalkDiagnostics {
     
     /**
      * Logs a diagnostic event with timestamp, category, level, and message.
+     *
+     * The read-modify-write of the SharedPreferences array is synchronized:
+     * WalkService's main thread and the broadcast-receiver thread both log
+     * concurrently, and an unsynchronized read-modify-write would drop entries
+     * whenever two threads interleave.
      */
-    public void log(String category, String level, String message) {
+    public synchronized void log(String category, String level, String message) {
         try {
             JSONArray logs = getLogs();
             
@@ -117,7 +122,7 @@ public class WalkDiagnostics {
     /**
      * Retrieves all diagnostic logs as JSONArray.
      */
-    public JSONArray getLogs() {
+    public synchronized JSONArray getLogs() {
         try {
             String logsJson = prefs.getString(KEY_LOGS, "[]");
             return new JSONArray(logsJson);

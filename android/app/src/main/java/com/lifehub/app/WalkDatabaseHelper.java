@@ -83,6 +83,15 @@ public class WalkDatabaseHelper extends SQLiteOpenHelper {
     }
 
     @Override
+    public void onConfigure(SQLiteDatabase db) {
+        super.onConfigure(db);
+        // Enforce foreign keys: walk_splits.session_id has ON DELETE CASCADE
+        // against walk_summaries. Without this PRAGMA the cascade silently
+        // never fires and deleting a summary leaves orphaned splits behind.
+        db.setForeignKeyConstraintsEnabled(true);
+    }
+
+    @Override
     public void onCreate(SQLiteDatabase db) {
         String createPointsTable = "CREATE TABLE " + TABLE_POINTS + " (" +
                 COLUMN_ID + " INTEGER PRIMARY KEY AUTOINCREMENT, " +

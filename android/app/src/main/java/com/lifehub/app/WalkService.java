@@ -846,7 +846,15 @@ public class WalkService extends Service implements LocationListener, SensorEven
         boolean hasLocation = hasFineLocation || hasCoarseLocation;
         boolean hasActivity = ContextCompat.checkSelfPermission(this, Manifest.permission.ACTIVITY_RECOGNITION)
                         == PackageManager.PERMISSION_GRANTED;
-        
+        // FOREGROUND_SERVICE_TYPE_HEALTH requires the BODY_SENSORS runtime
+        // permission on Android 14+ (a dangerous permission since API 29) —
+        // without it startForeground() throws SecurityException. Only combine
+        // the HEALTH bit when the permission is actually held; otherwise fall
+        // back to the LOCATION-only type.
+        boolean hasBodySensors = Build.VERSION.SDK_INT < Build.VERSION_CODES.Q
+                || ContextCompat.checkSelfPermission(this, Manifest.permission.BODY_SENSORS)
+                        == PackageManager.PERMISSION_GRANTED;
+
         // Android 14+ requires background location permission for FOREGROUND_SERVICE_TYPE_LOCATION
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) { // API 34
             boolean hasBackgroundLocation = ContextCompat.checkSelfPermission(this, 
@@ -867,9 +875,9 @@ public class WalkService extends Service implements LocationListener, SensorEven
             }
             
             // Have both location and background location - use LOCATION type
-            // Combine with HEALTH if activity recognition also granted (matches manifest: location|health)
+            // Combine with HEALTH if activity recognition AND body sensors are granted
             int fgsType = android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION;
-            if (hasActivity) {
+            if (hasActivity && hasBodySensors) {
                 fgsType |= android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_HEALTH;
                 Log.d(TAG, "Using FOREGROUND_SERVICE_TYPE_LOCATION | HEALTH (Android 14+)");
             } else {
@@ -885,9 +893,9 @@ public class WalkService extends Service implements LocationListener, SensorEven
             }
             
             // Have location permission - use LOCATION type
-            // Combine with HEALTH if activity recognition also granted
+            // Combine with HEALTH if activity recognition + body sensors also granted
             int fgsType = android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION;
-            if (hasActivity && Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            if (hasActivity && hasBodySensors && Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 fgsType |= android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_HEALTH;
                 Log.d(TAG, "Using FOREGROUND_SERVICE_TYPE_LOCATION | HEALTH");
             } else {
