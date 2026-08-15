@@ -195,8 +195,7 @@ public class WalkService extends Service implements LocationListener, SensorEven
     // Sensor registration state tracking
     private boolean sensorsRegistered = false;
     private int sensorRegistrationAttempts = 0;
-    private static final int MAX_SENSOR_RETRIES = 3;
-    private Handler sensorRetryHandler;
+    private Handler sensorRetryHandler = new Handler(Looper.getMainLooper());
     private boolean isSensorRecoveryInProgress = false;
     private Runnable pendingSensorValidation = null;
 
@@ -315,8 +314,12 @@ public class WalkService extends Service implements LocationListener, SensorEven
         // Doze-exempt alarm ticker is the one chosen (never the fallback Handler
         // ticker, which would keep running alongside the alarm ticker later).
         alarmManager = (AlarmManager) getSystemService(Context.ALARM_SERVICE);
-        sensorRetryHandler = new Handler(Looper.getMainLooper());
-        startTicker();
+        if (sensorRetryHandler == null) {
+            sensorRetryHandler = new Handler(Looper.getMainLooper());
+        }
+        if (isTracking && !paused) {
+            startTicker();
+        }
         
         // Initialize diagnostic logging (P4.1)
         diagnostics = new WalkDiagnostics(this);
@@ -590,10 +593,23 @@ public class WalkService extends Service implements LocationListener, SensorEven
                     publishUpdate("finish");
                     break;
                 case ACTION_PAUSE_TAP:
+                    paused = true;
+                    stopAllTickers();
+                    resumeTrackingEnginesIfNeeded();
+                    updateNotification();
                     publishUpdate("pause");
+                    persistState();
+                    persistSessionSnapshot();
                     break;
                 case ACTION_RESUME_TAP:
+                    paused = false;
+                    startedAtMs = SystemClock.elapsedRealtime() - durationSec * 1000L;
+                    startTicker();
+                    resumeTrackingEnginesIfNeeded();
+                    updateNotification();
                     publishUpdate("resume");
+                    persistState();
+                    persistSessionSnapshot();
                     break;
                 case ACTION_TICKER_UPDATE:
                     // Doze-exempt ticker update from AlarmManager. Only
@@ -945,54 +961,29 @@ public class WalkService extends Service implements LocationListener, SensorEven
                 || ContextCompat.checkSelfPermission(this, Manifest.permission.BODY_SENSORS)
                         == PackageManager.PERMISSION_GRANTED;
 
-        // Android 14+ requires background location permission for FOREGROUND_SERVICE_TYPE_LOCATION
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) { // API 34
-            boolean hasBackgroundLocation = ContextCompat.checkSelfPermission(this, 
-                    Manifest.permission.ACCESS_BACKGROUND_LOCATION) == PackageManager.PERMISSION_GRANTED;
-            
-            if (!hasLocation) {
-                // No location permission at all - cannot do GPS tracking
-                Log.e(TAG, "No location permission on Android 14+ - cannot start FGS for location tracking");
-                publishUpdate("location_permission_required");
-                return 0;
-            }
-            
-            if (!hasBackgroundLocation) {
-                // Have location but not background location - CANNOT use LOCATION type on Android 14+
-                Log.e(TAG, "Background location permission required on Android 14+ for FGS location type");
-                publishUpdate("background_location_required");
-                return 0;
-            }
-            
-            // Have both location and background location - use LOCATION type
-            // Combine with HEALTH if activity recognition AND body sensors are granted
-            int fgsType = android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION;
-            if (hasActivity && hasBodySensors) {
-                fgsType |= android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_HEALTH;
-                Log.d(TAG, "Using FOREGROUND_SERVICE_TYPE_LOCATION | HEALTH (Android 14+)");
-            } else {
-                Log.d(TAG, "Using FOREGROUND_SERVICE_TYPE_LOCATION (Android 14+)");
-            }
-            return fgsType;
-        } else {
-            // Android 10-13: location permission sufficient (no background location requirement)
-            if (!hasLocation) {
-                Log.e(TAG, "No location permission - cannot start FGS for location tracking");
-                publishUpdate("location_permission_required");
-                return 0;
-            }
-            
-            // Have location permission - use LOCATION type
-            // Combine with HEALTH if activity recognition + body sensors also granted
-            int fgsType = android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION;
-            if (hasActivity && hasBodySensors && Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                fgsType |= android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_HEALTH;
-                Log.d(TAG, "Using FOREGROUND_SERVICE_TYPE_LOCATION | HEALTH");
-            } else {
-                Log.d(TAG, "Using FOREGROUND_SERVICE_TYPE_LOCATION");
-            }
-            return fgsType;
+        int fgsType = 0;
+        if (hasLocation) {
+            fgsType |= android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION;
         }
+        if (hasActivity && hasBodySensors && Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            fgsType |= android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_HEALTH;
+        }
+
+        if (fgsType == 0) {
+            Log.e(TAG, "No valid permissions (location or activity/health) to start foreground service");
+            publishUpdate("location_permission_required");
+            return 0;
+        }
+
+        if ((fgsType & android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION) != 0
+                && (fgsType & android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_HEALTH) != 0) {
+            Log.d(TAG, "Using FOREGROUND_SERVICE_TYPE_LOCATION | HEALTH");
+        } else if ((fgsType & android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION) != 0) {
+            Log.d(TAG, "Using FOREGROUND_SERVICE_TYPE_LOCATION");
+        } else {
+            Log.d(TAG, "Using FOREGROUND_SERVICE_TYPE_HEALTH");
+        }
+        return fgsType;
     }
 
     private void startForegroundTracking(

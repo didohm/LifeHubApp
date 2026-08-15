@@ -11,6 +11,7 @@
     "build:capacitor": "vite build --config vite.config.capacitor.ts",
     "sync:android": "npm run build:capacitor && cap sync android",
     "apk:android": "npm run build:capacitor && cap sync android && cd android && gradlew.bat assembleDebug",
+    "apk:release": "npm run build:capacitor && cap sync android && cd android && gradlew.bat assembleRelease",
     "lint": "eslint .",
     "verify:card": "tsx scripts/verify-activity-card.ts",
     "format": "prettier --write ."

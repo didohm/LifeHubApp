@@ -267,6 +267,7 @@ export function useWalk(
       } else {
         if (statusRef.current === "idle" || statusRef.current === "paused") {
           setStatus("active");
+          setIsAutoPaused(false);
         }
       }
 
@@ -506,6 +507,7 @@ export function useWalk(
   useEffect(() => {
     if (!isNative) return;
     const fetchStatus = () => {
+      lastMotionTimeRef.current = Date.now();
       void WalkServicePlugin.getStatus()
         .then((data) => {
           if (data) applyNativeStatus(data);
@@ -539,25 +541,21 @@ export function useWalk(
   // Auto-pause monitoring loop.
   // Motion is credited from native reports (accepted GPS fixes OR step
   // advances — see applyNativeStatus) and from the JS fallback sensors. When
-  // nothing moves for 12s the walk auto-pauses. This INCLUDES walks where the
-  // native service is live: the WebView is throttled in the background, but
-  // the native side keeps reporting its own (stale) counters via the poll —
-  // without this gate a user who stopped walking would keep accruing
-  // duration/calories forever on the native clock. Auto-pausing a native walk
-  // freezes that clock through the normal pause path (pauseWalkForeground).
+  // nothing moves for 12s in the foreground the walk auto-pauses.
+  // While backgrounded or when the phone screen is locked (document.hidden),
+  // JS execution is throttled/suspended so the check is bypassed to avoid false pauses.
   useEffect(() => {
     if (status !== "active" && status !== "paused") return;
 
     const checkInterval = window.setInterval(() => {
       if (statusRef.current !== "active") return;
+      if (typeof document !== "undefined" && document.hidden) return;
+
       const timeSinceMotion = Date.now() - lastMotionTimeRef.current;
       if (timeSinceMotion > 12000) {
-        // No movement detected for 12 seconds -> auto pause.
+        // No movement detected for 12 seconds in foreground -> auto pause.
         if (nativeActiveRef.current) {
-          // Freeze the native clock too (it keeps accruing duration/calories
-          // while JS is idle) through the same pause path as the in-app
-          // button. pauseWalk clears the auto-paused flag, so re-assert it
-          // for the "Auto-Paused (No Motion)" UI state.
+          // Freeze the native clock too through the normal pause path.
           pauseWalkRef.current?.();
           setIsAutoPaused(true);
         } else {

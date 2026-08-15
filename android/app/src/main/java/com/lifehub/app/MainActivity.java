@@ -12,13 +12,13 @@ import com.capacitorjs.plugins.localnotifications.LocalNotificationsPlugin;
 public class MainActivity extends BridgeActivity {
 
     @Override
-    protected void onCreate(Bundle savedInstanceState) {
-        super.onCreate(savedInstanceState);
-
+    public void onCreate(Bundle savedInstanceState) {
         registerPlugin(LocalNotificationsPlugin.class);
         registerPlugin(StepCounterPlugin.class);
         registerPlugin(NativePermissionsPlugin.class);
         registerPlugin(WalkServicePlugin.class);
         registerPlugin(GallerySaverPlugin.class);
+
+        super.onCreate(savedInstanceState);
     }
 }
