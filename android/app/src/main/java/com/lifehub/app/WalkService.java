@@ -279,18 +279,33 @@ public class WalkService extends Service implements LocationListener, SensorEven
         };
         if (sensorManager != null) {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-                // Request wake-up sensors so events wake up the AP when screen is locked
+                // CRITICAL: Explicitly request WAKE-UP sensors for background/lock screen counting.
+                // Non-wake-up sensors stop delivering events when screen is off, freezing step count.
+                // Wake-up sensors continue to deliver events and wake the CPU to process them.
                 stepDetectorSensor = sensorManager.getDefaultSensor(Sensor.TYPE_STEP_DETECTOR, true);
                 if (stepDetectorSensor == null) {
+                    // Fallback to non-wake-up if wake-up variant not available
                     stepDetectorSensor = sensorManager.getDefaultSensor(Sensor.TYPE_STEP_DETECTOR);
+                    Log.w(TAG, "Wake-up step detector not available, using non-wake-up variant (may not work when screen is off)");
                 }
                 stepCounterSensor = sensorManager.getDefaultSensor(Sensor.TYPE_STEP_COUNTER, true);
                 if (stepCounterSensor == null) {
                     stepCounterSensor = sensorManager.getDefaultSensor(Sensor.TYPE_STEP_COUNTER);
+                    Log.w(TAG, "Wake-up step counter not available, using non-wake-up variant (may not work when screen is off)");
                 }
             } else {
                 stepDetectorSensor = sensorManager.getDefaultSensor(Sensor.TYPE_STEP_DETECTOR);
                 stepCounterSensor = sensorManager.getDefaultSensor(Sensor.TYPE_STEP_COUNTER);
+            }
+            
+            // Log sensor availability for debugging
+            if (stepDetectorSensor != null) {
+                boolean isWakeup = Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP && stepDetectorSensor.isWakeUpSensor();
+                Log.d(TAG, "Step detector available: " + (isWakeup ? "wake-up" : "non-wake-up"));
+            }
+            if (stepCounterSensor != null) {
+                boolean isWakeup = Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP && stepCounterSensor.isWakeUpSensor();
+                Log.d(TAG, "Step counter available: " + (isWakeup ? "wake-up" : "non-wake-up"));
             }
         }
         createNotificationChannel();
@@ -1835,19 +1850,30 @@ public class WalkService extends Service implements LocationListener, SensorEven
         
         boolean anyRegistered = false;
         
+        // CRITICAL: Use SENSOR_DELAY_UI instead of SENSOR_DELAY_FASTEST.
+        // SENSOR_DELAY_FASTEST (0ms) can overwhelm the sensor HAL and cause it to stop
+        // responding entirely, especially on low-end devices or when screen is off.
+        // SENSOR_DELAY_UI (16ms / ~60Hz) is more than sufficient for step counting
+        // and far more reliable for background/lock screen operation.
         if (stepDetectorSensor != null) {
-            boolean registered = sensorManager.registerListener(this, stepDetectorSensor, SensorManager.SENSOR_DELAY_FASTEST);
+            boolean registered = sensorManager.registerListener(this, stepDetectorSensor, SensorManager.SENSOR_DELAY_UI);
             if (registered) {
-                Log.d(TAG, "Step detector registered (attempt " + (attemptNumber + 1) + ")");
+                boolean isWakeup = Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP && stepDetectorSensor.isWakeUpSensor();
+                Log.d(TAG, "Step detector registered (attempt " + (attemptNumber + 1) + ", " + (isWakeup ? "wake-up" : "non-wake-up") + ")");
                 anyRegistered = true;
+            } else {
+                Log.e(TAG, "Failed to register step detector sensor");
             }
         }
         
         if (stepCounterSensor != null) {
-            boolean registered = sensorManager.registerListener(this, stepCounterSensor, SensorManager.SENSOR_DELAY_FASTEST);
+            boolean registered = sensorManager.registerListener(this, stepCounterSensor, SensorManager.SENSOR_DELAY_UI);
             if (registered) {
-                Log.d(TAG, "Step counter registered (attempt " + (attemptNumber + 1) + ")");
+                boolean isWakeup = Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP && stepCounterSensor.isWakeUpSensor();
+                Log.d(TAG, "Step counter registered (attempt " + (attemptNumber + 1) + ", " + (isWakeup ? "wake-up" : "non-wake-up") + ")");
                 anyRegistered = true;
+            } else {
+                Log.e(TAG, "Failed to register step counter sensor");
             }
         }
         
