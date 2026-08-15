@@ -19,5 +19,6 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(StepCounterPlugin.class);
         registerPlugin(NativePermissionsPlugin.class);
         registerPlugin(WalkServicePlugin.class);
+        registerPlugin(GallerySaverPlugin.class);
     }
 }

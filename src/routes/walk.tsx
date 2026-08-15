@@ -90,6 +90,12 @@ function WalkPage() {
 
   const [statsPeriod, setStatsPeriod] = useState<"daily" | "weekly" | "monthly">("daily");
 
+  // In-context rationale dialogs shown before the first OS permission prompt
+  // for background location and battery optimization (Play Store policy:
+  // background location must be explained and requested as a separate step).
+  const [showBgLocationDialog, setShowBgLocationDialog] = useState(false);
+  const [showBatteryDialog, setShowBatteryDialog] = useState(false);
+
   // Validate user weight for accurate calorie calculation. Without it, no
   // calorie estimate is produced (0 kcal) — never a made-up 70kg default.
   const userWeightKg = user?.weight && Number(user.weight) > 0 ? Number(user.weight) : 0;
@@ -148,6 +154,86 @@ function WalkPage() {
   // via the walkUpdate "action" field, which keeps the React session and the
   // foreground service perfectly in sync. Notification "Finish" routes through
   // the same handler above so the summary always appears.
+
+  // ─── Start-walk permission sequence ──────────────────────────────────────
+  // Play Store policy: background location is a SEPARATE permission that must
+  // be requested in-context, after foreground location is granted, with a
+  // rationale dialog — never bundled into the foreground request. Battery
+  // optimization gets the same treatment (explaner → explicit OS request).
+  // Every denial is best-effort: it never blocks starting the walk.
+
+  const continueStartSequence = useCallback(async () => {
+    // Battery optimization: aggressive OEM battery managers / Doze can
+    // suspend the step sensor and stall GPS mid-walk, freezing the count.
+    // Show an in-app explainer, and only after the user accepts open the OS
+    // "Allow background activity?" dialog.
+    try {
+      const { exempt } = await WalkServicePlugin.isBatteryOptimizationExempt();
+      if (!exempt) {
+        setShowBatteryDialog(true);
+        return;
+      }
+    } catch {
+      /* plugin unavailable (web) — proceed without */
+    }
+    startWalk();
+  }, [startWalk]);
+
+  const handleStartClick = useCallback(async () => {
+    sounds.playActionClick();
+    // Warn user if weight is not set (calories won't be estimated)
+    if (!hasValidWeight) {
+      toast.warning(
+        "Weight not set — walk calories won't be estimated until you complete onboarding with your height & weight.",
+      );
+    }
+    // Feature-time permissions: if denied earlier, ask again now that the
+    // user is actually using the walking feature. BODY_SENSORS is requested
+    // too — it lets the foreground service combine the health FGS type with
+    // location (Android 14+ requirement); the service falls back to
+    // location-only when it is missing.
+    await PermissionManager.ensurePermission("location");
+    await PermissionManager.ensurePermission("activity");
+    await PermissionManager.ensurePermission("health");
+    // Background location: separate in-context step (Play policy). Never
+    // asked at startup; only when the user starts a walk, after foreground
+    // location is granted, and with a rationale dialog on first ask.
+    if (await PermissionManager.check("location")) {
+      const bg = await PermissionManager.check("background");
+      if (!bg) {
+        if (PermissionManager.wasDenied("background")) {
+          toast.warning(
+            "Background location is off — tracking may pause when the app is closed. You can allow it anytime in Settings.",
+          );
+        } else {
+          setShowBgLocationDialog(true);
+          return;
+        }
+      }
+    }
+    await continueStartSequence();
+  }, [continueStartSequence, hasValidWeight]);
+
+  const acceptBgLocationDialog = useCallback(async () => {
+    setShowBgLocationDialog(false);
+    const granted = await PermissionManager.request("background");
+    if (!granted) {
+      toast.warning(
+        "Background location is off — tracking may pause when the app is closed. You can allow it anytime in Settings.",
+      );
+    }
+    await continueStartSequence();
+  }, [continueStartSequence]);
+
+  const acceptBatteryDialog = useCallback(async () => {
+    setShowBatteryDialog(false);
+    try {
+      await WalkServicePlugin.requestBatteryOptimizationExemption();
+    } catch (e) {
+      console.warn("Failed to open battery optimization request:", e);
+    }
+    startWalk();
+  }, [startWalk]);
 
   const handleFinish = async () => {
     try {
@@ -304,24 +390,7 @@ function WalkPage() {
         <div className="mt-6 flex items-center justify-center gap-3">
           {status === "idle" && (
             <button
-              onClick={async () => {
-                sounds.playActionClick();
-                // Warn user if weight is not set (calories won't be estimated)
-                if (!hasValidWeight) {
-                  toast.warning(
-                    "Weight not set — walk calories won't be estimated until you complete onboarding with your height & weight.",
-                  );
-                }
-                // Feature-time permissions: if denied earlier, ask again now
-                // that the user is actually using the walking feature. BODY_SENSORS
-                // is requested too — it lets the foreground service combine the
-                // health FGS type with location (Android 14+ requirement); the
-                // service falls back to location-only when it is missing.
-                await PermissionManager.ensurePermission("location");
-                await PermissionManager.ensurePermission("activity");
-                await PermissionManager.ensurePermission("health");
-                startWalk();
-              }}
+              onClick={handleStartClick}
               disabled={loading}
               className="tap flex items-center gap-2 rounded-full bg-emerald-500 px-8 py-3.5 text-sm font-black text-white shadow-lg hover:bg-emerald-600 active:scale-95 transition-transform"
             >
@@ -530,6 +599,97 @@ function WalkPage() {
           />
         </Suspense>
       )}
+
+      {/* Background-location rationale (Play Store policy: explained and
+          requested as a separate in-context step, never at startup). */}
+      {showBgLocationDialog &&
+        createPortal(
+          <div
+            className="fixed inset-0 z-[100] flex items-end justify-center bg-black/60 p-4 sm:items-center"
+            onClick={() => {
+              setShowBgLocationDialog(false);
+              void continueStartSequence();
+            }}
+          >
+            <div
+              className="w-full max-w-sm rounded-2xl bg-white p-5 shadow-2xl"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <h3 className="text-base font-extrabold text-[#12131A]">
+                Keep tracking in the background?
+              </h3>
+              <p className="mt-2 text-xs font-semibold leading-relaxed text-[#6B7280]">
+                Allow background location so your walk keeps recording accurate distance and route
+                while the app is closed or the screen is locked. You'll see one more system prompt —
+                it is only used for walk tracking, never shared.
+              </p>
+              <div className="mt-4 flex gap-2">
+                <button
+                  onClick={() => {
+                    setShowBgLocationDialog(false);
+                    void continueStartSequence();
+                  }}
+                  className="flex-1 rounded-full bg-black/5 px-4 py-2.5 text-xs font-extrabold text-[#6B7280] hover:bg-black/10"
+                >
+                  Not now
+                </button>
+                <button
+                  onClick={() => void acceptBgLocationDialog()}
+                  className="flex-1 rounded-full bg-emerald-500 px-4 py-2.5 text-xs font-extrabold text-white hover:bg-emerald-600"
+                >
+                  Continue
+                </button>
+              </div>
+            </div>
+          </div>,
+          document.body,
+        )}
+
+      {/* Battery-optimization explainer: Doze / aggressive OEM battery
+          managers can freeze steps & distance mid-walk. Explain, then open
+          the OS exemption dialog only after the user accepts. */}
+      {showBatteryDialog &&
+        createPortal(
+          <div
+            className="fixed inset-0 z-[100] flex items-end justify-center bg-black/60 p-4 sm:items-center"
+            onClick={() => {
+              setShowBatteryDialog(false);
+              startWalk();
+            }}
+          >
+            <div
+              className="w-full max-w-sm rounded-2xl bg-white p-5 shadow-2xl"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <h3 className="text-base font-extrabold text-[#12131A]">
+                Keep steps &amp; distance counting?
+              </h3>
+              <p className="mt-2 text-xs font-semibold leading-relaxed text-[#6B7280]">
+                Android's battery saver can suspend walk tracking in the background and freeze your
+                step count mid-walk. Allow LifeHub to run in the background so tracking stays
+                accurate — you'll see one system prompt about battery usage.
+              </p>
+              <div className="mt-4 flex gap-2">
+                <button
+                  onClick={() => {
+                    setShowBatteryDialog(false);
+                    startWalk();
+                  }}
+                  className="flex-1 rounded-full bg-black/5 px-4 py-2.5 text-xs font-extrabold text-[#6B7280] hover:bg-black/10"
+                >
+                  Skip
+                </button>
+                <button
+                  onClick={() => void acceptBatteryDialog()}
+                  className="flex-1 rounded-full bg-emerald-500 px-4 py-2.5 text-xs font-extrabold text-white hover:bg-emerald-600"
+                >
+                  Allow background activity
+                </button>
+              </div>
+            </div>
+          </div>,
+          document.body,
+        )}
     </Screen>
   );
 }

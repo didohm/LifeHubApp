@@ -1,9 +1,24 @@
 import { useState, useEffect, useMemo } from "react";
 import { createPortal } from "react-dom";
-import { X, TrendingUp, Flame, Footprints, Gauge, Car, Activity } from "lucide-react";
+import {
+  X,
+  TrendingUp,
+  Flame,
+  Footprints,
+  Gauge,
+  Car,
+  Activity,
+  Download,
+  Loader2,
+} from "lucide-react";
+import { toast } from "sonner";
+import { Capacitor } from "@capacitor/core";
 import { registerOverlay } from "@/lib/overlay-registry";
 import type { WalkSummary, WalkSplit, WalkSession } from "@/lib/types";
 import { getWalkSplits } from "@/lib/walk-storage";
+import { renderActivityCard } from "@/lib/activity-card";
+import { savePngToGallery } from "@/lib/gallery";
+import { WalkServicePlugin } from "@/lib/notifications-integration";
 import {
   formatPace,
   formatDuration,
@@ -45,6 +60,7 @@ export default function EnhancedWalkSummary({
 
   const [splits, setSplits] = useState<WalkSplit[]>([]);
   const [loadingSplits, setLoadingSplits] = useState(true);
+  const [downloading, setDownloading] = useState(false);
 
   // Extract route points from all possible formats
   const routePoints = useMemo<RoutePoint[]>(() => {
@@ -125,6 +141,65 @@ export default function EnhancedWalkSummary({
     }
     setLoadingSplits(false);
   }
+
+  // Render the activity card (1080×1920 PNG) and save it to the device
+  // Gallery. Reuses the exact metrics shown in this modal — no new
+  // statistics, no second calculation system.
+  const handleDownload = async () => {
+    if (downloading) return;
+    setDownloading(true);
+    try {
+      // Route trail: prefer the native SQLite route points when available,
+      // then the persisted encoded polyline (itself derived from those GPS
+      // points), then start/end coordinates. Falls back to a placeholder.
+      let cardPoints = routePoints;
+      const sessionId = summary?.id || session?.id;
+      if (Capacitor.isNativePlatform() && sessionId) {
+        try {
+          const route = await WalkServicePlugin.getRoutePoints({ sessionId });
+          const parsed = route?.points ? JSON.parse(route.points) : [];
+          if (Array.isArray(parsed) && parsed.length >= 2) {
+            cardPoints = parsed;
+          }
+        } catch {
+          /* fall back to the summary route below */
+        }
+      }
+
+      const blob = await renderActivityCard({
+        dateLabel: new Date(rawFinishedAt).toLocaleString([], {
+          weekday: "short",
+          month: "short",
+          day: "numeric",
+          hour: "2-digit",
+          minute: "2-digit",
+        }),
+        distanceMeters: rawDistance,
+        durationSeconds: rawDuration,
+        paceSecondsPerKm: avgPaceSec,
+        calories: rawCalories,
+        steps: rawSteps,
+        avgSpeedKmH,
+        elevationGain: elevationGain ?? null,
+        routePoints: cardPoints,
+        logoSrc: "/illustration/LifeHub icon.png",
+      });
+
+      const fileName = `lifehub-activity-${sessionId || "walk"}.png`;
+      const location = await savePngToGallery(blob, fileName);
+      toast.success(`Activity image saved to ${location}`);
+    } catch (error) {
+      console.error("Failed to save activity image:", error);
+      const message = error instanceof Error && error.message ? error.message : "";
+      toast.error(
+        message
+          ? `Could not save the image — ${message}`
+          : "Could not save the image — please try again.",
+      );
+    } finally {
+      setDownloading(false);
+    }
+  };
 
   const modal = (
     <div
@@ -349,11 +424,23 @@ export default function EnhancedWalkSummary({
           )}
         </div>
 
-        {/* Bottom Done Bar */}
-        <div className="p-4 bg-slate-900 border-t border-slate-800 shrink-0">
+        {/* Bottom Action Bar */}
+        <div className="p-4 bg-slate-900 border-t border-slate-800 shrink-0 flex gap-3">
+          <button
+            onClick={handleDownload}
+            disabled={downloading}
+            className="flex-1 py-3.5 rounded-xl text-sm font-black text-white bg-slate-800 border border-slate-700 hover:bg-slate-700 disabled:opacity-60 disabled:pointer-events-none flex items-center justify-center gap-2 transition-all active:scale-[0.99]"
+          >
+            {downloading ? (
+              <Loader2 className="size-4 animate-spin" />
+            ) : (
+              <Download className="size-4" />
+            )}
+            {downloading ? "Saving…" : "Download Activity"}
+          </button>
           <button
             onClick={onClose}
-            className="w-full py-3.5 rounded-xl text-sm font-black text-white bg-gradient-to-r from-[#FC5200] to-[#FF7A00] hover:brightness-110 shadow-lg shadow-[#FC5200]/25 active:scale-[0.99] transition-all"
+            className="flex-[1.4] py-3.5 rounded-xl text-sm font-black text-white bg-gradient-to-r from-[#FC5200] to-[#FF7A00] hover:brightness-110 shadow-lg shadow-[#FC5200]/25 active:scale-[0.99] transition-all"
           >
             Done
           </button>

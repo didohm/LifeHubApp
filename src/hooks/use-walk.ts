@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { registerPlugin, Capacitor } from "@capacitor/core";
+import { toast } from "sonner";
 import {
   createWalkSession,
   updateWalkSession,
@@ -15,6 +16,7 @@ import {
   WalkServicePlugin,
   WalkStatusUpdate,
   WalkRoutePoint,
+  WalkHealthUpdate,
 } from "@/lib/notifications-integration";
 import { ramerDouglasPeucker } from "@/lib/rdp";
 import {
@@ -134,6 +136,10 @@ export function useWalk(
   // distance/steps and the JS fallback accumulators are paused.
   const nativeActiveRef = useRef(false);
   const lastNativeUpdateCountRef = useRef(0);
+  // Last native step total — step-only progress (indoor walk with no accepted
+  // GPS fixes) must count as motion for the auto-pause gate, otherwise a
+  // walker inside a building would be auto-paused mid-stride.
+  const lastNativeStepsRef = useRef(0);
   const statusRef = useRef(status);
   statusRef.current = status;
   // Latest pause/finish callbacks, so the native walkUpdate "action" handler
@@ -311,8 +317,12 @@ export function useWalk(
       setGpsAvailable(data.accuracy <= 30);
     }
 
-    if (data.updateCount > lastNativeUpdateCountRef.current) {
+    if (
+      data.updateCount > lastNativeUpdateCountRef.current ||
+      (data.steps > 0 && data.steps > lastNativeStepsRef.current)
+    ) {
       lastNativeUpdateCountRef.current = data.updateCount;
+      lastNativeStepsRef.current = data.steps;
       lastMotionTimeRef.current = Date.now();
     }
   }, []);
@@ -328,8 +338,15 @@ export function useWalk(
         const abandoned = await getAbandonedWalkSessions(userId);
         if (cancelled || userActedRef.current) return;
         const latest = abandoned[0];
-        const restoreSession =
-          latest && latest.day === todayLocalDate() && (latest.duration || 0) > 0;
+        // Restore the latest session when it is RECENT (started within the last
+        // 12h), not merely "today": a genuine walk started 23:50 yesterday and
+        // opened 00:10 today has day = yesterday, so the calendar-day check
+        // alone would cancel a real in-progress walk (data loss) the moment it
+        // crossed midnight.
+        const startedAtMs = latest?.started_at ? new Date(latest.started_at).getTime() : 0;
+        const isRecent =
+          Number.isFinite(startedAtMs) && Date.now() - startedAtMs < 12 * 60 * 60 * 1000;
+        const restoreSession = !!latest && isRecent && (latest.duration || 0) > 0;
 
         if (restoreSession) {
           setActiveSession(latest);
@@ -422,6 +439,40 @@ export function useWalk(
     };
   }, [isNative, applyNativeStatus]);
 
+  // Surface native health warnings (GPS lost, step sensor stalled, wake lock
+  // dropped) as toasts so the user can act while walking instead of
+  // discovering a frozen count at the end. Rate-limited to one toast per 60s
+  // so a persistent warning never spams.
+  const lastHealthToastRef = useRef(0);
+  useEffect(() => {
+    if (!isNative) return;
+    let listener: { remove: () => void } | null = null;
+    let cancelled = false;
+
+    const setup = async () => {
+      try {
+        listener = await WalkServicePlugin.addListener(
+          "walkHealthUpdate",
+          (data: WalkHealthUpdate) => {
+            if (cancelled || !data || data.status === "healthy") return;
+            const now = Date.now();
+            if (now - lastHealthToastRef.current < 60_000) return;
+            lastHealthToastRef.current = now;
+            toast.warning(data.message || "Walk tracking health issue detected");
+          },
+        );
+      } catch (e) {
+        console.warn("Failed to attach walkHealthUpdate listener:", e);
+      }
+    };
+    setup();
+
+    return () => {
+      cancelled = true;
+      listener?.remove();
+    };
+  }, [isNative]);
+
   // Periodic status poll — covers WebView suspension gaps, event loss, and
   // keeps feeding native trail points into the JS coordinate trail so a
   // resumed walk has a valid previous fix (without it the first GPS delta
@@ -485,21 +536,34 @@ export function useWalk(
   // is showing, the 4s poll above keeps its body refreshed with live metrics
   // via Notifications.refreshWalkFallback().
 
-  // Auto-pause and auto-resume monitoring loop.
-  // While the native service is live we do NOT auto-pause on stale JS events:
-  // the WebView is throttled in the background, but the native service keeps
-  // walking (and reports via the poll above). When the native service reports
-  // no new fixes for a long stretch the user genuinely stopped → auto-pause.
+  // Auto-pause monitoring loop.
+  // Motion is credited from native reports (accepted GPS fixes OR step
+  // advances — see applyNativeStatus) and from the JS fallback sensors. When
+  // nothing moves for 12s the walk auto-pauses. This INCLUDES walks where the
+  // native service is live: the WebView is throttled in the background, but
+  // the native side keeps reporting its own (stale) counters via the poll —
+  // without this gate a user who stopped walking would keep accruing
+  // duration/calories forever on the native clock. Auto-pausing a native walk
+  // freezes that clock through the normal pause path (pauseWalkForeground).
   useEffect(() => {
     if (status !== "active" && status !== "paused") return;
 
     const checkInterval = window.setInterval(() => {
-      if (nativeActiveRef.current) return; // native service handles tracking
+      if (statusRef.current !== "active") return;
       const timeSinceMotion = Date.now() - lastMotionTimeRef.current;
-      if (statusRef.current === "active" && timeSinceMotion > 12000) {
-        // No movement detected for 12 seconds -> auto pause
-        setStatus("paused");
-        setIsAutoPaused(true);
+      if (timeSinceMotion > 12000) {
+        // No movement detected for 12 seconds -> auto pause.
+        if (nativeActiveRef.current) {
+          // Freeze the native clock too (it keeps accruing duration/calories
+          // while JS is idle) through the same pause path as the in-app
+          // button. pauseWalk clears the auto-paused flag, so re-assert it
+          // for the "Auto-Paused (No Motion)" UI state.
+          pauseWalkRef.current?.();
+          setIsAutoPaused(true);
+        } else {
+          setStatus("paused");
+          setIsAutoPaused(true);
+        }
       }
     }, 3000);
 
@@ -728,6 +792,7 @@ export function useWalk(
       setNativeTracking(false);
       setVehicleFlagged(false);
       lastNativeUpdateCountRef.current = 0;
+      lastNativeStepsRef.current = 0;
       jsTrailRef.current = [];
       jsStepsRef.current = 0;
       gpsDistanceRef.current = 0;
@@ -772,6 +837,7 @@ export function useWalk(
     nativeActiveRef.current = false;
     setNativeTracking(false);
     lastNativeUpdateCountRef.current = 0;
+    lastNativeStepsRef.current = 0;
     // Keep the foreground service alive (so the notification persists) but tell
     // the native side to stop the clock — the walk notification freezes on the
     // paused metrics instead of being torn down and rebuilt.
@@ -798,6 +864,7 @@ export function useWalk(
     nativeActiveRef.current = false;
     setNativeTracking(false);
     lastNativeUpdateCountRef.current = 0;
+    lastNativeStepsRef.current = 0;
     setLastCoords(null);
     // Pass the saved session baseline so the native service continues the
     // duration clock exactly where we left off.

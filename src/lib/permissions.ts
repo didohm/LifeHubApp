@@ -15,13 +15,13 @@ interface NativePermissionsPlugin {
   getLaunchNotification(): Promise<{ extra: Record<string, any> | null }>;
 }
 
-type PermissionAlias = "location" | "activity" | "health" | "media" | "audio";
+type PermissionAlias = "location" | "background" | "activity" | "health" | "media" | "audio";
 
 const NativePermissions = registerPlugin<NativePermissionsPlugin>("NativePermissions");
 export { NativePermissions };
 
 export type PermissionName =
-  "notification" | "location" | "activity" | "health" | "media" | "audio";
+  "notification" | "location" | "background" | "activity" | "health" | "media" | "audio";
 type PermissionState = "granted" | "denied" | "unknown";
 
 /** Fired on `window` whenever a native permission transitions into granted. */

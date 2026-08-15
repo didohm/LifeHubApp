@@ -53,6 +53,20 @@ export interface WalkRoutePoint {
   speed?: number;
 }
 
+/** Native foreground-service health report (pushed ~every 10s while tracking). */
+export interface WalkHealthUpdate {
+  status: "healthy" | "warning" | "error";
+  message: string;
+  wakeLockHeld: boolean;
+  sensorsRegistered: boolean;
+  locationProvider: string;
+  gpsStaleSeconds: number;
+  stepStaleSeconds: number;
+  batteryOptimizationExempt: boolean;
+  foregroundServiceType: string;
+  timestamp: number;
+}
+
 export interface WalkServicePluginInterface {
   startService(args: {
     distanceKm: number;
@@ -93,10 +107,24 @@ export interface WalkServicePluginInterface {
   }): Promise<{ sessionId: string; isVehicleFlagged: boolean; points: string }>;
   /** Deletes the native SQLite route points for a session. */
   clearRoutePoints(args?: { sessionId?: string }): Promise<{ cleared: boolean }>;
+  /** True when the app is exempt from battery optimization (Doze-safe tracking). */
+  isBatteryOptimizationExempt(): Promise<{ exempt: boolean }>;
+  /**
+   * Opens the OS "Allow background activity?" dialog. The app shows its own
+   * rationale first and calls this only after the user accepts.
+   */
+  requestBatteryOptimizationExemption(): Promise<{ requested: boolean }>;
+  /** Live SQLite session snapshot (steps/distance/duration/calories) for a session. */
+  getSessionSnapshot(args?: { sessionId?: string }): Promise<{ snapshot: string | null }>;
   /** Pushed on every native location fix / step while the service tracks. */
   addListener(
     eventName: "walkUpdate",
     listenerFunc: (data: WalkStatusUpdate) => void,
+  ): Promise<{ remove: () => void }>;
+  /** Pushed ~every 10s while tracking — native health report (GPS, sensors, wake lock). */
+  addListener(
+    eventName: "walkHealthUpdate",
+    listenerFunc: (data: WalkHealthUpdate) => void,
   ): Promise<{ remove: () => void }>;
 }
 

@@ -101,6 +101,8 @@ public class WalkService extends Service implements LocationListener, SensorEven
     public static final String ACTION_TICKER_UPDATE = "com.lifehub.app.walk.TICKER_UPDATE";
     /** Internal action for wake lock maintenance. */
     public static final String ACTION_WAKELOCK_MAINTAIN = "com.lifehub.app.walk.WAKELOCK_MAINTAIN";
+    /** Explicit request (from the app, after showing its own rationale) to open the OS battery-optimization exemption dialog. */
+    public static final String ACTION_BATTERY_EXEMPTION_REQUEST = "com.lifehub.app.walk.BATTERY_EXEMPTION_REQUEST";
 
     private static final String PREFS = "lifehub_walk_state";
     private static final String KEY_TRACKING = "tracking";
@@ -212,6 +214,12 @@ public class WalkService extends Service implements LocationListener, SensorEven
     private static final long WAKELOCK_TIMEOUT_MS = 60 * 60 * 1000L;
     private static final long WAKELOCK_REACQUIRE_BEFORE_MS = 5 * 60 * 1000L;
 
+    // SQLite live-session snapshot (steps/distance/duration/calories) — written
+    // every 5s while tracking so a hard process kill never loses more than 5s
+    // of progress even if SharedPreferences is lost.
+    private long lastSnapshotMs = 0L;
+    private static final long SNAPSHOT_INTERVAL_MS = 5_000L;
+
     // Connectivity monitoring
     private ConnectivityMonitor connectivityMonitor;
 
@@ -231,6 +239,16 @@ public class WalkService extends Service implements LocationListener, SensorEven
     private WalkDiagnostics diagnostics;
     private long lastHealthReportMs = 0L;
     private static final long HEALTH_REPORT_INTERVAL_MS = 10_000L; // 10 seconds
+
+    /**
+     * True once the app deliberately requested ACTION_STOP (finish/cancel). A
+     * system-initiated teardown of a LIVE walk (OEM task killer, battery
+     * manager stopping the service) must NOT wipe the persisted snapshot —
+     * that is the whole crash-recovery design. See onDestroy().
+     */
+    private boolean explicitStopRequested = false;
+    /** Set by onDestroy() when a live walk is being torn down by the system. */
+    private boolean preserveStateOnTeardown = false;
 
     public class LocalBinder extends Binder {
         public WalkService getService() {
@@ -371,13 +389,21 @@ public class WalkService extends Service implements LocationListener, SensorEven
         float weight = p.getFloat(KEY_WEIGHT, 0f);
         if (weight > 0f) userWeightKg = weight;
         
-        // Restore background execution state
+        // Restore background execution state. KEY_LOCATION_REGISTERED is
+        // persisted as "fused OR LocationManager active" — split it back into
+        // the two provider flags from the persisted provider type instead of
+        // blindly restoring it as the fused-only flag (that mislabeled a
+        // GPS-only walk as fused after a process death).
         sensorsRegistered = p.getBoolean(KEY_SENSORS_REGISTERED, false);
-        isFusedLocationRequestActive = p.getBoolean(KEY_LOCATION_REGISTERED, false);
         long lastHeartbeat = p.getLong(KEY_LAST_HEARTBEAT, 0L);
         wakeLockAcquiredAtMs = p.getLong(KEY_WAKELOCK_ACQUIRED_AT, 0L);
         sensorRegistrationAttempts = p.getInt(KEY_SENSOR_REGISTRATION_FAILURES, 0);
         activeLocationProvider = p.getString(KEY_LOCATION_PROVIDER_TYPE, "none");
+        boolean locationRegistered = p.getBoolean(KEY_LOCATION_REGISTERED, false);
+        isFusedLocationRequestActive = locationRegistered && "fused".equals(activeLocationProvider);
+        isLocationManagerRequestActive = locationRegistered
+                && !"fused".equals(activeLocationProvider)
+                && !"none".equals(activeLocationProvider);
         
         // Detect long-term process death (heartbeat stale > 5 minutes)
         long heartbeatAgeMs = System.currentTimeMillis() - lastHeartbeat;
@@ -399,6 +425,26 @@ public class WalkService extends Service implements LocationListener, SensorEven
             lastLocation.setLatitude(lat);
             lastLocation.setLongitude(lng);
             if (acc > 0f) lastLocation.setAccuracy(acc);
+        }
+
+        // Merge the SQLite live-session snapshot (written every 5s by the
+        // ticker). Both prefs and SQLite survive process death; the fresher
+        // writer wins so a walk recovered after a hard kill keeps the exact
+        // totals tracked while the process was dead.
+        if (isTracking && dbHelper != null) {
+            try {
+                org.json.JSONObject snap = dbHelper.getSessionSnapshot(activeSessionId);
+                if (snap != null && snap.optLong("updated_at", 0L) > lastHeartbeat) {
+                    currentSteps = Math.max(currentSteps, snap.optInt("steps", 0));
+                    currentDistanceKm = Math.max(currentDistanceKm, (float) snap.optDouble("distance_km", 0.0));
+                    durationSec = Math.max(durationSec, snap.optLong("duration_sec", 0L));
+                    currentCalories = Math.max(currentCalories, (float) snap.optDouble("calories", 0.0));
+                    Log.d(TAG, "Merged SQLite snapshot (fresher than prefs): steps=" + currentSteps
+                            + " km=" + currentDistanceKm + " dur=" + durationSec);
+                }
+            } catch (Exception e) {
+                Log.w(TAG, "Failed to merge SQLite snapshot in restore", e);
+            }
         }
     }
 
@@ -454,7 +500,17 @@ public class WalkService extends Service implements LocationListener, SensorEven
                     if (weight > 0.0) userWeightKg = weight;
                     if (km >= 0.0) currentDistanceKm = Math.max(currentDistanceKm, km);
                     if (steps >= 0) currentSteps = Math.max(currentSteps, steps);
-                    if (dur >= 0L) durationSec = Math.max(durationSec, dur);
+                    if (dur >= 0L) {
+                        // A larger JS-pushed duration (e.g. the app's paused
+                        // baseline) must also re-base the wall clock — mirroring
+                        // ACTION_RESUME — or the ticker's next recompute
+                        // (duration = elapsedRealtime − startedAtMs) clobbers
+                        // the merged value back to the old baseline.
+                        if (dur > durationSec) {
+                            durationSec = dur;
+                            startedAtMs = SystemClock.elapsedRealtime() - dur * 1000L;
+                        }
+                    }
                     if (cal >= 0.0) currentCalories = Math.max(currentCalories, cal);
                     if (pace >= 0.0) currentPace = Math.max(currentPace, pace);
                     resumeTrackingEnginesIfNeeded();
@@ -465,10 +521,18 @@ public class WalkService extends Service implements LocationListener, SensorEven
                 }
                 case ACTION_PAUSE: {
                     paused = true;
+                    // Freeze the tickers: the Doze-exempt AlarmManager ticker
+                    // must NOT keep firing 1 Hz exact alarms while paused (each
+                    // one wakes the device in Doze to do nothing but re-schedule
+                    // — a walk paused for an hour burned ~3,600 wakeups). The
+                    // Handler fallback ticker is suspended too; ACTION_RESUME
+                    // restarts whichever ticker is active.
+                    stopAllTickers();
                     resumeTrackingEnginesIfNeeded();
                     updateNotification();
                     publishUpdate();
                     persistState();
+                    persistSessionSnapshot();
                     break;
                 }
                 case ACTION_RESUME: {
@@ -489,13 +553,18 @@ public class WalkService extends Service implements LocationListener, SensorEven
                     // Re-base the wall clock so the resumed duration continues
                     // from the (merged) baseline instead of counting the pause.
                     startedAtMs = SystemClock.elapsedRealtime() - durationSec * 1000L;
+                    // Restart the ticker that ACTION_PAUSE stopped — the frozen
+                    // notification/clock must resume ticking again.
+                    startTicker();
                     resumeTrackingEnginesIfNeeded();
                     updateNotification();
                     publishUpdate();
                     persistState();
+                    persistSessionSnapshot();
                     break;
                 }
                 case ACTION_STOP: {
+                    explicitStopRequested = true;
                     stopForegroundTracking();
                     stopSelf();
                     return START_NOT_STICKY;
@@ -512,16 +581,24 @@ public class WalkService extends Service implements LocationListener, SensorEven
                     publishUpdate("resume");
                     break;
                 case ACTION_TICKER_UPDATE:
-                    // Doze-exempt ticker update from AlarmManager
+                    // Doze-exempt ticker update from AlarmManager. Only
+                    // re-schedule while actually tracking (not paused) — an
+                    // in-flight alarm arriving just after a pause must let the
+                    // chain die out instead of re-arming the 1 Hz loop.
                     if (isTracking && !paused) {
                         handleTickerUpdate();
+                        scheduleNextTicker();
                     }
-                    scheduleNextTicker();
                     break;
                 case ACTION_WAKELOCK_MAINTAIN:
                     // Proactive wake lock re-acquisition before expiry
                     Log.d(TAG, "Wake lock maintenance triggered");
                     ensureWakeLockHeld();
+                    break;
+                case ACTION_BATTERY_EXEMPTION_REQUEST:
+                    // The app showed its own rationale and the user accepted —
+                    // only now open the OS "Allow background activity?" dialog.
+                    requestBatteryOptimizationExemptionFromSystem();
                     break;
                 default:
                     break;
@@ -567,8 +644,9 @@ public class WalkService extends Service implements LocationListener, SensorEven
         registerLocationUpdates();
         registerStepListeners();
         
-        // Start AlarmManager ticker if not already running
-        if (useAlarmTicker && tickerPendingIntent == null) {
+        // Start AlarmManager ticker if not already running (never while
+        // paused — a restored walk stays frozen until the user resumes).
+        if (useAlarmTicker && tickerPendingIntent == null && !paused) {
             startAlarmTicker();
         }
         
@@ -719,7 +797,7 @@ public class WalkService extends Service implements LocationListener, SensorEven
     private void updateNotificationContent() {
         if (notificationBuilder == null) return;
 
-        String title = paused ? "⏸ Walking paused" : "🚶 Walking";
+        String title = paused ? "Walk paused" : "Walk in progress";
         String content = formatNotificationMetrics();
 
         notificationBuilder
@@ -731,13 +809,10 @@ public class WalkService extends Service implements LocationListener, SensorEven
         long hours = totalSeconds / 3600;
         long minutes = (totalSeconds % 3600) / 60;
         long seconds = totalSeconds % 60;
-        if (hours > 0) {
-            return String.format(java.util.Locale.US, "%d:%02d:%02d", hours, minutes, seconds);
-        }
-        return String.format(java.util.Locale.US, "%02d:%02d", minutes, seconds);
+        return String.format(java.util.Locale.US, "%02d:%02d:%02d", hours, minutes, seconds);
     }
 
-    /** "2.43 km · 24:18 · 3,421 steps · 146 kcal" — compact one-line live summary. */
+    /** "2.43 km · 00:14:32 · 3,421 steps · 146 kcal" — compact one-line live summary. */
     private String formatNotificationMetrics() {
         StringBuilder sb = new StringBuilder();
         sb.append(String.format(java.util.Locale.US, "%.2f km", currentDistanceKm));
@@ -949,8 +1024,10 @@ public class WalkService extends Service implements LocationListener, SensorEven
         registerLocationUpdates();
         registerStepListeners();
         
-        // Start AlarmManager ticker for Doze-exempt updates
-        startAlarmTicker();
+        // Start the ticker for Doze-exempt updates. startTicker() is
+        // paused-aware: a walk re-armed frozen (recovered after process death)
+        // must not run the 1 Hz alarm ticker until the user resumes it.
+        startTicker();
         
         // Start network connectivity monitoring
         if (connectivityMonitor != null) {
@@ -959,7 +1036,9 @@ public class WalkService extends Service implements LocationListener, SensorEven
         
         // Doze/battery-saver would otherwise suspend the service's location and
         // step streams minutes into a walk (steps freeze, distance stalls).
-        requestBatteryOptimizationExemption();
+        // Reports the exemption state to the app — the OS dialog itself is only
+        // opened after the app shows its rationale and the user accepts.
+        notifyBatteryOptimizationStatus();
 
         publishUpdate();
         persistState();
@@ -969,11 +1048,11 @@ public class WalkService extends Service implements LocationListener, SensorEven
      * Checks if app is exempt from battery optimization.
      * Returns true if exempt, false otherwise.
      */
-    private boolean isBatteryOptimizationExempt() {
+    public static boolean isBatteryOptimizationExempt(Context context) {
         try {
-            PowerManager pm = (PowerManager) getSystemService(Context.POWER_SERVICE);
+            PowerManager pm = (PowerManager) context.getSystemService(Context.POWER_SERVICE);
             if (pm != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                return pm.isIgnoringBatteryOptimizations(getPackageName());
+                return pm.isIgnoringBatteryOptimizations(context.getPackageName());
             }
             return true; // Pre-M devices don't have this restriction
         } catch (Exception e) {
@@ -981,30 +1060,35 @@ public class WalkService extends Service implements LocationListener, SensorEven
             return false;
         }
     }
-    
+
     /**
-     * Asks the OS to exempt LifeHub from battery optimization while a walk is
-     * active. Foreground services are normally prioritized, but aggressive
-     * OEM battery managers / Doze can still suspend the (non-wake-up) step
-     * sensor stream and stall GPS — which freezes steps/distance mid-walk.
-     * The system shows the standard "Allow background activity?" dialog once;
-     * this is a no-op when the app is already exempt.
-     * 
-     * Now checks exemption status and notifies JS app if not exempt.
+     * Called at walk start: never opens a dialog on its own. Reports the
+     * exemption state to the app (battery_not_exempt) so the app can show its
+     * own rationale dialog first, then explicitly request the OS prompt via
+     * ACTION_BATTERY_EXEMPTION_REQUEST. Foreground services are normally
+     * prioritized, but aggressive OEM battery managers / Doze can still
+     * suspend the (non-wake-up) step sensor stream and stall GPS — which
+     * freezes steps/distance mid-walk.
      */
-    private void requestBatteryOptimizationExemption() {
+    private void notifyBatteryOptimizationStatus() {
+        if (!isBatteryOptimizationExempt(this) && !batteryOptimizationWarningShown) {
+            batteryOptimizationWarningShown = true;
+            publishUpdate("battery_not_exempt");
+            Log.d(TAG, "App not exempt from battery optimization — app notified (dialog deferred to explicit request)");
+        }
+    }
+
+    /**
+     * Opens the system "Allow background activity?" dialog. Only called after
+     * the app has shown its own rationale and the user accepted
+     * (ACTION_BATTERY_EXEMPTION_REQUEST). No-op when already exempt.
+     */
+    private void requestBatteryOptimizationExemptionFromSystem() {
         try {
-            if (isBatteryOptimizationExempt()) {
+            if (isBatteryOptimizationExempt(this)) {
                 Log.d(TAG, "Battery optimization already disabled");
                 return;
             }
-            
-            // Not exempt - notify JS app for better UX
-            if (!batteryOptimizationWarningShown) {
-                publishUpdate("battery_not_exempt");
-                batteryOptimizationWarningShown = true;
-            }
-            
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
                 Intent intent = new Intent(
                         Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
@@ -1012,6 +1096,7 @@ public class WalkService extends Service implements LocationListener, SensorEven
                 );
                 intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
                 startActivity(intent);
+                Log.d(TAG, "Battery optimization exemption dialog requested");
             }
         } catch (Exception e) {
             Log.w(TAG, "Battery optimization exemption dialog unavailable or already handled", e);
@@ -1215,7 +1300,9 @@ public class WalkService extends Service implements LocationListener, SensorEven
     }
     
     /**
-     * Cancels AlarmManager ticker when tracking stops.
+     * Cancels AlarmManager ticker when tracking stops. Nulls the pending
+     * intent so a later startAlarmTicker() (e.g. pause → resume) schedules a
+     * fresh alarm instead of early-returning on the stale reference.
      */
     private void stopAlarmTicker() {
         if (alarmManager != null && tickerPendingIntent != null) {
@@ -1226,6 +1313,13 @@ public class WalkService extends Service implements LocationListener, SensorEven
                 Log.w(TAG, "Failed to cancel ticker alarm", e);
             }
         }
+        tickerPendingIntent = null;
+    }
+
+    /** Stops BOTH tickers (AlarmManager + Handler fallback). Used on pause. */
+    private void stopAllTickers() {
+        stopAlarmTicker();
+        ticker.removeCallbacks(tick);
     }
     
     /**
@@ -1240,6 +1334,8 @@ public class WalkService extends Service implements LocationListener, SensorEven
         recomputeDerived();
         updateNotification();
         publishUpdate();
+        persistState();
+        persistSessionSnapshotIfDue();
         
         // Perform periodic health checks
         monitorLocationHealth();
@@ -1247,6 +1343,30 @@ public class WalkService extends Service implements LocationListener, SensorEven
         
         // P4.2: Publish health status every 10 seconds
         publishHealthStatusIfNeeded();
+    }
+
+    /** Writes the live session snapshot to SQLite at most every 5 seconds. */
+    private void persistSessionSnapshotIfDue() {
+        long now = System.currentTimeMillis();
+        if (now - lastSnapshotMs < SNAPSHOT_INTERVAL_MS) return;
+        lastSnapshotMs = now;
+        persistSessionSnapshot();
+    }
+
+    /** Writes the live session snapshot (steps/distance/duration/calories) to SQLite. */
+    private void persistSessionSnapshot() {
+        if (dbHelper == null || activeSessionId == null || activeSessionId.isEmpty()) return;
+        try {
+            dbHelper.upsertSessionSnapshot(
+                    activeSessionId,
+                    currentSteps,
+                    currentDistanceKm,
+                    durationSec,
+                    currentCalories
+            );
+        } catch (Exception e) {
+            Log.w(TAG, "Failed to persist session snapshot to SQLite", e);
+        }
     }
     
     /**
@@ -1266,7 +1386,11 @@ public class WalkService extends Service implements LocationListener, SensorEven
             String locationProvider = activeLocationProvider;
             long gpsStaleSec = lastGpsFixWallMs > 0L ? (now - lastGpsFixWallMs) / 1000L : -1L;
             long stepStaleSec = lastStepEventWallMs > 0L ? (now - lastStepEventWallMs) / 1000L : -1L;
-            boolean batteryExempt = isBatteryOptimizationExempt();
+            // A registered sensor that never produced a single event is a
+            // stalled stream too — report it once the walk is well underway
+            // (the first minutes of every walk have no step events yet).
+            boolean stepStreamDead = sensorsActive && lastStepEventWallMs == 0L && durationSec > 120L;
+            boolean batteryExempt = isBatteryOptimizationExempt(this);
             int fgsType = computeFgsType();
             
             // Determine overall health status
@@ -1282,9 +1406,11 @@ public class WalkService extends Service implements LocationListener, SensorEven
             } else if (gpsStaleSec > 120L) {
                 healthStatus = "warning";
                 healthMessage = "GPS signal lost (no fix for " + gpsStaleSec + "s)";
-            } else if (stepStaleSec > 60L && isTracking) {
+            } else if (stepStaleSec > 60L || stepStreamDead) {
                 healthStatus = "warning";
-                healthMessage = "Step sensor not responding (" + stepStaleSec + "s)";
+                healthMessage = stepStreamDead
+                        ? "Step sensor never responded (no events since start)"
+                        : "Step sensor not responding (" + stepStaleSec + "s)";
             } else if (!batteryExempt) {
                 healthStatus = "warning";
                 healthMessage = "Battery optimization not disabled";
@@ -1755,11 +1881,15 @@ public class WalkService extends Service implements LocationListener, SensorEven
         }
         
         long now = System.currentTimeMillis();
-        long timeSinceLastStep = now - lastStepEventWallMs;
-        
+        // A sensor that NEVER delivered a single event (HAL quirk, missing
+        // permission on a retry) must be treated as maximally stale — the old
+        // `lastStepEventWallMs > 0L` guard skipped recovery for exactly those
+        // walks and left them counting steps at 0 while GPS showed movement.
+        long timeSinceLastStep = lastStepEventWallMs > 0L ? now - lastStepEventWallMs : Long.MAX_VALUE;
+
         // If GPS shows movement (speed > 0.5 m/s) but no step events for 30+ seconds,
         // sensor stream likely stalled
-        if (timeSinceLastStep > 30_000L && lastStepEventWallMs > 0L && lastLocation != null) {
+        if (timeSinceLastStep > 30_000L && lastLocation != null) {
             float speed = lastLocation.hasSpeed() ? lastLocation.getSpeed() : 0f;
             
             if (speed > 0.5f) {
@@ -1923,12 +2053,17 @@ public class WalkService extends Service implements LocationListener, SensorEven
         if (notificationManager != null) {
             notificationManager.cancel(NOTIFICATION_ID);
         }
-        // Reset persisted state so a crash-restart does not resume a dead walk.
-        prefs().edit().clear().apply();
-        // Free the SQLite route storage for the finished session (the app has
-        // already copied the points into the session record).
-        if (dbHelper != null && activeSessionId != null) {
-            dbHelper.clearPointsForSession(activeSessionId);
+        // Reset persisted state so a crash-restart does not resume a dead
+        // walk. Skipped when the teardown is system-initiated with a live walk
+        // (see onDestroy) — wiping there would destroy the exact snapshot the
+        // recovery design relies on and silently lose the whole walk.
+        if (!preserveStateOnTeardown) {
+            prefs().edit().clear().apply();
+            // Free the SQLite route storage for the finished session (the app
+            // has already copied the points into the session record).
+            if (dbHelper != null && activeSessionId != null) {
+                dbHelper.clearPointsForSession(activeSessionId);
+            }
         }
         activeSessionId = "current_session";
         // Reset the live counters so a getStatus() after stop never reports a
@@ -1959,7 +2094,36 @@ public class WalkService extends Service implements LocationListener, SensorEven
     }
 
     @Override
+    public void onTaskRemoved(Intent rootIntent) {
+        // stopWithTask="false" keeps the service alive across a normal swipe,
+        // but some OEMs kill the whole task (and the service) regardless.
+        // Re-enter the foreground immediately so the walk survives — and
+        // START_STICKY restarts the service if the process was still killed.
+        if (isTracking) {
+            Log.w(TAG, "Task removed while tracking — keeping the walk alive");
+            try {
+                resumeTrackingEnginesIfNeeded();
+            } catch (Exception e) {
+                Log.e(TAG, "Failed to keep walk alive after task removal", e);
+            }
+        }
+        super.onTaskRemoved(rootIntent);
+    }
+
+    @Override
     public void onDestroy() {
+        // Distinguish a deliberate stop (ACTION_STOP) from a system-initiated
+        // teardown of a live walk (OEM task killer / battery manager stopping
+        // the service, swipe-away on devices that ignore stopWithTask="false").
+        // A live walk destroyed here must keep its SharedPreferences + SQLite
+        // route points so START_STICKY recovery (or the app's restore flow)
+        // resumes it from the freshest snapshot instead of silently losing
+        // the whole walk to 0.00 km.
+        if (isTracking && !explicitStopRequested) {
+            Log.w(TAG, "onDestroy with a live walk — preserving persisted state for recovery");
+            preserveStateOnTeardown = true;
+            persistState();
+        }
         stopForegroundTracking();
         // Remove the ticker callback to prevent leaks
         if (ticker != null) {
@@ -2026,6 +2190,10 @@ public class WalkService extends Service implements LocationListener, SensorEven
     };
 
     private void startTicker() {
+        // A paused walk is frozen: no ticker at all (the alarm variant would
+        // burn a 1 Hz Doze-exempt wakeup per second doing nothing). The walk
+        // clock restarts via ACTION_RESUME.
+        if (paused) return;
         // Start AlarmManager ticker for Doze immunity if available
         if (useAlarmTicker && alarmManager != null) {
             startAlarmTicker();

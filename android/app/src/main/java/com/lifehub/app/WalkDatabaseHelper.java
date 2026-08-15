@@ -17,7 +17,7 @@ public class WalkDatabaseHelper extends SQLiteOpenHelper {
 
     private static final String TAG = "WalkDatabaseHelper";
     private static final String DATABASE_NAME = "lifehub_walk.db";
-    private static final int DATABASE_VERSION = 2;
+    private static final int DATABASE_VERSION = 3;
 
     public static final String TABLE_POINTS = "route_points";
     public static final String COLUMN_ID = "id";
@@ -33,6 +33,15 @@ public class WalkDatabaseHelper extends SQLiteOpenHelper {
     public static final String COLUMN_META_SESSION_ID = "session_id";
     public static final String COLUMN_META_VEHICLE = "is_vehicle_flagged";
     public static final String COLUMN_META_MAX_SPEED = "max_speed";
+    // Live-session snapshot columns (v3): the foreground service upserts
+    // steps/distance/duration/calories every 5 seconds while tracking, so a
+    // walk recovered after a hard process kill keeps the freshest totals even
+    // if SharedPreferences was lost or corrupted.
+    public static final String COLUMN_META_STEPS = "steps";
+    public static final String COLUMN_META_DISTANCE_KM = "distance_km";
+    public static final String COLUMN_META_DURATION_SEC = "duration_sec";
+    public static final String COLUMN_META_CALORIES = "calories";
+    public static final String COLUMN_META_UPDATED_AT = "updated_at";
 
     // Walk summaries table
     public static final String TABLE_SUMMARIES = "walk_summaries";
@@ -106,7 +115,12 @@ public class WalkDatabaseHelper extends SQLiteOpenHelper {
         String createMetaTable = "CREATE TABLE " + TABLE_META + " (" +
                 COLUMN_META_SESSION_ID + " TEXT PRIMARY KEY, " +
                 COLUMN_META_VEHICLE + " INTEGER DEFAULT 0, " +
-                COLUMN_META_MAX_SPEED + " REAL DEFAULT 0.0);";
+                COLUMN_META_MAX_SPEED + " REAL DEFAULT 0.0, " +
+                COLUMN_META_STEPS + " INTEGER NOT NULL DEFAULT 0, " +
+                COLUMN_META_DISTANCE_KM + " REAL NOT NULL DEFAULT 0, " +
+                COLUMN_META_DURATION_SEC + " INTEGER NOT NULL DEFAULT 0, " +
+                COLUMN_META_CALORIES + " REAL NOT NULL DEFAULT 0, " +
+                COLUMN_META_UPDATED_AT + " INTEGER NOT NULL DEFAULT 0);";
 
         String createSummariesTable = "CREATE TABLE " + TABLE_SUMMARIES + " (" +
                 COLUMN_SUMMARY_ID + " TEXT PRIMARY KEY, " +
@@ -157,6 +171,19 @@ public class WalkDatabaseHelper extends SQLiteOpenHelper {
 
     @Override
     public void onUpgrade(SQLiteDatabase db, int oldVersion, int newVersion) {
+        if (oldVersion < 3) {
+            // Live-session snapshot columns on walk_session_meta (steps,
+            // distance, duration, calories written every 5s while tracking).
+            try {
+                db.execSQL("ALTER TABLE " + TABLE_META + " ADD COLUMN " + COLUMN_META_STEPS + " INTEGER NOT NULL DEFAULT 0");
+                db.execSQL("ALTER TABLE " + TABLE_META + " ADD COLUMN " + COLUMN_META_DISTANCE_KM + " REAL NOT NULL DEFAULT 0");
+                db.execSQL("ALTER TABLE " + TABLE_META + " ADD COLUMN " + COLUMN_META_DURATION_SEC + " INTEGER NOT NULL DEFAULT 0");
+                db.execSQL("ALTER TABLE " + TABLE_META + " ADD COLUMN " + COLUMN_META_CALORIES + " REAL NOT NULL DEFAULT 0");
+                db.execSQL("ALTER TABLE " + TABLE_META + " ADD COLUMN " + COLUMN_META_UPDATED_AT + " INTEGER NOT NULL DEFAULT 0");
+            } catch (Exception e) {
+                Log.e(TAG, "Error adding snapshot columns to walk_session_meta", e);
+            }
+        }
         if (oldVersion < 2) {
             // Add walk summaries and splits tables for Strava-like features
             String createSummariesTable = "CREATE TABLE " + TABLE_SUMMARIES + " (" +
@@ -291,6 +318,62 @@ public class WalkDatabaseHelper extends SQLiteOpenHelper {
             if (cursor != null) cursor.close();
         }
         return flagged;
+    }
+
+    /**
+     * Upserts the live session snapshot (steps/distance/duration/calories)
+     * for a walk session. Written periodically by the foreground service so
+     * the session state survives a hard process kill even if
+     * SharedPreferences is lost. The vehicle flag and max speed columns are
+     * preserved on update.
+     */
+    public synchronized void upsertSessionSnapshot(String sessionId, int steps, double distanceKm, long durationSec, double calories) {
+        if (sessionId == null || sessionId.isEmpty()) sessionId = "current_session";
+        SQLiteDatabase db = this.getWritableDatabase();
+        ContentValues values = new ContentValues();
+        values.put(COLUMN_META_STEPS, steps);
+        values.put(COLUMN_META_DISTANCE_KM, distanceKm);
+        values.put(COLUMN_META_DURATION_SEC, durationSec);
+        values.put(COLUMN_META_CALORIES, calories);
+        values.put(COLUMN_META_UPDATED_AT, System.currentTimeMillis());
+        try {
+            int updated = db.update(TABLE_META, values, COLUMN_META_SESSION_ID + "=?", new String[]{sessionId});
+            if (updated == 0) {
+                ContentValues insert = new ContentValues();
+                insert.put(COLUMN_META_SESSION_ID, sessionId);
+                insert.putAll(values);
+                db.insert(TABLE_META, null, insert);
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Error upserting session snapshot", e);
+        }
+    }
+
+    /** Returns the live session snapshot for a session, or null when absent. */
+    public synchronized JSONObject getSessionSnapshot(String sessionId) {
+        if (sessionId == null || sessionId.isEmpty()) sessionId = "current_session";
+        SQLiteDatabase db = this.getReadableDatabase();
+        Cursor cursor = null;
+        try {
+            cursor = db.query(TABLE_META, null,
+                    COLUMN_META_SESSION_ID + "=?", new String[]{sessionId}, null, null, null);
+            if (cursor != null && cursor.moveToFirst()) {
+                JSONObject obj = new JSONObject();
+                obj.put("session_id", sessionId);
+                obj.put("steps", cursor.getInt(cursor.getColumnIndexOrThrow(COLUMN_META_STEPS)));
+                obj.put("distance_km", cursor.getDouble(cursor.getColumnIndexOrThrow(COLUMN_META_DISTANCE_KM)));
+                obj.put("duration_sec", cursor.getLong(cursor.getColumnIndexOrThrow(COLUMN_META_DURATION_SEC)));
+                obj.put("calories", cursor.getDouble(cursor.getColumnIndexOrThrow(COLUMN_META_CALORIES)));
+                obj.put("updated_at", cursor.getLong(cursor.getColumnIndexOrThrow(COLUMN_META_UPDATED_AT)));
+                obj.put("is_vehicle_flagged", cursor.getInt(cursor.getColumnIndexOrThrow(COLUMN_META_VEHICLE)) == 1);
+                return obj;
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Error reading session snapshot", e);
+        } finally {
+            if (cursor != null) cursor.close();
+        }
+        return null;
     }
 
     public synchronized void clearPointsForSession(String sessionId) {

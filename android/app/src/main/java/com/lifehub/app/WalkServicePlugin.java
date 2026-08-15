@@ -310,6 +310,48 @@ public class WalkServicePlugin extends Plugin {
         ));
     }
 
+    /** True when the app is exempt from battery optimization (Doze-safe tracking). */
+    @PluginMethod
+    public void isBatteryOptimizationExempt(PluginCall call) {
+        JSObject ret = new JSObject();
+        ret.put("exempt", WalkService.isBatteryOptimizationExempt(getContext()));
+        call.resolve(ret);
+    }
+
+    /**
+     * Opens the OS "Allow background activity?" dialog. The app must show its
+     * own rationale first and call this only after the user accepts.
+     */
+    @PluginMethod
+    public void requestBatteryOptimizationExemption(PluginCall call) {
+        try {
+            Intent intent = new Intent(getContext(), WalkService.class);
+            intent.setAction(WalkService.ACTION_BATTERY_EXEMPTION_REQUEST);
+            getContext().startService(intent);
+            JSObject ret = new JSObject();
+            ret.put("requested", true);
+            call.resolve(ret);
+        } catch (Exception e) {
+            call.reject("Failed to request battery optimization exemption", e);
+        }
+    }
+
+    /** Live SQLite session snapshot (steps/distance/duration/calories) for a session. */
+    @PluginMethod
+    public void getSessionSnapshot(PluginCall call) {
+        String sessionId = call.getString("sessionId", WalkService.activeSessionId);
+        WalkDatabaseHelper db = WalkDatabaseHelper.getInstance(getContext());
+        org.json.JSONObject snap = db.getSessionSnapshot(sessionId);
+
+        JSObject ret = new JSObject();
+        if (snap != null) {
+            ret.put("snapshot", snap.toString());
+        } else {
+            ret.put("snapshot", (String) null);
+        }
+        call.resolve(ret);
+    }
+
     @PluginMethod
     public void getRoutePoints(PluginCall call) {
         String sessionId = call.getString("sessionId", WalkService.activeSessionId);

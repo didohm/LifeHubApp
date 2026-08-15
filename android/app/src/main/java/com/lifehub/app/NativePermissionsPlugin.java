@@ -43,9 +43,14 @@ import org.json.JSONObject;
             alias = "location",
             strings = {
                 Manifest.permission.ACCESS_FINE_LOCATION,
-                Manifest.permission.ACCESS_COARSE_LOCATION,
-                Manifest.permission.ACCESS_BACKGROUND_LOCATION
+                Manifest.permission.ACCESS_COARSE_LOCATION
             }
+        ),
+        // Play Store policy: background location must be requested as a SEPARATE
+        // step, after foreground location is granted, with a rationale dialog.
+        @Permission(
+            alias = "background",
+            strings = { Manifest.permission.ACCESS_BACKGROUND_LOCATION }
         ),
         @Permission(alias = "activity", strings = { Manifest.permission.ACTIVITY_RECOGNITION }),
         @Permission(alias = "health", strings = { Manifest.permission.BODY_SENSORS }),
@@ -65,9 +70,20 @@ public class NativePermissionsPlugin extends Plugin {
 
     private static final String CALL_DATA_ALIAS_KEY = "lifehub_permission_alias";
 
+    /** Background location only exists on Android 10+ (API 29+). */
+    private boolean backgroundAutoGranted(String alias) {
+        return "background".equals(alias) && Build.VERSION.SDK_INT < Build.VERSION_CODES.Q;
+    }
+
     @PluginMethod
     public void check(PluginCall call) {
         String alias = call.getString("alias");
+        if (backgroundAutoGranted(alias)) {
+            JSObject ret = new JSObject();
+            ret.put("granted", true);
+            call.resolve(ret);
+            return;
+        }
         boolean granted = getPermissionState(alias) == PermissionState.GRANTED;
         JSObject ret = new JSObject();
         ret.put("granted", granted);
@@ -79,6 +95,13 @@ public class NativePermissionsPlugin extends Plugin {
         String alias = call.getString("alias");
         if (alias == null) {
             call.reject("alias is required");
+            return;
+        }
+        if (backgroundAutoGranted(alias)) {
+            JSObject ret = new JSObject();
+            ret.put("granted", true);
+            ret.put("permanentlyDenied", false);
+            call.resolve(ret);
             return;
         }
         // Store the alias on the call itself (not a shared instance field) so
