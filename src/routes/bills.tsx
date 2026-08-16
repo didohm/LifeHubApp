@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { createFileRoute } from "@tanstack/react-router";
 import {
   Plus,
@@ -10,9 +10,16 @@ import {
   Loader2,
   Search,
   AlertCircle,
+  Edit2,
+  Calendar,
+  CreditCard,
+  Banknote,
+  Building2,
+  Check,
 } from "lucide-react";
 import { toast } from "sonner";
-import { Screen } from "@/components/lifehub/Screen";
+import { motion, AnimatePresence } from "framer-motion";
+import { Screen, ScreenHeader } from "@/components/lifehub/Screen";
 import { Modal } from "@/components/lifehub/Modal";
 import { useAuth } from "@/hooks/use-auth";
 import { useAuthGuard } from "@/hooks/use-auth-guard";
@@ -21,21 +28,25 @@ import { useData } from "@/lib/data-context";
 import { todayLocalDate } from "@/lib/api";
 import { Bill } from "@/lib/types";
 import { ListSkeleton } from "@/components/lifehub/SkeletonLoader";
+import { sounds } from "@/lib/sound";
+import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/bills")({
   head: () => ({
-    meta: [{ title: "Bills & Payments — LifeHub" }],
+    meta: [{ title: "Bills & Financial Payments — LifeHub" }],
   }),
   component: BillsPage,
 });
+
+const CATEGORIES = ["all", "Health", "Utilities", "Subscription", "Personal", "Housing"] as const;
 
 function BillsPage() {
   const { user, loading: authLoading } = useAuth();
   useAuthGuard(user, authLoading);
 
   const {
-    bills,
-    payments,
+    bills = [],
+    payments = [],
     billLoading,
     billError,
     addBill,
@@ -48,13 +59,11 @@ function BillsPage() {
   const [categoryFilter, setCategoryFilter] = useState<string>("all");
   const [searchTerm, setSearchTerm] = useState("");
 
-  // Modal States
   const [modalOpen, setModalOpen] = useState(false);
   const [editingBill, setEditingBill] = useState<Bill | null>(null);
   const [payModalBill, setPayModalBill] = useState<Bill | null>(null);
   const [historyOpen, setHistoryOpen] = useState(false);
 
-  // Form State
   const [title, setTitle] = useState("");
   const [amount, setAmount] = useState("");
   const [category, setCategory] = useState("Health");
@@ -66,11 +75,22 @@ function BillsPage() {
   const { deleteWithGuard } = useDeleteWithGuard();
 
   const openAddModal = () => {
+    sounds.playActionClick();
     setEditingBill(null);
     setTitle("");
     setAmount("");
     setCategory("Health");
     setDueDate(todayLocalDate());
+    setModalOpen(true);
+  };
+
+  const openEditModal = (bill: Bill) => {
+    sounds.playActionClick();
+    setEditingBill(bill);
+    setTitle(bill.title);
+    setAmount(String(bill.amount));
+    setCategory(bill.category);
+    setDueDate(bill.due_date || todayLocalDate());
     setModalOpen(true);
   };
 
@@ -81,11 +101,8 @@ function BillsPage() {
 
     try {
       if (editingBill) {
-        // The edit form has no status control, so a paid bill can only be
-        // changed by deleting and recreating it — otherwise the payment
-        // history and the bill record would silently desync.
         if (editingBill.status === "paid") {
-          toast.error("Cannot change status of a paid bill. Delete and recreate if needed.");
+          toast.error("Cannot edit a paid bill. Delete and recreate if needed.");
           setSubmitting(false);
           return;
         }
@@ -117,7 +134,7 @@ function BillsPage() {
         }
       }
       setModalOpen(false);
-    } catch (err: any) {
+    } catch {
       toast.error("Failed to save bill.");
     } finally {
       setSubmitting(false);
@@ -131,9 +148,10 @@ function BillsPage() {
 
     try {
       await payBillAction(payModalBill.id, paymentMethod);
-      toast.success(`Paid DA ${Number(payModalBill.amount).toFixed(2)} via ${paymentMethod}! 🎉`);
+      sounds.playSuccess();
+      toast.success(`Paid ${Number(payModalBill.amount).toLocaleString()} DZD via ${paymentMethod}! 🎉`);
       setPayModalBill(null);
-    } catch (err) {
+    } catch {
       toast.error("Payment failed. Please try again.");
     } finally {
       setPaying(false);
@@ -144,9 +162,9 @@ function BillsPage() {
     if (!user) return;
     await deleteWithGuard(id, async () => {
       await removeBill(id);
-      toast.success("Bill removed.", { id: `bill-removed-${id}` });
+      toast.success("Bill deleted.");
     })().catch(() => {
-      toast.error("Failed to delete bill.", { id: `bill-delete-error-${id}` });
+      toast.error("Failed to delete bill.");
     });
   };
 
@@ -158,32 +176,22 @@ function BillsPage() {
 
   const totalUnpaid = bills
     .filter((b) => b.status === "unpaid")
-    .reduce((sum, b) => sum + Number(b.amount), 0);
+    .reduce((sum, b) => sum + Number(b.amount || 0), 0);
   const totalPaid = bills
     .filter((b) => b.status === "paid")
-    .reduce((sum, b) => sum + Number(b.amount), 0);
+    .reduce((sum, b) => sum + Number(b.amount || 0), 0);
 
-  // Error state
   if (billError) {
     return (
       <Screen>
-        <header className="flex items-center justify-between">
-          <div>
-            <h1 className="text-2xl font-extrabold text-foreground flex items-center gap-2">
-              <Wallet className="size-6 text-emerald-600" /> Bills & Payments
-            </h1>
-            <p className="text-xs text-muted-foreground">
-              Track dues, subscriptions & financial records
-            </p>
-          </div>
-        </header>
+        <ScreenHeader title="Bills & Payments" showBack />
         <div className="mt-6 rounded-3xl border border-dashed border-destructive/50 p-8 text-center bg-destructive/5">
           <AlertCircle className="mx-auto size-12 text-destructive/60" />
           <p className="mt-2 text-sm font-bold text-foreground">Failed to load bills</p>
           <p className="text-xs text-muted-foreground mt-1">{billError}</p>
           <button
             onClick={() => refreshBills()}
-            className="mt-4 inline-flex items-center gap-1.5 rounded-full bg-ink px-4 py-2 text-xs font-bold text-card"
+            className="mt-4 inline-flex items-center gap-1.5 rounded-full bg-[#12131A] px-4 py-2 text-xs font-bold text-white shadow-xs"
           >
             <Loader2 className="size-3.5 animate-spin" /> Retry
           </button>
@@ -194,170 +202,246 @@ function BillsPage() {
 
   return (
     <Screen>
-      <header className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-extrabold text-foreground flex items-center gap-2">
-            <Wallet className="size-6 text-emerald-600" /> Bills & Payments
-          </h1>
-          <p className="text-xs text-muted-foreground">
-            Track dues, subscriptions & financial records
-          </p>
-        </div>
-        <div className="flex gap-2">
-          <button
-            onClick={() => setHistoryOpen(true)}
-            title="Payment History"
-            className="tap flex size-10 items-center justify-center rounded-full bg-muted text-muted-foreground hover:bg-accent active:scale-95"
-          >
-            <History className="size-4.5" />
-          </button>
-          <button
-            onClick={openAddModal}
-            className="tap flex items-center gap-1 rounded-full bg-ink px-4 py-2 text-xs font-bold text-card shadow-md transition-transform active:scale-95 hover:opacity-90"
-          >
-            <Plus className="size-4" /> Add Bill
-          </button>
-        </div>
-      </header>
+      <ScreenHeader
+        title="Bills & Payments"
+        subtitle="Manage dues, recurring utilities & expenses"
+        showBack
+        action={
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                sounds.playActionClick();
+                setHistoryOpen(true);
+              }}
+              title="Payment Records"
+              className="tap flex size-9 items-center justify-center rounded-full bg-white text-[#12131A] shadow-xs border border-black/5 hover:bg-slate-50 transition-colors"
+            >
+              <History className="size-4" />
+            </button>
+            <button
+              type="button"
+              onClick={openAddModal}
+              className="tap flex items-center gap-1.5 rounded-full bg-[#12131A] px-4 py-2 text-xs font-black text-white shadow-md hover:bg-slate-800 transition-transform active:scale-95 whitespace-nowrap"
+            >
+              <Plus className="size-3.5 stroke-[3]" /> Add Bill
+            </button>
+          </div>
+        }
+      />
 
-      {/* Summary Statistics */}
-      <div className="mt-4 grid grid-cols-2 gap-3">
-        <div className="card-soft bg-rose-500/10 p-4 border border-rose-500/20 text-rose-900">
-          <span className="text-xs font-bold">Unpaid Dues</span>
-          <p className="mt-1 text-2xl font-black">DA {totalUnpaid.toFixed(2)}</p>
-        </div>
-        <div className="card-soft bg-emerald-500/10 p-4 border border-emerald-500/20 text-emerald-900">
-          <span className="text-xs font-bold">Paid Total</span>
-          <p className="mt-1 text-2xl font-black">DA {totalPaid.toFixed(2)}</p>
-        </div>
-      </div>
+      {/* ════════════════════════════════════════════════════════════
+          FINANCIAL OVERVIEW HERO
+          ════════════════════════════════════════════════════════════ */}
+      <motion.div
+        initial={{ opacity: 0, y: 6 }}
+        animate={{ opacity: 1, y: 0 }}
+        className="card-soft mt-1 bg-gradient-to-br from-[#FFE0C7] via-[#FFF0E2] to-[#FAF8FF] p-5 border border-amber-300/30 shadow-xs"
+      >
+        <div className="flex items-center justify-between">
+          <div>
+            <span className="inline-flex items-center gap-1 rounded-full bg-white/90 px-2.5 py-0.5 text-[10px] font-black text-amber-950 shadow-2xs">
+              <Wallet className="size-3" /> Financial Summary
+            </span>
+            <div className="mt-2 flex items-baseline gap-2">
+              <span className="text-3xl font-black text-[#12131A] tracking-tight">
+                {totalUnpaid.toLocaleString()} DZD
+              </span>
+              <span className="text-xs font-bold text-amber-900/80">Pending Dues</span>
+            </div>
+            <p className="mt-0.5 text-xs font-medium text-amber-950/70">
+              {totalPaid.toLocaleString()} DZD total settled in LifeHub
+            </p>
+          </div>
 
-      {/* Search & Filter */}
-      <div className="mt-4 space-y-3">
-        <div className="flex items-center gap-2 rounded-2xl border border-border/50 bg-card px-3.5 py-2 text-xs shadow-sm">
-          <Search className="size-4 text-muted-foreground" />
+          <div className="flex size-14 items-center justify-center rounded-2xl bg-[#12131A] text-white shadow-md">
+            <Wallet className="size-7 text-[#FFC593]" />
+          </div>
+        </div>
+      </motion.div>
+
+      {/* ════════════════════════════════════════════════════════════
+          SEARCH & CATEGORY FILTERS
+          ════════════════════════════════════════════════════════════ */}
+      <div className="mt-4 space-y-2.5">
+        <div className="relative">
+          <Search className="absolute left-3.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
           <input
             type="text"
-            placeholder="Search bill name..."
+            placeholder="Search bills & expenses..."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
-            className="w-full bg-transparent outline-none"
+            className="w-full rounded-2xl border border-border/70 bg-white py-2 pl-10 pr-4 text-xs font-semibold text-foreground outline-none shadow-2xs focus:border-[#7C5CFC]"
           />
         </div>
 
-        <div className="flex gap-2 overflow-x-auto pb-1">
-          {["all", "Health", "Utilities", "Insurance", "Medical", "Subscriptions"].map((cat) => (
-            <button
-              key={cat}
-              onClick={() => setCategoryFilter(cat)}
-              className={`rounded-full px-3.5 py-1 text-xs font-bold capitalize whitespace-nowrap ${
-                categoryFilter === cat
-                  ? "bg-slate-900 text-white shadow-sm"
-                  : "bg-muted text-muted-foreground"
-              }`}
-            >
-              {cat}
-            </button>
-          ))}
+        <div className="flex gap-1.5 overflow-x-auto pb-1 -mx-5 px-5">
+          {CATEGORIES.map((cat) => {
+            const active = categoryFilter === cat;
+            return (
+              <button
+                key={cat}
+                onClick={() => {
+                  sounds.playNavClick();
+                  setCategoryFilter(cat);
+                }}
+                className={cn(
+                  "tap shrink-0 rounded-full px-3.5 py-1 text-xs font-bold capitalize transition-all",
+                  active
+                    ? "bg-[#12131A] text-white shadow-xs"
+                    : "bg-white text-muted-foreground border border-border/60 hover:bg-slate-50",
+                )}
+              >
+                {cat}
+              </button>
+            );
+          })}
         </div>
       </div>
 
-      {/* Bills List */}
-      <div className="mt-4 space-y-3">
+      {/* ════════════════════════════════════════════════════════════
+          BILLS LIST
+          ════════════════════════════════════════════════════════════ */}
+      <div className="mt-3 space-y-2.5">
         {billLoading ? (
           <ListSkeleton count={3} />
         ) : filteredBills.length === 0 ? (
-          <div className="rounded-2xl border border-dashed border-slate-200/60 p-6 text-center bg-card/40">
-            <Wallet className="mx-auto size-10 text-muted-foreground/50" />
-            <p className="mt-2 text-sm font-bold text-foreground">No bills found</p>
+          <div className="rounded-3xl border border-dashed border-border p-8 text-center bg-white shadow-2xs">
+            <Wallet className="mx-auto size-10 text-muted-foreground/40" />
+            <p className="mt-2 text-sm font-extrabold text-[#12131A]">No bills recorded</p>
+            <p className="mt-1 text-xs text-muted-foreground">
+              {searchTerm ? "No match for your search" : "Log your first upcoming bill or recurring utility."}
+            </p>
+            <button
+              type="button"
+              onClick={openAddModal}
+              className="tap mt-4 inline-flex items-center gap-1.5 rounded-full bg-[#12131A] px-5 py-2.5 text-xs font-black text-white shadow-md hover:bg-slate-800 transition-transform active:scale-95"
+            >
+              <Plus className="size-3.5 stroke-[3]" /> Add Bill
+            </button>
           </div>
         ) : (
-          filteredBills.map((bill) => (
-            <div
-              key={bill.id}
-              className="card-soft bg-card p-4 border border-border/40 shadow-sm flex items-center justify-between transition-all hover:shadow-md"
-            >
-              <div>
-                <span className="inline-block rounded-full bg-muted px-2 py-0.5 text-[10px] font-bold text-muted-foreground">
-                  {bill.category}
-                </span>
-                <h3 className="mt-1 text-base font-extrabold text-foreground">{bill.title}</h3>
-                <p className="text-xs text-muted-foreground">Due: {bill.due_date}</p>
-              </div>
+          filteredBills.map((b) => {
+            const isPaid = b.status === "paid";
 
-              <div className="flex items-center gap-3">
-                <div className="text-right">
-                  <p className="text-base font-black text-foreground whitespace-nowrap">
-                    DA {Number(bill.amount).toFixed(2)}
-                  </p>
-                  <span
-                    className={`text-[10px] font-bold uppercase ${
-                      bill.status === "paid" ? "text-emerald-600" : "text-rose-600"
-                    }`}
-                  >
-                    {bill.status}
-                  </span>
+            return (
+              <motion.div
+                key={b.id}
+                initial={{ opacity: 0, y: 4 }}
+                animate={{ opacity: 1, y: 0 }}
+                className={cn(
+                  "card-soft p-4 border transition-all flex items-center justify-between shadow-2xs group",
+                  isPaid ? "bg-emerald-50/40 border-emerald-200/70" : "bg-white border-border/70 hover:shadow-xs",
+                )}
+              >
+                <div className="min-w-0 flex-1 pr-3">
+                  <div className="flex items-center gap-2">
+                    <span className="rounded-md bg-slate-100 px-2 py-0.2 text-[9.5px] font-bold text-slate-700">
+                      {b.category}
+                    </span>
+                    <span
+                      className={cn(
+                        "rounded-full px-2 py-0.2 text-[9.5px] font-black uppercase",
+                        isPaid ? "bg-emerald-100 text-emerald-800" : "bg-rose-100 text-rose-800",
+                      )}
+                    >
+                      {isPaid ? "Paid" : "Unpaid"}
+                    </span>
+                  </div>
+
+                  <h3 className="mt-1.5 text-sm sm:text-base font-extrabold text-foreground truncate">
+                    {b.title}
+                  </h3>
+
+                  <div className="mt-1 flex items-center gap-2 text-xs font-semibold text-muted-foreground">
+                    <span className="text-sm font-black text-[#12131A]">{Number(b.amount).toLocaleString()} DZD</span>
+                    {b.due_date && (
+                      <span className="flex items-center gap-1 text-[11px]">
+                        <Calendar className="size-3" /> Due {b.due_date}
+                      </span>
+                    )}
+                  </div>
                 </div>
 
-                {bill.status !== "paid" ? (
+                <div className="flex items-center gap-1.5 shrink-0">
+                  {!isPaid && (
+                    <button
+                      onClick={() => {
+                        sounds.playActionClick();
+                        setPayModalBill(b);
+                      }}
+                      className="tap rounded-xl bg-emerald-600 px-3 py-1.5 text-xs font-black text-white shadow-xs hover:bg-emerald-700 transition-transform active:scale-95"
+                    >
+                      Pay Now
+                    </button>
+                  )}
+                  {!isPaid && (
+                    <button
+                      onClick={() => openEditModal(b)}
+                      className="size-8 flex items-center justify-center rounded-xl text-muted-foreground hover:bg-slate-100"
+                      title="Edit"
+                    >
+                      <Edit2 className="size-3.5" />
+                    </button>
+                  )}
                   <button
-                    onClick={() => setPayModalBill(bill)}
-                    className="tap rounded-xl bg-ink px-3.5 py-1.5 text-xs font-bold text-card shadow-sm hover:opacity-90 active:scale-95"
+                    onClick={() => handleDelete(b.id)}
+                    className="size-8 flex items-center justify-center rounded-xl text-rose-500 hover:bg-rose-50"
+                    title="Delete"
                   >
-                    Pay
+                    <Trash2 className="size-3.5" />
                   </button>
-                ) : (
-                  <button
-                    onClick={() => handleDelete(bill.id)}
-                    className="size-8 flex items-center justify-center text-muted-foreground hover:text-destructive"
-                  >
-                    <Trash2 className="size-4" />
-                  </button>
-                )}
-              </div>
-            </div>
-          ))
+                </div>
+              </motion.div>
+            );
+          })
         )}
       </div>
 
-      {/* Add Bill Modal */}
-      <Modal open={modalOpen} onClose={() => setModalOpen(false)} className="bg-card">
+      {/* ════════════════════════════════════════════════════════════
+          ADD / EDIT BILL MODAL
+          ════════════════════════════════════════════════════════════ */}
+      <Modal
+        open={modalOpen}
+        onClose={() => setModalOpen(false)}
+        className="p-5 max-w-md bg-white rounded-3xl"
+      >
         <div className="flex items-center justify-between border-b border-border/40 pb-3">
-          <h2 className="text-lg font-extrabold text-foreground">
-            {editingBill ? "Edit Bill" : "Add New Bill"}
-          </h2>
+          <h3 className="text-base font-extrabold text-foreground">
+            {editingBill ? "Edit Bill" : "Add Bill Due"}
+          </h3>
           <button
             onClick={() => setModalOpen(false)}
-            className="size-8 flex items-center justify-center rounded-full bg-muted text-muted-foreground"
+            className="size-8 flex items-center justify-center rounded-full text-muted-foreground hover:bg-slate-100"
           >
             <X className="size-4" />
           </button>
         </div>
 
-        <form onSubmit={handleSaveBill} className="mt-4 space-y-3">
+        <form onSubmit={handleSaveBill} className="mt-4 space-y-3.5">
           <div>
             <label className="text-xs font-bold text-foreground">Bill Title</label>
             <input
               type="text"
               required
-              placeholder="Electricity / Clinic Bill"
+              placeholder="e.g. Electric utility, Health insurance"
               value={title}
               onChange={(e) => setTitle(e.target.value)}
-              className="mt-1 w-full rounded-xl border border-input bg-muted/30 p-2.5 text-sm outline-none"
+              className="mt-1 w-full rounded-xl border border-border bg-slate-50 p-2.5 text-xs font-semibold text-foreground outline-none focus:border-[#7C5CFC] focus:bg-white"
             />
           </div>
 
           <div className="grid grid-cols-2 gap-2">
             <div>
-              <label className="text-xs font-bold text-foreground">Amount (DA)</label>
+              <label className="text-xs font-bold text-foreground">Amount (DZD)</label>
               <input
                 type="number"
-                step="0.01"
+                step="1"
                 required
-                placeholder="85.00"
+                placeholder="2500"
                 value={amount}
                 onChange={(e) => setAmount(e.target.value)}
-                className="mt-1 w-full rounded-xl border border-input bg-muted/30 p-2.5 text-sm outline-none"
+                className="mt-1 w-full rounded-xl border border-border bg-slate-50 p-2.5 text-xs font-semibold text-foreground outline-none focus:border-[#7C5CFC] focus:bg-white"
               />
             </div>
             <div>
@@ -365,13 +449,13 @@ function BillsPage() {
               <select
                 value={category}
                 onChange={(e) => setCategory(e.target.value)}
-                className="mt-1 w-full rounded-xl border border-input bg-muted/30 p-2.5 text-sm outline-none"
+                className="mt-1 w-full rounded-xl border border-border bg-slate-50 p-2.5 text-xs font-semibold text-foreground outline-none"
               >
                 <option value="Health">Health</option>
                 <option value="Utilities">Utilities</option>
-                <option value="Insurance">Insurance</option>
-                <option value="Medical">Medical</option>
-                <option value="Subscriptions">Subscriptions</option>
+                <option value="Subscription">Subscription</option>
+                <option value="Personal">Personal</option>
+                <option value="Housing">Housing</option>
               </select>
             </div>
           </div>
@@ -383,125 +467,135 @@ function BillsPage() {
               required
               value={dueDate}
               onChange={(e) => setDueDate(e.target.value)}
-              className="mt-1 w-full rounded-xl border border-input bg-muted/30 p-2.5 text-sm outline-none"
+              className="mt-1 w-full rounded-xl border border-border bg-slate-50 p-2.5 text-xs font-semibold text-foreground outline-none focus:border-[#7C5CFC] focus:bg-white"
             />
           </div>
 
-          <div className="flex gap-2 pt-3">
+          <div className="flex gap-2 pt-2">
             <button
               type="button"
               onClick={() => setModalOpen(false)}
-              className="w-1/2 rounded-xl border border-border py-2.5 text-xs font-bold text-foreground"
+              className="w-1/2 rounded-xl border border-border py-2.5 text-xs font-bold text-foreground hover:bg-slate-50"
             >
               Cancel
             </button>
             <button
               type="submit"
               disabled={submitting}
-              className="w-1/2 flex items-center justify-center gap-1.5 rounded-xl bg-ink py-2.5 text-xs font-bold text-card shadow-md disabled:opacity-50"
+              className="w-1/2 flex items-center justify-center gap-1.5 rounded-xl bg-[#12131A] py-2.5 text-xs font-bold text-white shadow-xs hover:bg-[#12131A]/90 disabled:opacity-50"
             >
-              {submitting ? <Loader2 className="size-4 animate-spin" /> : null}
-              {submitting ? "Saving..." : editingBill ? "Update Bill" : "Save Bill"}
+              {submitting ? <Loader2 className="size-3.5 animate-spin" /> : null} Save Bill
             </button>
           </div>
         </form>
       </Modal>
 
-      {/* Pay Bill Modal */}
-      {payModalBill && (
-        <Modal open onClose={() => setPayModalBill(null)} className="bg-card">
-          <div className="flex items-center justify-between border-b border-border/40 pb-3">
-            <h2 className="text-lg font-extrabold text-foreground">Pay Bill Dues</h2>
-            <button
-              onClick={() => setPayModalBill(null)}
-              className="size-8 flex items-center justify-center rounded-full bg-muted text-muted-foreground"
-            >
-              <X className="size-4" />
-            </button>
-          </div>
+      {/* ════════════════════════════════════════════════════════════
+          PAY BILL CONFIRMATION MODAL
+          ════════════════════════════════════════════════════════════ */}
+      <Modal
+        open={!!payModalBill}
+        onClose={() => setPayModalBill(null)}
+        className="p-5 max-w-md bg-white rounded-3xl"
+      >
+        <div className="flex items-center justify-between border-b border-border/40 pb-3">
+          <h3 className="text-base font-extrabold text-foreground flex items-center gap-1.5">
+            <CheckCircle2 className="size-4 text-emerald-600" /> Settle Payment
+          </h3>
+          <button
+            onClick={() => setPayModalBill(null)}
+            className="size-8 flex items-center justify-center rounded-full text-muted-foreground hover:bg-slate-100"
+          >
+            <X className="size-4" />
+          </button>
+        </div>
 
-          <div className="mt-4 rounded-2xl bg-muted/30 p-4 text-center">
-            <p className="text-xs text-muted-foreground">Amount Due for {payModalBill.title}</p>
-            <p className="text-3xl font-black text-foreground mt-1 whitespace-nowrap">
-              DA {Number(payModalBill.amount).toFixed(2)}
-            </p>
-          </div>
+        {payModalBill && (
+          <form onSubmit={handleConfirmPayment} className="mt-4 space-y-4">
+            <div className="rounded-2xl bg-slate-50 p-4 border border-border/60 text-center">
+              <span className="text-xs font-bold text-muted-foreground uppercase">{payModalBill.title}</span>
+              <p className="mt-1 text-3xl font-black text-[#12131A]">
+                {Number(payModalBill.amount).toLocaleString()} DZD
+              </p>
+              <p className="mt-0.5 text-xs font-semibold text-muted-foreground">
+                Category: {payModalBill.category}
+              </p>
+            </div>
 
-          <form onSubmit={handleConfirmPayment} className="mt-4 space-y-3">
             <div>
               <label className="text-xs font-bold text-foreground">Payment Method</label>
               <select
                 value={paymentMethod}
                 onChange={(e) => setPaymentMethod(e.target.value)}
-                className="mt-1 w-full rounded-xl border border-input bg-muted/30 p-2.5 text-xs outline-none"
+                className="mt-1 w-full rounded-xl border border-border bg-slate-50 p-2.5 text-xs font-semibold text-foreground outline-none"
               >
-                <option value="Carte Edahabia">Carte Edahabia</option>
                 <option value="Cash (Espèces)">Cash (Espèces)</option>
+                <option value="Edahabia / CIB Card">Edahabia / CIB Card</option>
+                <option value="BaridiMob">BaridiMob</option>
+                <option value="Bank Transfer">Bank Transfer</option>
+                <option value="Credit Card">Credit Card</option>
               </select>
             </div>
 
-            <div className="flex gap-2 pt-3">
+            <div className="flex gap-2 pt-2">
               <button
                 type="button"
                 onClick={() => setPayModalBill(null)}
-                className="w-1/3 rounded-xl border border-border py-2.5 text-xs font-bold text-foreground"
+                className="w-1/2 rounded-xl border border-border py-2.5 text-xs font-bold text-foreground hover:bg-slate-50"
               >
                 Cancel
               </button>
               <button
                 type="submit"
                 disabled={paying}
-                className="w-2/3 flex items-center justify-center gap-1.5 rounded-xl bg-emerald-600 py-2.5 text-xs font-bold text-white shadow-md hover:bg-emerald-700 active:scale-95 disabled:opacity-50"
+                className="w-1/2 flex items-center justify-center gap-1.5 rounded-xl bg-emerald-600 py-2.5 text-xs font-bold text-white shadow-xs hover:bg-emerald-700 disabled:opacity-50"
               >
-                {paying ? (
-                  <Loader2 className="size-4 animate-spin" />
-                ) : (
-                  <CheckCircle2 className="size-4" />
-                )}
-                {paying
-                  ? "Processing..."
-                  : `Confirm Pay DA ${Number(payModalBill.amount).toFixed(2)}`}
+                {paying ? <Loader2 className="size-3.5 animate-spin" /> : <Check className="size-3.5" />}
+                Confirm Paid
               </button>
             </div>
           </form>
-        </Modal>
-      )}
+        )}
+      </Modal>
 
-      {/* Payment History Modal */}
-      <Modal open={historyOpen} onClose={() => setHistoryOpen(false)} className="bg-card">
+      {/* ════════════════════════════════════════════════════════════
+          PAYMENT HISTORY MODAL
+          ════════════════════════════════════════════════════════════ */}
+      <Modal
+        open={historyOpen}
+        onClose={() => setHistoryOpen(false)}
+        className="p-5 max-w-md bg-white rounded-3xl"
+      >
         <div className="flex items-center justify-between border-b border-border/40 pb-3">
-          <h2 className="text-lg font-extrabold text-foreground">Payment History Log</h2>
+          <h3 className="text-base font-extrabold text-foreground flex items-center gap-1.5">
+            <History className="size-4 text-[#7C5CFC]" /> Payment Records
+          </h3>
           <button
             onClick={() => setHistoryOpen(false)}
-            className="size-8 flex items-center justify-center rounded-full bg-muted text-muted-foreground"
+            className="size-8 flex items-center justify-center rounded-full text-muted-foreground hover:bg-slate-100"
           >
             <X className="size-4" />
           </button>
         </div>
-        <div className="mt-3 max-h-80 overflow-y-auto space-y-2">
+
+        <div className="mt-3 max-h-72 overflow-y-auto space-y-2">
           {payments.length === 0 ? (
-            <p className="p-6 text-center text-sm text-muted-foreground">
-              No payments recorded yet.
-            </p>
+            <p className="p-6 text-center text-xs text-muted-foreground">No settled payments yet.</p>
           ) : (
             payments.map((p) => (
               <div
                 key={p.id}
-                className="flex items-center justify-between rounded-xl bg-muted/40 p-3"
+                className="flex items-center justify-between rounded-xl bg-slate-50 p-3 text-xs border border-border/60"
               >
                 <div>
-                  <p className="text-xs font-bold text-foreground">{p.payment_method}</p>
-                  <p className="text-[10px] text-muted-foreground">
-                    Ref: {p.reference || "PAY-" + p.id.slice(0, 6)}
-                  </p>
+                  <span className="font-bold text-foreground block">{p.title || "Bill Payment"}</span>
+                  <span className="text-[10px] text-muted-foreground">Via {p.payment_method || "Payment"}</span>
                 </div>
                 <div className="text-right">
-                  <p className="text-sm font-black text-emerald-600">
-                    +DA {Number(p.amount).toFixed(2)}
-                  </p>
-                  <p className="text-[10px] text-muted-foreground">
-                    {new Date(p.payment_date).toLocaleDateString()}
-                  </p>
+                  <span className="font-black text-emerald-600 block">{Number(p.amount).toLocaleString()} DZD</span>
+                  <span className="text-[10px] text-muted-foreground">
+                    {p.paid_at ? new Date(p.paid_at).toLocaleDateString() : "Settled"}
+                  </span>
                 </div>
               </div>
             ))

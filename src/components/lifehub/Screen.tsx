@@ -3,6 +3,7 @@ import { BottomNav } from "./BottomNav";
 import { ChevronLeft } from "lucide-react";
 import { useNavigate, useRouter, useRouterState } from "@tanstack/react-router";
 import { useAuth } from "@/hooks/use-auth";
+import { cn } from "@/lib/utils";
 
 // Unauthenticated / pre-onboarding screens that must not show the floating
 // bottom navigation bar (e.g. the "Get Started with Google" login screen).
@@ -11,26 +12,45 @@ const PUBLIC_PATHS = ["/auth", "/onboarding"];
 export function Screen({
   children,
   className,
+  contentClassName,
+  fullHeight = false,
+  noBottomPadding = false,
+  hideBottomNav = false,
 }: {
   children: ReactNode;
   /** Optional classes applied to the full-bleed page background. */
   className?: string;
+  /** Optional classes applied to the inner centered container. */
+  contentClassName?: string;
+  /** Use fixed full-viewport height without outer document scrolling (chat screens). */
+  fullHeight?: boolean;
+  /** Disable default bottom padding (for custom bottom docked bars). */
+  noBottomPadding?: boolean;
+  /** Explicitly suppress floating bottom navigation bar. */
+  hideBottomNav?: boolean;
 }) {
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const { user, loading } = useAuth();
 
   // Only show the bottom nav on protected routes while a user is signed in.
   const isPublicPath = PUBLIC_PATHS.includes(pathname);
-  const showBottomNav = !isPublicPath && !loading && !!user;
+  const showBottomNav = !hideBottomNav && !isPublicPath && !loading && !!user;
 
   return (
     <div
-      className={`min-h-viewport bg-[#F7F7FA] font-sans antialiased text-[#12131A] selection:bg-[#7C5CFC]/20 ${
-        className ?? ""
-      }`}
+      className={cn(
+        "bg-[#F7F7FA] font-sans antialiased text-[#12131A] selection:bg-[#7C5CFC]/20",
+        fullHeight ? "h-viewport overflow-hidden flex flex-col" : "min-h-viewport",
+        className,
+      )}
     >
       <div
-        className={`mx-auto w-full max-w-md px-5 pt-6 page-fade-enter ${showBottomNav ? "pb-32" : "pb-8"}`}
+        className={cn(
+          "mx-auto w-full max-w-md px-5 page-fade-enter",
+          fullHeight ? "flex-1 flex flex-col min-h-0 pt-4" : "pt-6",
+          !noBottomPadding && (showBottomNav ? "pb-32" : "pb-8"),
+          contentClassName,
+        )}
       >
         {children}
       </div>

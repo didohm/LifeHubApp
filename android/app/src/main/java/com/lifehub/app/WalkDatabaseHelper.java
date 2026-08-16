@@ -686,6 +686,7 @@ public class WalkDatabaseHelper extends SQLiteOpenHelper {
                     "SUM(" + COLUMN_SUMMARY_DISTANCE + ") as total_distance, " +
                     "SUM(" + COLUMN_SUMMARY_DURATION + ") as total_duration, " +
                     "SUM(" + COLUMN_SUMMARY_STEPS + ") as total_steps, " +
+                    "SUM(" + COLUMN_SUMMARY_CALORIES + ") as total_calories, " +
                     "AVG(" + COLUMN_SUMMARY_AVG_PACE + ") as avg_pace, " +
                     "MAX(" + COLUMN_SUMMARY_DISTANCE + ") as longest_distance, " +
                     "MIN(" + COLUMN_SUMMARY_AVG_PACE + ") as fastest_pace " +
@@ -700,15 +701,16 @@ public class WalkDatabaseHelper extends SQLiteOpenHelper {
                 stats.put("total_distance", cursor.getDouble(1));
                 stats.put("total_duration", cursor.getInt(2));
                 stats.put("total_steps", cursor.getInt(3));
+                stats.put("total_calories", cursor.getDouble(4));
                 
-                if (!cursor.isNull(4)) {
-                    stats.put("avg_pace", cursor.getDouble(4));
-                }
                 if (!cursor.isNull(5)) {
-                    stats.put("longest_distance", cursor.getDouble(5));
+                    stats.put("avg_pace", cursor.getDouble(5));
                 }
                 if (!cursor.isNull(6)) {
-                    stats.put("fastest_pace", cursor.getDouble(6));
+                    stats.put("longest_distance", cursor.getDouble(6));
+                }
+                if (!cursor.isNull(7)) {
+                    stats.put("fastest_pace", cursor.getDouble(7));
                 }
             }
         } catch (Exception e) {

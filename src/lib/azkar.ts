@@ -45,6 +45,19 @@ function resolveCount(value: unknown): number {
   return Number.isFinite(n) && n >= 1 ? n : 1;
 }
 
+/** Remove tashkeel and normalize Arabic characters for robust search matching */
+export function normalizeArabicText(text: string): string {
+  if (!text) return "";
+  return text
+    .replace(/[\u064B-\u065F\u0670]/g, "")
+    .replace(/[أإآ]/g, "ا")
+    .replace(/ة/g, "ه")
+    .replace(/ى/g, "ي")
+    .replace(/[ـ\s]+/g, " ")
+    .trim()
+    .toLowerCase();
+}
+
 function parseAzkar(): ZekrCategory[] {
   const rows = (raw as { rows?: RawRow[] }).rows ?? [];
   const ordered: ZekrCategory[] = [];

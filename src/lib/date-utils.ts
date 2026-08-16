@@ -9,7 +9,9 @@
  */
 export function parseLocalDate(dateStr: string | undefined): Date {
   if (!dateStr) return new Date();
-  const [y, m, d] = dateStr.split("-").map(Number);
+  const datePart = dateStr.includes("T") ? dateStr.split("T")[0] : dateStr;
+  const [y, m, d] = datePart.split("-").map(Number);
+  if (isNaN(y) || isNaN(m) || isNaN(d)) return new Date();
   return new Date(y, m - 1, d);
 }
 

@@ -1,25 +1,36 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useMemo, useRef } from "react";
 import { createFileRoute } from "@tanstack/react-router";
 import {
   FolderClosed,
   FileText,
   Trash2,
   Eye,
-  Wand2,
+  Bot,
   Upload,
   Search,
   Edit2,
   X,
   Loader2,
   ExternalLink,
+  FileCode,
+  Image as ImageIcon,
+  Shield,
+  Clock,
+  Sparkles,
+  Copy,
+  Check,
+  Plus,
+  Filter,
+  FileCheck,
+  HardDrive,
 } from "lucide-react";
 import { toast } from "sonner";
-import { Screen } from "@/components/lifehub/Screen";
+import { Screen, ScreenHeader } from "@/components/lifehub/Screen";
 import { Modal } from "@/components/lifehub/Modal";
 import { useAuth } from "@/hooks/use-auth";
 import { useAuthGuard } from "@/hooks/use-auth-guard";
 import { useDeleteWithGuard } from "@/hooks/use-delete-with-guard";
-import { getDocuments, createDocument, updateDocument, deleteDocument } from "@/lib/api";
+import { createDocument, updateDocument, deleteDocument } from "@/lib/api";
 import { DocumentItem } from "@/lib/types";
 import { generateAssistantReply } from "@/lib/ai-provider";
 import { useData } from "@/lib/data-context";
@@ -30,29 +41,39 @@ import {
   validateFileSize,
   formatFileSize,
 } from "@/lib/cloudinary";
+import { sounds } from "@/lib/sound";
+import { cn } from "@/lib/utils";
 
-// Increased limit from 600KB to 10MB for Cloudinary uploads
+// Increased limit to 10MB for Cloudinary uploads
 const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
 const ALLOWED_UPLOAD_MIME_PREFIXES = ["image/", "application/pdf", "text/"];
+
+const DOCUMENT_CATEGORIES = [
+  "Medical",
+  "Prescription",
+  "Insurance",
+  "Lab Results",
+  "ID / Personal",
+  "Study / Work",
+] as const;
+
+type DocumentCategory = (typeof DOCUMENT_CATEGORIES)[number] | "all";
 
 async function processFileUpload(
   file: File,
   onProgress?: (progress: number) => void,
 ): Promise<{ file_url: string; file_size: string; file_type: string }> {
-  // Validate file type
   if (!validateFileType(file, ALLOWED_UPLOAD_MIME_PREFIXES)) {
     throw new Error("Unsupported file type. Please upload a PDF, image, or text file.");
   }
 
-  // Validate file size
   if (!validateFileSize(file, MAX_UPLOAD_BYTES)) {
-    throw new Error("File is too large. Please upload a file smaller than 10MB.");
+    throw new Error("File is too large. Maximum supported size is 10MB.");
   }
 
   const fileSize = formatFileSize(file.size);
   const fileType = file.type || "application/octet-stream";
 
-  // Upload to Cloudinary
   const result = await uploadDocument(file, onProgress);
 
   return {
@@ -62,9 +83,44 @@ async function processFileUpload(
   };
 }
 
+function getFileIcon(fileType?: string | null, fileUrl?: string | null) {
+  const type = (fileType || "").toLowerCase();
+  const url = (fileUrl || "").toLowerCase();
+
+  if (type.includes("pdf") || url.endsWith(".pdf")) {
+    return {
+      Icon: FileText,
+      color: "text-rose-600 bg-rose-50 border-rose-100",
+      badge: "PDF",
+    };
+  }
+  if (
+    type.includes("image") ||
+    url.match(/\.(jpg|jpeg|png|webp|gif)$/i) ||
+    url.startsWith("data:image/")
+  ) {
+    return {
+      Icon: ImageIcon,
+      color: "text-amber-600 bg-amber-50 border-amber-100",
+      badge: "IMG",
+    };
+  }
+  return {
+    Icon: FileCode,
+    color: "text-indigo-600 bg-indigo-50 border-indigo-100",
+    badge: "DOC",
+  };
+}
+
 export const Route = createFileRoute("/documents")({
   head: () => ({
-    meta: [{ title: "Documents Vault — LifeHub" }],
+    meta: [
+      { title: "Documents Vault — LifeHub" },
+      {
+        name: "description",
+        content: "Secure document storage, medical records, prescriptions, IDs & AI analysis.",
+      },
+    ],
   }),
   component: DocumentsPage,
 });
@@ -75,37 +131,72 @@ function DocumentsPage() {
 
   const { documents, docLoading: loading } = useData();
 
-  const [categoryFilter, setCategoryFilter] = useState("all");
+  const [categoryFilter, setCategoryFilter] = useState<DocumentCategory>("all");
   const [searchTerm, setSearchTerm] = useState("");
 
   // Modals
   const [uploadModalOpen, setUploadModalOpen] = useState(false);
   const [editingDoc, setEditingDoc] = useState<DocumentItem | null>(null);
   const [previewDoc, setPreviewDoc] = useState<DocumentItem | null>(null);
+  const [summaryDoc, setSummaryDoc] = useState<DocumentItem | null>(null);
   const [summaryModalText, setSummaryModalText] = useState<string | null>(null);
   const [summarizing, setSummarizing] = useState(false);
+  const [copiedSummary, setCopiedSummary] = useState(false);
 
+  // Upload Form State
   const [docName, setDocName] = useState("");
-  const [category, setCategory] = useState("Medical");
+  const [category, setCategory] = useState<string>("Medical");
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [filePreviewUrl, setFilePreviewUrl] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
+  const [isDragging, setIsDragging] = useState(false);
 
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const { deleteWithGuard } = useDeleteWithGuard();
 
-  const openUploadModal = () => {
-    setEditingDoc(null);
+  const resetForm = () => {
     setDocName("");
     setCategory("Medical");
     setSelectedFile(null);
+    setFilePreviewUrl(null);
+    setUploadProgress(0);
+    setEditingDoc(null);
+  };
+
+  const openUploadModal = () => {
+    sounds.playActionClick();
+    resetForm();
     setUploadModalOpen(true);
   };
 
   const openEditModal = (docItem: DocumentItem) => {
+    sounds.playActionClick();
     setEditingDoc(docItem);
     setDocName(docItem.name);
-    setCategory(docItem.category);
+    setCategory(docItem.category || "Medical");
     setUploadModalOpen(true);
+  };
+
+  const handleFileSelect = (file: File | null) => {
+    if (!file) {
+      setSelectedFile(null);
+      setFilePreviewUrl(null);
+      return;
+    }
+    sounds.playClick();
+    setSelectedFile(file);
+    if (!docName) {
+      const cleanName = file.name.replace(/\.[^/.]+$/, "");
+      setDocName(cleanName);
+    }
+    if (file.type.startsWith("image/")) {
+      const reader = new FileReader();
+      reader.onload = (e) => setFilePreviewUrl(e.target?.result as string);
+      reader.readAsDataURL(file);
+    } else {
+      setFilePreviewUrl(null);
+    }
   };
 
   const handleUploadSubmit = async (e: React.FormEvent) => {
@@ -124,7 +215,8 @@ function DocumentsPage() {
           file_type: editingDoc.file_type,
           summary: editingDoc.summary,
         });
-        toast.success("Document metadata updated!");
+        sounds.playSuccess();
+        toast.success("Document updated successfully!");
       } else {
         let fileUrl = "";
         let fileSize = "";
@@ -148,236 +240,480 @@ function DocumentsPage() {
           summary: "",
         });
 
-        toast.success("Document uploaded to Cloudinary!");
+        sounds.playUploadSuccess();
+        toast.success("Document securely saved to Vault!");
       }
       setUploadModalOpen(false);
-      setUploadProgress(0);
+      resetForm();
     } catch (err: any) {
-      console.error(err);
-      toast.error(err.message || "Failed to upload document.");
+      sounds.playError();
+      toast.error(err.message || "Failed to save document.");
     } finally {
       setSubmitting(false);
     }
   };
 
-  const handleDelete = async (id: string) => {
+  const handleDelete = async (id: string, name: string) => {
     if (!user) return;
     await deleteWithGuard(id, async () => {
       await deleteDocument(id, user.id);
-      toast.success("Document deleted.", { id: `doc-deleted-${id}` });
+      sounds.playClick();
+      toast.success(`"${name}" removed from vault.`);
     })().catch(() => {
-      toast.error("Failed to delete document.", { id: `doc-delete-error-${id}` });
+      sounds.playError();
+      toast.error("Failed to delete document.");
     });
   };
 
   const handleAiSummarize = async (docItem: DocumentItem) => {
     if (!user) return;
 
+    setSummaryDoc(docItem);
     setSummarizing(true);
-    toast.info(`Generating AI insights for ${docItem.name}...`);
+    sounds.playActionClick();
+    toast.info(`Analyzing ${docItem.name}...`);
     try {
-      // Note: This generates AI insights based on document metadata (name, category, upload date)
-      // For full content analysis, implement OCR/text extraction from docItem.file_url
       const summary = await generateAssistantReply({
-        prompt: `Based on this document metadata, provide helpful context and reminders: 
-        - Document name: ${docItem.name}
+        prompt: `You are an expert document assistant in LifeHub. Analyze the following document metadata and provide high-value, structured takeaways for the user:
+        - Document Name: ${docItem.name}
         - Category: ${docItem.category}
-        - Upload date: ${docItem.created_at || 'N/A'}
-        
-        Generate a brief helpful summary about what this type of document typically contains and what the user should remember about it.`,
+        - File Type: ${docItem.file_type || "N/A"}
+        - File Size: ${docItem.file_size || "N/A"}
+        - Date Added: ${docItem.created_at || "Recent"}
+
+        Provide:
+        1. 📋 **Document Overview**: A 2-sentence summary of what this document is.
+        2. 🔑 **Key Action Items & Reminders**: Bullet points for important considerations (expiration, prescription refill, next checkup, filing, privacy).
+        3. 💡 **Pro-tip**: One practical suggestion for managing this record. Keep it structured and concise.`,
         userId: user.id,
       });
+
       await updateDocument(docItem.id, user.id, { summary });
       setSummaryModalText(summary);
-      toast.success("AI insights ready!");
+      sounds.playSuccess();
+      toast.success("AI insights generated!");
     } catch {
+      sounds.playError();
       toast.error("Could not generate AI insights.");
     } finally {
       setSummarizing(false);
     }
   };
 
-  const filteredDocs = documents.filter((d: DocumentItem) => {
-    const matchesCat = categoryFilter === "all" ? true : d.category === categoryFilter;
-    const matchesSearch = d.name.toLowerCase().includes(searchTerm.toLowerCase());
-    return matchesCat && matchesSearch;
-  });
+  const copySummaryToClipboard = () => {
+    if (!summaryModalText) return;
+    navigator.clipboard.writeText(summaryModalText);
+    sounds.playClick();
+    setCopiedSummary(true);
+    toast.success("Summary copied to clipboard!");
+    setTimeout(() => setCopiedSummary(false), 2000);
+  };
+
+  const filteredDocs = useMemo(() => {
+    return documents.filter((d: DocumentItem) => {
+      const matchesCat = categoryFilter === "all" ? true : d.category === categoryFilter;
+      const matchesSearch =
+        d.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        (d.category || "").toLowerCase().includes(searchTerm.toLowerCase()) ||
+        (d.summary || "").toLowerCase().includes(searchTerm.toLowerCase());
+      return matchesCat && matchesSearch;
+    });
+  }, [documents, categoryFilter, searchTerm]);
+
+  // Category counts
+  const categoryCounts = useMemo(() => {
+    const counts: Record<string, number> = { all: documents.length };
+    DOCUMENT_CATEGORIES.forEach((cat) => {
+      counts[cat] = documents.filter((d) => d.category === cat).length;
+    });
+    return counts;
+  }, [documents]);
 
   return (
     <Screen>
-      <header className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-extrabold text-foreground flex items-center gap-2">
-            <FolderClosed className="size-6 text-mint fill-mint/30" /> Document Vault
-          </h1>
-          <p className="text-xs text-muted-foreground">Secure medical records & prescriptions</p>
-        </div>
-        <button
-          onClick={openUploadModal}
-          className="tap flex items-center gap-1 rounded-full bg-ink px-4 py-2 text-xs font-bold text-card shadow-md transition-transform active:scale-95 hover:opacity-90"
-        >
-          <Upload className="size-4" /> Upload
-        </button>
-      </header>
+      <ScreenHeader
+        title="Documents Vault"
+        subtitle="Secure records, health files & prescriptions"
+        showBack
+        action={
+          <button
+            type="button"
+            onClick={openUploadModal}
+            className="tap flex items-center gap-1.5 rounded-full bg-[#12131A] px-4 py-2 text-xs font-black text-white shadow-md hover:bg-slate-800 transition-transform active:scale-95"
+          >
+            <Plus className="size-3.5 stroke-[3]" /> Add Document
+          </button>
+        }
+      />
 
-      {/* Search & Category Filter */}
-      <div className="mt-4 space-y-3">
-        <div className="flex items-center gap-2 rounded-2xl border border-border/50 bg-card px-3.5 py-2 text-xs shadow-sm">
-          <Search className="size-4 text-muted-foreground" />
+      {/* ══════════════════════════════════════════════════════════════
+          STORAGE VAULT OVERVIEW BANNER
+          ══════════════════════════════════════════════════════════════ */}
+      <section className="card-soft relative overflow-hidden bg-gradient-to-br from-[#0F1117] via-[#1A1D27] to-[#25293A] p-5 text-white shadow-md mb-4 border border-white/10 rounded-3xl">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <div className="flex items-center gap-2">
+              <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-500/20 text-emerald-400 px-3 py-0.5 text-[10px] font-black uppercase tracking-wider border border-emerald-500/30">
+                <Shield className="size-3" /> Encrypted Vault
+              </span>
+              <span className="text-[10px] text-white/60 font-semibold">10MB Cloud Storage</span>
+            </div>
+
+            <h2 className="mt-2.5 text-2xl font-black text-white tracking-tight leading-tight">
+              {documents.length} {documents.length === 1 ? "Document" : "Documents"} Stored
+            </h2>
+            <p className="mt-1 text-xs font-medium text-white/70">
+              Access your medical history, prescriptions & ID cards anytime.
+            </p>
+          </div>
+
+          <div className="flex size-12 items-center justify-center rounded-2xl bg-white/10 text-white shadow-2xs backdrop-blur-md shrink-0 border border-white/10">
+            <HardDrive className="size-6 text-emerald-400" />
+          </div>
+        </div>
+
+        {/* Category Distribution Pills */}
+        <div className="mt-4 pt-3.5 border-t border-white/10 flex items-center gap-2 overflow-x-auto pb-1 [scrollbar-width:none]">
+          <span className="text-[10px] font-black uppercase tracking-wider text-white/50 shrink-0">
+            Breakdown:
+          </span>
+          {DOCUMENT_CATEGORIES.map((cat) => {
+            const count = categoryCounts[cat] || 0;
+            if (count === 0) return null;
+            return (
+              <span
+                key={cat}
+                className="rounded-lg bg-white/10 px-2 py-0.5 text-[10px] font-bold text-white/90 whitespace-nowrap"
+              >
+                {cat}: {count}
+              </span>
+            );
+          })}
+        </div>
+      </section>
+
+      {/* ══════════════════════════════════════════════════════════════
+          SEARCH & CATEGORY FILTER CHIPS
+          ══════════════════════════════════════════════════════════════ */}
+      <div className="space-y-3 mb-4">
+        <div className="relative">
+          <Search className="absolute left-3.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
           <input
             type="text"
-            placeholder="Search document name..."
+            placeholder="Search documents by name, category or AI summary..."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
-            className="w-full bg-transparent outline-none"
+            className="w-full rounded-2xl border border-border/70 bg-white py-2.5 pl-10 pr-4 text-xs font-semibold text-foreground outline-none shadow-2xs focus:border-[#7C5CFC] transition-all"
           />
+          {searchTerm && (
+            <button
+              onClick={() => setSearchTerm("")}
+              className="absolute right-3.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+            >
+              <X className="size-3.5" />
+            </button>
+          )}
         </div>
 
-        <div className="flex gap-2 overflow-x-auto pb-1">
-          {["all", "Medical", "Prescription", "Insurance", "Lab Results", "Study"].map((cat) => (
-            <button
-              key={cat}
-              onClick={() => setCategoryFilter(cat)}
-              className={`rounded-full px-3.5 py-1 text-xs font-bold capitalize whitespace-nowrap ${
-                categoryFilter === cat
-                  ? "bg-slate-900 text-white shadow-sm"
-                  : "bg-muted text-muted-foreground"
-              }`}
-            >
-              {cat}
-            </button>
-          ))}
+        {/* Scrollable Category Filter Pills */}
+        <div className="flex gap-1.5 overflow-x-auto pb-1 [scrollbar-width:none]">
+          {(["all", ...DOCUMENT_CATEGORIES] as DocumentCategory[]).map((cat) => {
+            const isSelected = categoryFilter === cat;
+            const count = categoryCounts[cat] || 0;
+            return (
+              <button
+                key={cat}
+                type="button"
+                onClick={() => {
+                  sounds.playNavClick();
+                  setCategoryFilter(cat);
+                }}
+                className={cn(
+                  "tap flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-black capitalize whitespace-nowrap transition-all shadow-2xs",
+                  isSelected
+                    ? "bg-[#12131A] text-white shadow-xs"
+                    : "bg-white text-muted-foreground border border-border/60 hover:bg-slate-50 hover:text-foreground",
+                )}
+              >
+                <span>{cat === "all" ? "All Documents" : cat}</span>
+                <span
+                  className={cn(
+                    "rounded-full px-1.5 py-0.2 text-[9px] font-black",
+                    isSelected ? "bg-white/20 text-white" : "bg-slate-100 text-muted-foreground",
+                  )}
+                >
+                  {count}
+                </span>
+              </button>
+            );
+          })}
         </div>
       </div>
 
-      {/* Documents Grid */}
-      <div className="mt-4 space-y-3">
+      {/* ══════════════════════════════════════════════════════════════
+          DOCUMENTS LIST
+          ══════════════════════════════════════════════════════════════ */}
+      <div className="space-y-3">
         {loading ? (
           <ListSkeleton count={3} />
         ) : filteredDocs.length === 0 ? (
-          <div className="rounded-2xl border border-dashed border-slate-200/60 p-6 text-center bg-card/40">
-            <FolderClosed className="mx-auto size-12 text-muted-foreground/50" />
-            <p className="mt-2 text-sm font-bold text-foreground">No documents in vault</p>
+          <div className="rounded-3xl border border-dashed border-slate-200 bg-white p-8 text-center shadow-xs">
+            <div className="mx-auto mb-3 flex size-14 items-center justify-center rounded-2xl bg-slate-100 text-slate-400">
+              <FolderClosed className="size-7" />
+            </div>
+            <p className="text-base font-black text-[#12131A]">
+              {searchTerm || categoryFilter !== "all" ? "No matching documents" : "Vault is empty"}
+            </p>
+            <p className="text-xs text-muted-foreground mt-1 max-w-sm mx-auto">
+              {searchTerm || categoryFilter !== "all"
+                ? "Try adjusting your search query or switching to another category."
+                : "Upload prescriptions, test results, vaccination records, or personal documents to keep them safe."}
+            </p>
+            <button
+              onClick={openUploadModal}
+              className="tap mt-4 inline-flex items-center gap-1.5 rounded-full bg-[#12131A] px-5 py-2.5 text-xs font-black text-white shadow-md hover:bg-slate-800 transition-transform active:scale-95"
+            >
+              <Plus className="size-4 stroke-[3]" /> Upload Document
+            </button>
           </div>
         ) : (
-          filteredDocs.map((docItem: DocumentItem) => (
-            <div
-              key={docItem.id}
-              className="card-soft bg-card p-4 border border-border/40 shadow-sm flex items-center justify-between transition-all hover:shadow-md"
-            >
-              <div className="flex items-center gap-3">
-                <div className="flex size-10 items-center justify-center rounded-xl bg-primary/10 text-primary">
-                  <FileText className="size-5" />
-                </div>
-                <div>
-                  <span className="inline-block rounded-full bg-muted px-2 py-0.5 text-[10px] font-bold text-muted-foreground">
-                    {docItem.category}
-                  </span>
-                  <h3 className="mt-0.5 text-sm font-extrabold text-foreground">{docItem.name}</h3>
-                  <p className="text-[11px] text-muted-foreground">
-                    {docItem.file_size || "Unknown size"}
-                  </p>
-                </div>
-              </div>
+          filteredDocs.map((docItem: DocumentItem) => {
+            const { Icon: FileIconComponent, color, badge } = getFileIcon(
+              docItem.file_type,
+              docItem.file_url,
+            );
 
-              <div className="flex items-center gap-1">
-                <button
-                  onClick={() => setPreviewDoc(docItem)}
-                  aria-label={`Preview document ${docItem.name}`}
-                  title="Preview Document"
-                  className="size-8 flex items-center justify-center rounded-full text-muted-foreground hover:bg-accent hover:text-foreground"
-                >
-                  <Eye className="size-4" />
-                </button>
-                <button
-                  onClick={() => handleAiSummarize(docItem)}
-                  aria-label={`Summarize document ${docItem.name}`}
-                  title="AI Summarize Document"
-                  className="size-8 flex items-center justify-center rounded-full text-purple-600 hover:bg-purple-500/10"
-                >
-                  <Wand2 className="size-4" />
-                </button>
-                <button
-                  onClick={() => openEditModal(docItem)}
-                  aria-label={`Edit metadata for ${docItem.name}`}
-                  title="Edit Metadata"
-                  className="size-8 flex items-center justify-center rounded-full text-muted-foreground hover:bg-accent"
-                >
-                  <Edit2 className="size-4" />
-                </button>
-                <button
-                  onClick={() => handleDelete(docItem.id)}
-                  aria-label={`Delete document ${docItem.name}`}
-                  title="Delete"
-                  className="size-8 flex items-center justify-center rounded-full text-muted-foreground hover:text-destructive hover:bg-destructive/10"
-                >
-                  <Trash2 className="size-4" />
-                </button>
+            return (
+              <div
+                key={docItem.id}
+                className="card-soft bg-white p-4 border border-black/5 shadow-xs hover:shadow-sm transition-all space-y-3 rounded-2xl"
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex items-start gap-3 min-w-0">
+                    <div
+                      className={cn(
+                        "flex size-11 items-center justify-center rounded-2xl border shrink-0 shadow-2xs",
+                        color,
+                      )}
+                    >
+                      <FileIconComponent className="size-5" />
+                    </div>
+
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[9px] font-black text-slate-700 uppercase tracking-wider">
+                          {docItem.category || "General"}
+                        </span>
+                        <span className="rounded-full bg-slate-100 px-1.5 py-0.5 text-[9px] font-black text-muted-foreground">
+                          {badge}
+                        </span>
+                        {docItem.file_size && (
+                          <span className="text-[10px] font-semibold text-muted-foreground">
+                            · {docItem.file_size}
+                          </span>
+                        )}
+                      </div>
+
+                      <h3 className="mt-1 text-sm font-black text-[#12131A] truncate tracking-tight">
+                        {docItem.name}
+                      </h3>
+                    </div>
+                  </div>
+
+                  {/* Actions Strip */}
+                  <div className="flex items-center gap-1 shrink-0">
+                    {docItem.file_url && (
+                      <button
+                        onClick={() => {
+                          sounds.playClick();
+                          setPreviewDoc(docItem);
+                        }}
+                        title="Preview Document"
+                        className="tap size-8 flex items-center justify-center rounded-full text-slate-600 hover:bg-slate-100 hover:text-[#12131A] transition-colors"
+                      >
+                        <Eye className="size-4" />
+                      </button>
+                    )}
+                    <button
+                      onClick={() => handleAiSummarize(docItem)}
+                      title="AI Summarize"
+                      className="tap size-8 flex items-center justify-center rounded-full text-[#7C5CFC] bg-[#7C5CFC]/10 hover:bg-[#7C5CFC]/20 transition-colors"
+                    >
+                      <Bot className="size-4" />
+                    </button>
+                    <button
+                      onClick={() => openEditModal(docItem)}
+                      title="Edit Document Info"
+                      className="tap size-8 flex items-center justify-center rounded-full text-slate-500 hover:bg-slate-100 transition-colors"
+                    >
+                      <Edit2 className="size-3.5" />
+                    </button>
+                    <button
+                      onClick={() => handleDelete(docItem.id, docItem.name)}
+                      title="Delete"
+                      className="tap size-8 flex items-center justify-center rounded-full text-rose-500 hover:bg-rose-50 transition-colors"
+                    >
+                      <Trash2 className="size-3.5" />
+                    </button>
+                  </div>
+                </div>
+
+                {/* AI Summary Excerpt (if generated) */}
+                {docItem.summary && (
+                  <div className="rounded-xl bg-purple-50/50 border border-purple-100 p-2.5 text-xs text-purple-950 font-medium flex items-start gap-2">
+                    <Sparkles className="size-3.5 text-[#7C5CFC] shrink-0 mt-0.5" />
+                    <p className="line-clamp-2 leading-relaxed text-[11px]">{docItem.summary}</p>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        sounds.playClick();
+                        setSummaryDoc(docItem);
+                        setSummaryModalText(docItem.summary || null);
+                      }}
+                      className="text-[10px] font-black text-[#7C5CFC] underline shrink-0 self-end ml-auto"
+                    >
+                      Full
+                    </button>
+                  </div>
+                )}
               </div>
-            </div>
-          ))
+            );
+          })
         )}
       </div>
 
-      {/* Upload / Edit Modal */}
-      <Modal open={uploadModalOpen} onClose={() => setUploadModalOpen(false)} className="bg-card">
-        <div className="flex items-center justify-between border-b border-border/40 pb-3">
-          <h2 className="text-lg font-extrabold text-foreground">
-            {editingDoc ? "Edit Document" : "Upload Document"}
-          </h2>
+      {/* ══════════════════════════════════════════════════════════════
+          UPLOAD / EDIT DOCUMENT MODAL
+          ══════════════════════════════════════════════════════════════ */}
+      <Modal open={uploadModalOpen} onClose={() => setUploadModalOpen(false)} className="bg-white max-w-lg">
+        <div className="flex items-center justify-between border-b border-black/5 pb-3">
+          <div className="flex items-center gap-2">
+            <div className="flex size-8 items-center justify-center rounded-xl bg-[#12131A] text-white">
+              <Upload className="size-4" />
+            </div>
+            <div>
+              <h3 className="text-base font-black text-[#12131A]">
+                {editingDoc ? "Edit Document Info" : "Upload to Vault"}
+              </h3>
+              <p className="text-[11px] font-semibold text-muted-foreground">
+                Securely store prescriptions, tests & certificates
+              </p>
+            </div>
+          </div>
           <button
             onClick={() => setUploadModalOpen(false)}
-            className="size-8 flex items-center justify-center rounded-full bg-muted text-muted-foreground"
+            className="size-7 flex items-center justify-center rounded-full bg-black/5 text-muted-foreground hover:text-foreground"
           >
             <X className="size-4" />
           </button>
         </div>
 
-        <form onSubmit={handleUploadSubmit} className="mt-4 space-y-3">
+        <form onSubmit={handleUploadSubmit} className="mt-4 space-y-3.5">
           <div>
-            <label className="text-xs font-bold text-foreground">Document Title</label>
+            <label className="text-xs font-bold text-[#12131A]">Document Title</label>
             <input
               type="text"
               required
-              placeholder="Document name"
+              placeholder="e.g. Annual Blood Panel / Passport Scan / Prescription"
               value={docName}
               onChange={(e) => setDocName(e.target.value)}
-              className="mt-1 w-full rounded-xl border border-input bg-muted/30 p-2.5 text-sm outline-none"
+              className="mt-1 w-full rounded-xl border border-black/10 bg-[#F9F9FD] p-2.5 text-xs font-bold outline-none focus:border-[#7C5CFC] focus:bg-white transition-colors"
             />
           </div>
 
           <div>
-            <label className="text-xs font-bold text-foreground">Category</label>
+            <label className="text-xs font-bold text-[#12131A]">Category</label>
             <select
               value={category}
               onChange={(e) => setCategory(e.target.value)}
-              className="mt-1 w-full rounded-xl border border-input bg-muted/30 p-2.5 text-sm outline-none"
+              className="mt-1 w-full rounded-xl border border-black/10 bg-[#F9F9FD] p-2.5 text-xs font-bold outline-none focus:border-[#7C5CFC] focus:bg-white transition-colors"
             >
-              <option value="Medical">Medical</option>
-              <option value="Prescription">Prescription</option>
-              <option value="Insurance">Insurance</option>
-              <option value="Lab Results">Lab Results</option>
-              <option value="Study">Study</option>
+              {DOCUMENT_CATEGORIES.map((cat) => (
+                <option key={cat} value={cat}>
+                  {cat}
+                </option>
+              ))}
             </select>
           </div>
 
           {!editingDoc && (
             <div>
-              <label className="text-xs font-bold text-foreground">Select File</label>
-              <input
-                type="file"
-                onChange={(e) => setSelectedFile(e.target.files?.[0] || null)}
-                className="mt-1 w-full rounded-xl border border-input bg-muted/30 p-2 text-xs"
-              />
+              <label className="text-xs font-bold text-[#12131A] block mb-1">Select File (PDF or Image)</label>
+              <div
+                onDragOver={(e) => {
+                  e.preventDefault();
+                  setIsDragging(true);
+                }}
+                onDragLeave={() => setIsDragging(false)}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  setIsDragging(false);
+                  if (e.dataTransfer.files?.[0]) {
+                    handleFileSelect(e.dataTransfer.files[0]);
+                  }
+                }}
+                onClick={() => fileInputRef.current?.click()}
+                className={cn(
+                  "cursor-pointer rounded-2xl border-2 border-dashed p-5 text-center transition-all",
+                  isDragging
+                    ? "border-[#7C5CFC] bg-[#7C5CFC]/5"
+                    : selectedFile
+                      ? "border-emerald-500/40 bg-emerald-50/30"
+                      : "border-black/10 bg-[#F9F9FD] hover:border-black/20 hover:bg-slate-50",
+                )}
+              >
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/*,application/pdf,text/*"
+                  onChange={(e) => handleFileSelect(e.target.files?.[0] || null)}
+                  className="hidden"
+                />
+
+                {selectedFile ? (
+                  <div className="flex items-center justify-center gap-3">
+                    {filePreviewUrl ? (
+                      <img
+                        src={filePreviewUrl}
+                        alt="Preview"
+                        className="size-12 rounded-xl object-cover border shadow-2xs"
+                      />
+                    ) : (
+                      <div className="flex size-11 items-center justify-center rounded-xl bg-emerald-500/10 text-emerald-600">
+                        <FileCheck className="size-6" />
+                      </div>
+                    )}
+                    <div className="text-left">
+                      <p className="text-xs font-black text-[#12131A] truncate max-w-[200px]">
+                        {selectedFile.name}
+                      </p>
+                      <p className="text-[10px] font-bold text-muted-foreground">
+                        {formatFileSize(selectedFile.size)} · Click to change file
+                      </p>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="space-y-1">
+                    <Upload className="mx-auto size-7 text-muted-foreground/60" />
+                    <p className="text-xs font-black text-[#12131A]">
+                      Drop file here or click to browse
+                    </p>
+                    <p className="text-[10px] text-muted-foreground">
+                      Supports PDF, PNG, JPG, WEBP up to 10MB
+                    </p>
+                  </div>
+                )}
+              </div>
+
               {submitting && uploadProgress > 0 && (
-                <div className="mt-2">
-                  <div className="flex items-center justify-between text-xs text-muted-foreground mb-1">
-                    <span>Uploading to Cloudinary...</span>
+                <div className="mt-3">
+                  <div className="flex items-center justify-between text-xs font-black text-muted-foreground mb-1">
+                    <span>Uploading file securely...</span>
                     <span>{uploadProgress}%</span>
                   </div>
-                  <div className="w-full h-1.5 bg-muted rounded-full overflow-hidden">
+                  <div className="w-full h-2 bg-slate-100 rounded-full overflow-hidden">
                     <div
-                      className="h-full bg-primary transition-all duration-300"
+                      className="h-full bg-[#7C5CFC] transition-all duration-300 rounded-full"
                       style={{ width: `${uploadProgress}%` }}
                     />
                   </div>
@@ -390,34 +726,42 @@ function DocumentsPage() {
             <button
               type="button"
               onClick={() => setUploadModalOpen(false)}
-              className="w-1/2 rounded-xl border border-border py-2.5 text-xs font-bold text-foreground"
+              className="w-1/2 rounded-xl border border-black/10 py-2.5 text-xs font-black text-muted-foreground hover:bg-black/5"
             >
               Cancel
             </button>
             <button
               type="submit"
               disabled={submitting}
-              className="w-1/2 flex items-center justify-center gap-1.5 rounded-xl bg-ink py-2.5 text-xs font-bold text-card shadow-md disabled:opacity-50"
+              className="tap w-1/2 flex items-center justify-center gap-1.5 rounded-xl bg-[#12131A] py-2.5 text-xs font-black text-white shadow-md hover:bg-slate-800 disabled:opacity-50 transition-transform active:scale-95"
             >
               {submitting ? <Loader2 className="size-4 animate-spin" /> : null}
-              {submitting ? "Saving..." : "Save Document"}
+              {submitting ? "Uploading..." : "Save Document"}
             </button>
           </div>
         </form>
       </Modal>
 
-      {/* Preview Modal */}
+      {/* ══════════════════════════════════════════════════════════════
+          PREVIEW MODAL
+          ══════════════════════════════════════════════════════════════ */}
       {previewDoc && (
-        <Modal open onClose={() => setPreviewDoc(null)} className="bg-card">
-          <div className="flex items-center justify-between border-b border-border/40 pb-3">
-            <h2 className="text-base font-extrabold text-foreground">{previewDoc.name}</h2>
+        <Modal open onClose={() => setPreviewDoc(null)} className="bg-white max-w-xl">
+          <div className="flex items-center justify-between border-b border-black/5 pb-3">
+            <div className="min-w-0 pr-2">
+              <h2 className="text-base font-black text-[#12131A] truncate">{previewDoc.name}</h2>
+              <span className="text-[10px] font-bold text-muted-foreground">
+                Category: {previewDoc.category} · {previewDoc.file_size || "Standard"}
+              </span>
+            </div>
             <button
               onClick={() => setPreviewDoc(null)}
-              className="size-8 flex items-center justify-center rounded-full bg-muted text-muted-foreground"
+              className="size-7 flex items-center justify-center rounded-full bg-black/5 text-muted-foreground hover:text-foreground shrink-0"
             >
               <X className="size-4" />
             </button>
           </div>
+
           <div className="mt-4 flex flex-col items-center">
             {previewDoc.file_url ? (
               previewDoc.file_url.startsWith("data:image/") ||
@@ -425,58 +769,91 @@ function DocumentsPage() {
                 <img
                   src={previewDoc.file_url}
                   alt="Document preview"
-                  className="max-h-64 rounded-xl object-contain shadow-md"
+                  className="max-h-80 w-full rounded-2xl object-contain border shadow-sm bg-slate-50"
                 />
               ) : previewDoc.file_url.match(/\.pdf(\?.*)?$/i) ? (
                 <iframe
                   src={previewDoc.file_url}
                   title="PDF Preview"
-                  className="w-full h-64 rounded-xl border border-border"
+                  className="w-full h-80 rounded-2xl border border-slate-200"
                 />
               ) : (
-                <FileText className="size-20 text-muted-foreground/60" />
+                <div className="p-8 text-center rounded-2xl bg-slate-50 border w-full">
+                  <FileText className="mx-auto size-16 text-slate-400" />
+                  <p className="text-xs font-bold text-muted-foreground mt-2">
+                    Direct viewer preview not available for this file type.
+                  </p>
+                </div>
               )
             ) : (
-              <FileText className="size-20 text-muted-foreground/60" />
+              <div className="p-8 text-center rounded-2xl bg-slate-50 border w-full">
+                <FileText className="mx-auto size-16 text-slate-400" />
+                <p className="text-xs font-bold text-muted-foreground mt-2">No file attached</p>
+              </div>
             )}
-            {previewDoc.summary ? (
-              <p className="mt-3 text-xs text-muted-foreground leading-relaxed text-center">
-                {previewDoc.summary}
-              </p>
-            ) : null}
-            {previewDoc.file_url ? (
+
+            {previewDoc.file_url && (
               <a
                 href={previewDoc.file_url}
                 target="_blank"
                 rel="noreferrer"
-                className="mt-4 inline-flex items-center gap-1.5 rounded-xl bg-accent px-3.5 py-2 text-xs font-bold text-foreground hover:bg-accent/80 transition-colors"
+                className="tap mt-4 inline-flex items-center gap-1.5 rounded-full bg-[#12131A] px-5 py-2.5 text-xs font-black text-white shadow-md hover:bg-slate-800 transition-colors"
               >
-                <ExternalLink className="size-3.5" /> View / Download Document
+                <ExternalLink className="size-3.5" /> Open / Download File
               </a>
-            ) : null}
+            )}
           </div>
         </Modal>
       )}
 
-      {/* AI Summary Modal */}
+      {/* ══════════════════════════════════════════════════════════════
+          AI SUMMARY MODAL
+          ══════════════════════════════════════════════════════════════ */}
       <Modal
         open={!!summaryModalText}
         onClose={() => setSummaryModalText(null)}
-        className="bg-card"
+        className="bg-white max-w-lg"
       >
-        <div className="flex items-center justify-between border-b border-border/40 pb-3">
-          <h2 className="text-base font-extrabold text-foreground flex items-center gap-2">
-            <Wand2 className="size-4 text-purple-600" /> AI Document Summary
-          </h2>
+        <div className="flex items-center justify-between border-b border-black/5 pb-3">
+          <div className="flex items-center gap-2">
+            <div className="flex size-8 items-center justify-center rounded-xl bg-[#7C5CFC]/10 text-[#7C5CFC]">
+              <Bot className="size-4" />
+            </div>
+            <div>
+              <h3 className="text-base font-black text-[#12131A]">AI Document Analysis</h3>
+              <p className="text-[11px] font-semibold text-muted-foreground truncate max-w-[240px]">
+                {summaryDoc?.name}
+              </p>
+            </div>
+          </div>
           <button
             onClick={() => setSummaryModalText(null)}
-            className="size-8 flex items-center justify-center rounded-full bg-muted text-muted-foreground"
+            className="size-7 flex items-center justify-center rounded-full bg-black/5 text-muted-foreground hover:text-foreground"
           >
             <X className="size-4" />
           </button>
         </div>
-        <div className="mt-4 text-xs leading-relaxed text-foreground whitespace-pre-line max-h-96 overflow-y-auto">
+
+        <div className="mt-4 text-xs leading-relaxed text-[#12131A] whitespace-pre-line max-h-96 overflow-y-auto font-medium bg-slate-50/70 p-4 rounded-2xl border border-slate-100">
           {summaryModalText}
+        </div>
+
+        <div className="mt-4 flex items-center justify-end gap-2">
+          <button
+            type="button"
+            onClick={copySummaryToClipboard}
+            className="tap inline-flex items-center gap-1.5 rounded-full bg-slate-100 px-4 py-2 text-xs font-black text-slate-700 hover:bg-slate-200 transition-colors"
+          >
+            {copiedSummary ? <Check className="size-3.5 text-emerald-600" /> : <Copy className="size-3.5" />}
+            {copiedSummary ? "Copied!" : "Copy Summary"}
+          </button>
+          <button
+            type="button"
+            onClick={() => setSummaryModalText(null)}
+            className="tap rounded-full bg-[#12131A] px-5 py-2 text-xs font-black text-white shadow-md hover:bg-slate-800"
+          >
+            Done
+          </button>
         </div>
       </Modal>
     </Screen>

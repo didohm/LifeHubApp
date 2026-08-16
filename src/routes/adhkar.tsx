@@ -1,4 +1,4 @@
-import { useEffect, useState, type Dispatch, type SetStateAction } from "react";
+import { useState, useMemo, useRef } from "react";
 import { createFileRoute } from "@tanstack/react-router";
 import {
   BookOpenText,
@@ -8,48 +8,62 @@ import {
   ChevronRight,
   RotateCcw,
   Search,
+  Sunrise,
+  Moon,
+  Copy,
+  ArrowRight,
 } from "lucide-react";
 import { toast } from "sonner";
+import { motion, AnimatePresence } from "framer-motion";
 import { Screen, ScreenHeader } from "@/components/lifehub/Screen";
-import { Progress } from "@/components/ui/progress";
 import { sounds } from "@/lib/sound";
-import { azkarData, getDueContext, useAzkarProgress } from "@/lib/azkar";
+import {
+  azkarData,
+  getDueContext,
+  useAzkarProgress,
+  normalizeArabicText,
+  MORNING_CATEGORY,
+} from "@/lib/azkar";
+import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/adhkar")({
   head: () => ({
-    meta: [{ title: "Adhkar — LifeHub" }],
+    meta: [
+      { title: "Daily Adhkar & Supplications — LifeHub" },
+      {
+        name: "description",
+        content: "Daily Morning, Evening, and Situational Adhkar with an interactive digital Tasbih.",
+      },
+    ],
   }),
   component: AdhkarPage,
 });
 
 type AzkarApi = ReturnType<typeof useAzkarProgress>;
 
-/* ---------------------------------- Page ---------------------------------- */
-
 function AdhkarPage() {
   const [activeCat, setActiveCat] = useState<number | null>(null);
   const [zekrIdx, setZekrIdx] = useState(0);
   const [query, setQuery] = useState("");
+  const [fontSize, setFontSize] = useState<"sm" | "md" | "lg" | "xl">("md");
   const azkar = useAzkarProgress();
 
   const openCategory = (catIdx: number) => {
     sounds.playCardClick();
     setQuery("");
     setActiveCat(catIdx);
-    // Resume at the day's first unfinished zikr — or the last one when the
-    // whole category is already done.
-    const items = azkarData[catIdx].items;
+    const items = azkarData[catIdx]?.items || [];
     const firstIncomplete = items.findIndex((item, i) => azkar.tapsFor(catIdx, i) < item.count);
-    setZekrIdx(firstIncomplete === -1 ? items.length - 1 : firstIncomplete);
+    setZekrIdx(firstIncomplete === -1 ? 0 : firstIncomplete);
   };
 
   if (azkarData.length === 0) {
     return (
       <Screen>
-        <ScreenHeader title="Adhkar" subtitle="Morning, evening & every situation" showBack />
-        <div className="card-soft mt-3 border border-dashed border-black/10 bg-white p-6 text-center">
-          <p className="text-sm font-bold text-[#12131A]">Zikr content isn&apos;t available.</p>
-          <p className="mt-1 text-xs text-[#6B7280]">Please try again later.</p>
+        <ScreenHeader title="Adhkar" subtitle="Morning, evening & daily supplications" showBack />
+        <div className="card-soft mt-3 border border-dashed border-border bg-white p-8 text-center shadow-2xs">
+          <p className="text-sm font-bold text-foreground">Adhkar content isn't available.</p>
+          <p className="mt-1 text-xs text-muted-foreground">Please restart the app to reload.</p>
         </div>
       </Screen>
     );
@@ -65,6 +79,8 @@ function AdhkarPage() {
           zekrIdx={zekrIdx}
           onZekrIdxChange={setZekrIdx}
           onBack={() => setActiveCat(null)}
+          fontSize={fontSize}
+          onChangeFontSize={setFontSize}
           azkar={azkar}
         />
       )}
@@ -72,7 +88,9 @@ function AdhkarPage() {
   );
 }
 
-/* --------------------------------- Browse --------------------------------- */
+/* ══════════════════════════════════════════════════════════════
+   BROWSE VIEW
+   ══════════════════════════════════════════════════════════════ */
 
 function Browse({
   query,
@@ -86,122 +104,157 @@ function Browse({
   azkar: AzkarApi;
 }) {
   const { dueIdx, otherIdx, otherLabel } = getDueContext();
-  const dueCat = azkarData[dueIdx];
+  const dueCat = azkarData[dueIdx] || azkarData[0];
+  const isMorning = dueCat.name === MORNING_CATEGORY;
+
   const dueTotal = dueCat.items.length;
   const dueDone = dueCat.items.filter((item, i) => azkar.tapsFor(dueIdx, i) >= item.count).length;
   const duePct = dueTotal > 0 ? Math.round((dueDone / dueTotal) * 100) : 0;
   const dueDoneAll = dueTotal > 0 && dueDone === dueTotal;
 
-  const q = query.trim().toLowerCase();
-  const filtered = azkarData
-    .map((cat, idx) => ({ cat, idx }))
-    .filter(({ cat }) => {
-      if (!q) return true;
-      if (cat.name.toLowerCase().includes(q)) return true;
-      return cat.items.some(
-        (it) => it.text.toLowerCase().includes(q) || it.reference.toLowerCase().includes(q),
-      );
-    });
+  const normalizedQuery = normalizeArabicText(query);
+
+  const filtered = useMemo(() => {
+    return azkarData
+      .map((cat, idx) => ({ cat, idx }))
+      .filter(({ cat }) => {
+        if (!normalizedQuery) return true;
+        if (normalizeArabicText(cat.name).includes(normalizedQuery)) return true;
+        return cat.items.some(
+          (it) =>
+            normalizeArabicText(it.text).includes(normalizedQuery) ||
+            normalizeArabicText(it.reference).includes(normalizedQuery) ||
+            normalizeArabicText(it.description).includes(normalizedQuery),
+        );
+      });
+  }, [normalizedQuery]);
 
   return (
     <div className="page-fade-enter">
-      <ScreenHeader title="Adhkar" subtitle="Morning, evening & every situation" showBack />
+      <ScreenHeader
+        title="Adhkar"
+        subtitle="Morning, evening & situational supplications"
+        showBack
+      />
 
-      {/* Daily sections — the due one leads, the other waits below */}
-      <section>
-        <p className="mb-2 text-[10px] font-extrabold uppercase tracking-[0.14em] text-[#6B7280]">
-          Today
-        </p>
-        <button
-          type="button"
-          onClick={() => onOpen(dueIdx)}
-          className="card-soft tap relative w-full overflow-hidden bg-[#E8E2FF]/60 border border-[#E8E2FF] p-5 text-left shadow-xs active:scale-[0.985]"
-        >
-          <div className="flex items-start justify-between gap-3">
-            <div className="min-w-0">
-              <span className="inline-flex rounded-full bg-[#7C5CFC] px-2.5 py-0.5 text-[10px] font-extrabold text-white">
-                Now
-              </span>
-              <h2
-                dir="rtl"
-                lang="ar"
-                className="mt-2 font-arabic text-2xl font-bold leading-snug text-[#12131A]"
-              >
-                {dueCat.name}
-              </h2>
-              <p className="mt-1 text-xs font-medium text-[#6B7280]">
-                {dueTotal} {dueTotal === 1 ? "zikr" : "zikrs"} today
-              </p>
-            </div>
+      {/* ════════════════════════════════════════════════════════════
+          TIME-AWARE DAILY DUE ADHKAR HERO
+          ════════════════════════════════════════════════════════════ */}
+      <motion.section
+        initial={{ opacity: 0, y: 6 }}
+        animate={{ opacity: 1, y: 0 }}
+        className="card-soft mt-1 overflow-hidden p-5 shadow-xs border text-left relative"
+        style={{
+          background: isMorning
+            ? "linear-gradient(135deg, #FEF3C7 0%, #FFFBEB 50%, #FAF8FF 100%)"
+            : "linear-gradient(135deg, #E0E7FF 0%, #EEF2FF 50%, #FAF8FF 100%)",
+          borderColor: isMorning ? "rgba(245, 158, 11, 0.25)" : "rgba(99, 102, 241, 0.25)",
+        }}
+      >
+        <div className="flex items-start justify-between gap-3">
+          <div>
             <span
-              className={`flex size-9 shrink-0 items-center justify-center rounded-full text-white shadow-xs ${
-                dueDoneAll ? "bg-emerald-500" : "border border-black/5 bg-white text-[#12131A]"
-              }`}
-            >
-              {dueDoneAll ? (
-                <Check className="size-4" strokeWidth={3} />
-              ) : (
-                <ChevronRight className="size-4" />
+              className={cn(
+                "inline-flex items-center gap-1.5 rounded-full px-3 py-0.5 text-[11px] font-black shadow-2xs",
+                isMorning ? "bg-amber-500 text-white" : "bg-indigo-600 text-white",
               )}
+            >
+              {isMorning ? <Sunrise className="size-3.5" /> : <Moon className="size-3.5" />}
+              {isMorning ? "Morning Routine" : "Evening Routine"}
             </span>
-          </div>
-          <Progress value={duePct} className="mt-3 h-1.5" />
-          <p className="mt-1.5 text-[11px] font-bold text-[#6B7280]">
-            Done {dueDone} of {dueTotal}
-          </p>
-        </button>
 
-        <button
-          type="button"
-          onClick={() => onOpen(otherIdx)}
-          className="tap mt-2.5 flex w-full items-center justify-between gap-3 rounded-2xl border border-black/5 bg-white px-4 py-3 shadow-xs active:scale-[0.98]"
-        >
-          <span className="text-[11px] font-extrabold uppercase tracking-wide text-[#6B7280]">
-            {otherLabel}
-          </span>
-          <span className="flex min-w-0 items-center gap-1.5">
-            <span
+            <h2
               dir="rtl"
               lang="ar"
-              className="truncate font-arabic text-sm font-bold text-[#12131A]"
+              className="mt-2.5 font-arabic text-2xl sm:text-3xl font-bold leading-tight text-[#12131A]"
             >
-              {azkarData[otherIdx].name}
-            </span>
-            <span className="shrink-0 text-[11px] font-bold text-[#6B7280]">
-              {azkarData[otherIdx].items.length}
-            </span>
-            <ChevronRight className="size-3.5 shrink-0 text-[#6B7280]/50" />
-          </span>
-        </button>
-      </section>
+              {dueCat.name}
+            </h2>
 
-      {/* All categories */}
-      <div className="mt-6 flex items-center gap-2 rounded-2xl border border-black/5 bg-white px-3.5 py-2 text-xs shadow-xs">
-        <Search className="size-4 text-[#6B7280]" />
+            <p className="mt-1 text-xs font-semibold text-muted-foreground">
+              {dueTotal} daily supplications · {dueDoneAll ? "Completed today ✓" : `${dueDone}/${dueTotal} recited`}
+            </p>
+          </div>
+
+          <div
+            className={cn(
+              "flex size-12 items-center justify-center rounded-2xl shadow-2xs shrink-0",
+              dueDoneAll ? "bg-emerald-500 text-white" : "bg-white text-[#12131A]",
+            )}
+          >
+            {dueDoneAll ? <Check className="size-6 stroke-[3]" /> : isMorning ? <Sunrise className="size-6 text-amber-600" /> : <Moon className="size-6 text-indigo-600" />}
+          </div>
+        </div>
+
+        <div className="mt-4">
+          <div className="h-2 w-full rounded-full bg-black/5 overflow-hidden">
+            <div
+              className={cn(
+                "h-full rounded-full transition-all duration-500",
+                dueDoneAll ? "bg-emerald-500" : isMorning ? "bg-amber-500" : "bg-indigo-600",
+              )}
+              style={{ width: `${duePct}%` }}
+            />
+          </div>
+        </div>
+
+        <div className="mt-4 flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => onOpen(dueIdx)}
+            className={cn(
+              "tap flex-1 flex items-center justify-center gap-2 rounded-2xl py-3 text-xs font-black text-white shadow-md transition-transform active:scale-98",
+              isMorning ? "bg-amber-600 hover:bg-amber-700" : "bg-indigo-600 hover:bg-indigo-700",
+            )}
+          >
+            {dueDoneAll ? "Review Recitations" : "Recite Now"} <ArrowRight className="size-3.5" />
+          </button>
+
+          {otherIdx !== dueIdx && (
+            <button
+              type="button"
+              onClick={() => onOpen(otherIdx)}
+              className="tap rounded-2xl bg-white px-3.5 py-3 text-xs font-bold text-foreground border border-border/60 shadow-2xs hover:bg-slate-50 transition-transform"
+            >
+              {otherLabel}
+            </button>
+          )}
+        </div>
+      </motion.section>
+
+      {/* ════════════════════════════════════════════════════════════
+          SEARCH INPUT WITH ARABIC NORMALIZATION
+          ════════════════════════════════════════════════════════════ */}
+      <div className="mt-4 relative">
+        <Search className="absolute left-3.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
         <input
           type="text"
           dir="auto"
-          placeholder="Search zikrs or categories…"
+          placeholder="Search supplication or category (e.g. سفر, نوم, صباح)..."
           value={query}
           onChange={(e) => onQuery(e.target.value)}
-          className="w-full bg-transparent outline-none"
-          aria-label="Search zikrs or categories"
+          className="w-full rounded-2xl border border-border/70 bg-white py-2.5 pl-10 pr-4 text-xs font-semibold text-foreground outline-none shadow-2xs focus:border-[#7C5CFC] transition-all"
         />
       </div>
-      <div className="mt-5 mb-2 flex items-center justify-between">
-        <h2 className="text-lg font-extrabold text-[#12131A]">
-          {q ? "Matches" : "All categories"}
-        </h2>
-        <span className="text-xs font-bold text-[#6B7280]">
-          {filtered.length} {filtered.length === 1 ? "category" : "categories"}
+
+      {/* ════════════════════════════════════════════════════════════
+          CATEGORIES LIST
+          ════════════════════════════════════════════════════════════ */}
+      <div className="mt-5 mb-2.5 flex items-center justify-between px-1">
+        <h3 className="text-xs font-bold text-muted-foreground uppercase tracking-wider">
+          {query ? "Search Results" : "All Categories"}
+        </h3>
+        <span className="text-xs font-bold text-muted-foreground">
+          {filtered.length} categories
         </span>
       </div>
 
       {filtered.length === 0 ? (
-        <div className="card-soft mt-2 border border-dashed border-black/10 bg-white p-6 text-center">
-          <p className="text-sm font-bold text-[#12131A]">No zikr found</p>
-          <p className="mt-1 text-xs text-[#6B7280]">
-            Try a word from the zikr, its reference, or the category name.
+        <div className="card-soft mt-2 border border-dashed border-border bg-white p-8 text-center shadow-2xs">
+          <BookOpenText className="mx-auto size-10 text-muted-foreground/40" />
+          <p className="mt-2 text-sm font-extrabold text-foreground">No matching supplications found</p>
+          <p className="mt-1 text-xs text-muted-foreground">
+            Try searching by category name, zikr phrase, or hadith source.
           </p>
         </div>
       ) : (
@@ -210,33 +263,48 @@ function Browse({
             const doneInCat = cat.items.filter(
               (item, i) => azkar.tapsFor(idx, i) >= item.count,
             ).length;
+            const isCatComplete = cat.items.length > 0 && doneInCat === cat.items.length;
+
             return (
-              <button
+              <motion.button
                 key={idx}
                 type="button"
                 onClick={() => onOpen(idx)}
-                className="card-soft tap flex w-full items-center justify-between gap-3 border border-black/5 bg-white p-4 text-left shadow-xs active:scale-[0.98] hover:shadow-md"
+                initial={{ opacity: 0, y: 4 }}
+                animate={{ opacity: 1, y: 0 }}
+                className={cn(
+                  "card-soft tap flex w-full items-center justify-between gap-3 border bg-white p-3.5 text-left shadow-2xs transition-all hover:shadow-xs group",
+                  isCatComplete ? "border-emerald-200/80 bg-emerald-50/20" : "border-border/60",
+                )}
               >
                 <span
                   dir="rtl"
                   lang="ar"
-                  className="min-w-0 flex-1 truncate font-arabic text-[15px] font-bold leading-snug text-[#12131A]"
+                  className="min-w-0 flex-1 truncate font-arabic text-base sm:text-lg font-bold leading-snug text-foreground text-right"
                 >
                   {cat.name}
                 </span>
-                <span className="flex shrink-0 items-center gap-1.5">
+
+                <div className="flex shrink-0 items-center gap-2">
                   {doneInCat > 0 && (
-                    <span className="flex items-center gap-1 rounded-full bg-emerald-500/10 px-2 py-0.5 text-[10px] font-extrabold text-emerald-600">
-                      <Check className="size-2.5" strokeWidth={3.5} />
-                      {doneInCat}
+                    <span
+                      className={cn(
+                        "flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-black",
+                        isCatComplete
+                          ? "bg-emerald-500 text-white"
+                          : "bg-emerald-500/15 text-emerald-700",
+                      )}
+                    >
+                      <Check className="size-3 stroke-[3]" />
+                      {doneInCat}/{cat.items.length}
                     </span>
                   )}
-                  <span className="text-[11px] font-bold text-[#6B7280]">
-                    {cat.items.length} {cat.items.length === 1 ? "zikr" : "zikrs"}
+                  <span className="text-xs font-bold text-muted-foreground">
+                    {cat.items.length}
                   </span>
-                  <ChevronRight className="size-4 text-[#6B7280]/50" />
-                </span>
-              </button>
+                  <ChevronRight className="size-4 text-muted-foreground group-hover:translate-x-0.5 transition-transform" />
+                </div>
+              </motion.button>
             );
           })}
         </div>
@@ -245,246 +313,336 @@ function Browse({
   );
 }
 
-/* --------------------------------- Reader --------------------------------- */
+/* ══════════════════════════════════════════════════════════════
+   READER & ELECTRONIC TASBIH VIEW
+   ══════════════════════════════════════════════════════════════ */
 
 function Reader({
   catIdx,
   zekrIdx,
   onZekrIdxChange,
   onBack,
+  fontSize,
+  onChangeFontSize,
   azkar,
 }: {
   catIdx: number;
   zekrIdx: number;
-  onZekrIdxChange: Dispatch<SetStateAction<number>>;
+  onZekrIdxChange: (idx: number) => void;
   onBack: () => void;
+  fontSize: "sm" | "md" | "lg" | "xl";
+  onChangeFontSize: (s: "sm" | "md" | "lg" | "xl") => void;
   azkar: AzkarApi;
 }) {
-  const cat = azkarData[catIdx];
+  const cat = azkarData[catIdx] || { name: "Adhkar", items: [] };
   const total = cat.items.length;
-  const item = cat.items[zekrIdx];
+  const item = cat.items[zekrIdx] || { text: "", count: 1, reference: "", description: "" };
+
+  const [direction, setDirection] = useState<1 | -1>(1);
+  const advancingRef = useRef(false);
+
   const taps = Math.min(azkar.tapsFor(catIdx, zekrIdx), item.count);
-  const remaining = item.count - taps;
+  const remaining = Math.max(0, item.count - taps);
   const done = remaining === 0;
   const isLast = zekrIdx === total - 1;
 
-  // Auto-advance shortly after the last tap completes a zikr — unless the
-  // user has already moved on manually (guarded by the index it started at).
-  const [pendingFrom, setPendingFrom] = useState<number | null>(null);
-  useEffect(() => {
-    if (pendingFrom === null) return;
-    const id = setTimeout(() => {
-      setPendingFrom(null);
-      onZekrIdxChange((current) => (current === pendingFrom ? pendingFrom + 1 : current));
-    }, 1100);
-    return () => clearTimeout(id);
-  }, [pendingFrom, onZekrIdxChange]);
+  const fontClasses: Record<"sm" | "md" | "lg" | "xl", string> = {
+    sm: "text-lg leading-[2.1]",
+    md: "text-xl leading-[2.2]",
+    lg: "text-2xl leading-[2.3]",
+    xl: "text-3xl leading-[2.4]",
+  };
+
+  const goToNext = () => {
+    if (zekrIdx < total - 1) {
+      setDirection(1);
+      onZekrIdxChange(zekrIdx + 1);
+    }
+  };
+
+  const goToPrev = () => {
+    if (zekrIdx > 0) {
+      setDirection(-1);
+      onZekrIdxChange(zekrIdx - 1);
+    }
+  };
 
   const handleTap = () => {
     if (done) {
       if (!isLast) {
-        setPendingFrom(null);
-        onZekrIdxChange(zekrIdx + 1);
+        goToNext();
       }
       return;
     }
+
+    const nextTaps = taps + 1;
     azkar.recordTap(catIdx, zekrIdx);
-    if (taps + 1 >= item.count) {
+
+    if (nextTaps >= item.count) {
       sounds.playSuccess();
       if (isLast) {
-        toast.success(`All ${total} ${total === 1 ? "zikr" : "zikrs"} done today`);
+        toast.success(`Alhamdulillah! All ${total} supplications completed.`);
       } else {
-        setPendingFrom(zekrIdx);
+        // Fast, fluid automatic progression to next dhikr with transition
+        if (!advancingRef.current) {
+          advancingRef.current = true;
+          setTimeout(() => {
+            goToNext();
+            advancingRef.current = false;
+          }, 110);
+        }
       }
     } else {
       sounds.playActionClick();
     }
   };
 
-  const caption = done
-    ? `Completed — ${item.count > 1 ? `${item.count}×` : "once"}`
-    : taps === 0
-      ? item.count > 1
-        ? `Tap the card to count ${item.count}×`
-        : "Tap the card to recite"
-      : "Keep tapping to count";
+  const handleCopy = () => {
+    sounds.playClick();
+    navigator.clipboard.writeText(`${item.text}\n\n${item.reference ? `[${item.reference}]` : ""}`);
+    toast.success("Copied to clipboard!");
+  };
 
   return (
-    <div className="page-fade-enter">
-      <header className="mb-4 flex items-center justify-between gap-3">
+    <div className="page-fade-enter pb-8 overflow-hidden">
+      {/* ════════════════════════════════════════════════════════════
+          HEADER CONTROLS
+          ════════════════════════════════════════════════════════════ */}
+      <header className="mb-3 flex items-center justify-between gap-3">
         <button
           type="button"
-          onClick={onBack}
+          onClick={() => {
+            sounds.playClick();
+            onBack();
+          }}
           aria-label="Back to categories"
-          className="tap flex size-9 shrink-0 items-center justify-center rounded-full border border-black/5 bg-white text-[#12131A] shadow-xs hover:bg-black/5"
+          className="tap flex size-9 shrink-0 items-center justify-center rounded-full border border-border/60 bg-white text-foreground shadow-2xs hover:bg-slate-50"
         >
           <ChevronLeft className="size-5" />
         </button>
+
         <div className="min-w-0 flex-1 text-center">
           <h1
             dir="rtl"
             lang="ar"
-            className="truncate font-arabic text-lg font-bold leading-snug text-[#12131A]"
+            className="truncate font-arabic text-lg sm:text-xl font-bold leading-tight text-foreground"
           >
             {cat.name}
           </h1>
-          <p className="mt-0.5 text-[11px] font-bold text-[#6B7280]">
-            zikr {zekrIdx + 1} of {total}
+          <p className="text-[11px] font-bold text-muted-foreground">
+            {zekrIdx + 1} of {total}
           </p>
         </div>
-        <div className="flex shrink-0 items-center gap-1.5">
-          <button
-            type="button"
-            onClick={() => onZekrIdxChange(Math.max(0, zekrIdx - 1))}
-            disabled={zekrIdx === 0}
-            aria-label="Previous zikr"
-            className="tap flex size-9 items-center justify-center rounded-full border border-black/5 bg-white text-[#12131A] shadow-xs disabled:opacity-30"
-          >
-            <ChevronLeft className="size-4" />
-          </button>
-          <button
-            type="button"
-            onClick={() => onZekrIdxChange(Math.min(total - 1, zekrIdx + 1))}
-            disabled={isLast}
-            aria-label="Next zikr"
-            className="tap flex size-9 items-center justify-center rounded-full border border-black/5 bg-white text-[#12131A] shadow-xs disabled:opacity-30"
-          >
-            <ChevronRight className="size-4" />
-          </button>
+
+        {/* Font Size Selector */}
+        <div className="flex shrink-0 items-center gap-1 bg-white border border-border/60 rounded-full p-0.5 shadow-2xs">
+          {(["sm", "md", "lg"] as const).map((size) => (
+            <button
+              key={size}
+              onClick={() => {
+                sounds.playNavClick();
+                onChangeFontSize(size);
+              }}
+              className={cn(
+                "size-7 rounded-full text-xs font-black transition-all",
+                fontSize === size ? "bg-[#12131A] text-white" : "text-muted-foreground hover:text-foreground",
+              )}
+            >
+              {size === "sm" ? "A" : size === "md" ? "A+" : "A++"}
+            </button>
+          ))}
         </div>
       </header>
 
-      <Progress
-        value={total > 1 ? Math.round(((zekrIdx + 1) / total) * 100) : 100}
-        className="mb-4 h-1"
-      />
+      {/* Category Progress Bar */}
+      <div className="mb-3">
+        <div className="h-1.5 w-full rounded-full bg-slate-100 overflow-hidden">
+          <div
+            className="h-full bg-emerald-500 rounded-full transition-all duration-300"
+            style={{ width: `${total > 0 ? Math.round(((zekrIdx + (done ? 1 : 0)) / total) * 100) : 0}%` }}
+          />
+        </div>
+      </div>
 
-      <div className="card-soft border border-black/5 bg-white p-5 text-center shadow-xs sm:p-6">
-        {item.reference && (
-          <div className="flex items-center justify-center gap-1.5">
-            <BookOpenText className="size-3.5 shrink-0 text-[#6B7280]" />
-            <span
+      {/* ════════════════════════════════════════════════════════════
+          MAIN RECITATION CARD (ANIMATED DIRECTIONAL TRANSITION)
+          ════════════════════════════════════════════════════════════ */}
+      <AnimatePresence mode="wait" initial={false}>
+        <motion.div
+          key={zekrIdx}
+          initial={{ opacity: 0, x: direction * 28, scale: 0.98 }}
+          animate={{ opacity: 1, x: 0, scale: 1 }}
+          exit={{ opacity: 0, x: -direction * 28, scale: 0.98 }}
+          transition={{ duration: 0.16, ease: "easeOut" }}
+          className="card-soft border border-border/70 bg-white p-5 sm:p-6 text-center shadow-xs"
+        >
+          {/* Source Reference Badge */}
+          <div className="flex items-center justify-between border-b border-border/40 pb-3 mb-4">
+            <div className="flex items-center gap-1.5">
+              <BookOpenText className="size-3.5 text-amber-600" />
+              <span
+                dir="rtl"
+                lang="ar"
+                className="font-arabic text-xs font-bold text-muted-foreground truncate max-w-[200px]"
+              >
+                {item.reference || "ذكر مأثور"}
+              </span>
+            </div>
+
+            <button
+              type="button"
+              onClick={handleCopy}
+              className="tap flex items-center gap-1 text-[11px] font-bold text-muted-foreground hover:text-foreground"
+              title="Copy text"
+            >
+              <Copy className="size-3.5" /> Copy
+            </button>
+          </div>
+
+          {/* Arabic Recitation Text */}
+          <div className="my-2 py-2">
+            <p
               dir="rtl"
               lang="ar"
-              className="font-arabic text-[13px] font-semibold text-[#6B7280]"
+              className={cn(
+                "font-arabic whitespace-pre-line font-normal text-[#12131A] select-text selection:bg-amber-100",
+                fontClasses[fontSize],
+              )}
             >
-              {item.reference}
-            </span>
+              {item.text}
+            </p>
           </div>
-        )}
 
-        {/* The recitation itself is the counter: one tap, one repetition. */}
+          {/* Virtue / Benefit Card */}
+          {item.description && (
+            <div
+              dir="rtl"
+              lang="ar"
+              className="mt-4 rounded-2xl bg-amber-50/60 border border-amber-200/60 p-3.5 text-right font-arabic text-xs leading-relaxed text-amber-950 font-medium"
+            >
+              {item.description}
+            </div>
+          )}
+
+          {/* ════════════════════════════════════════════════════════════
+              INTERACTIVE DIGITAL TASBIH (COUNTER)
+              ════════════════════════════════════════════════════════════ */}
+          <div className="mt-6 pt-4 border-t border-border/40 flex flex-col items-center">
+            <div className="relative size-32 my-2 flex items-center justify-center">
+              <svg className="size-full -rotate-90" viewBox="0 0 100 100">
+                <circle
+                  cx="50"
+                  cy="50"
+                  r="42"
+                  className="stroke-slate-100"
+                  strokeWidth="7"
+                  fill="transparent"
+                />
+                <circle
+                  cx="50"
+                  cy="50"
+                  r="42"
+                  className={cn(
+                    "transition-all duration-300 ease-out",
+                    done ? "stroke-emerald-500" : "stroke-[#7C5CFC]",
+                  )}
+                  strokeWidth="7"
+                  strokeDasharray={2 * Math.PI * 42}
+                  strokeDashoffset={2 * Math.PI * 42 * (1 - Math.min(1, taps / item.count))}
+                  strokeLinecap="round"
+                  fill="transparent"
+                />
+              </svg>
+              <div className="absolute flex flex-col items-center justify-center">
+                {done ? (
+                  <CheckCircle2 className="size-10 text-emerald-500 animate-in zoom-in-50 duration-200" />
+                ) : (
+                  <>
+                    <span className="text-3xl font-black text-[#12131A] tracking-tight">{remaining}</span>
+                    <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">
+                      {remaining === 1 ? "tap left" : "taps left"}
+                    </span>
+                  </>
+                )}
+              </div>
+            </div>
+
+            {/* Big Tactile Tap Button */}
+            <button
+              type="button"
+              onClick={handleTap}
+              className={cn(
+                "tap mt-3 w-full max-w-xs flex items-center justify-center gap-2 rounded-2xl py-3.5 text-sm font-black text-white shadow-md active:scale-95 transition-all",
+                done
+                  ? "bg-emerald-600 hover:bg-emerald-700 shadow-emerald-200"
+                  : "bg-[#7C5CFC] hover:bg-[#6C4CE8] shadow-[#7C5CFC]/25",
+              )}
+            >
+              {done ? (
+                <>
+                  <Check className="size-4 stroke-[3]" /> Completed
+                </>
+              ) : (
+                `Tap to Count (${taps}/${item.count})`
+              )}
+            </button>
+
+            {/* Reset button */}
+            {taps > 0 && (
+              <button
+                type="button"
+                onClick={() => {
+                  sounds.playClick();
+                  azkar.resetZekr(catIdx, zekrIdx);
+                }}
+                className="mt-2.5 inline-flex items-center gap-1 text-[11px] font-bold text-muted-foreground hover:text-foreground"
+              >
+                <RotateCcw className="size-3" /> Reset count
+              </button>
+            )}
+          </div>
+        </motion.div>
+      </AnimatePresence>
+
+      {/* ════════════════════════════════════════════════════════════
+          BOTTOM NAVIGATION CONTROLS
+          ════════════════════════════════════════════════════════════ */}
+      <div className="mt-4 flex items-center justify-between gap-3">
         <button
           type="button"
-          onClick={handleTap}
-          aria-label={done ? "Zikr completed" : `Count one repetition (${taps} of ${item.count})`}
-          className="tap mt-4 w-full rounded-3xl text-center active:scale-[0.985]"
+          onClick={() => {
+            sounds.playClick();
+            goToPrev();
+          }}
+          disabled={zekrIdx === 0}
+          className="tap flex-1 flex items-center justify-center gap-1 rounded-2xl bg-white py-3 text-xs font-bold text-foreground border border-border/60 shadow-2xs hover:bg-slate-50 disabled:opacity-30"
         >
-          <p
-            dir="rtl"
-            lang="ar"
-            className="font-arabic whitespace-pre-line text-[1.3rem] font-normal leading-[2.05] text-[#12131A]"
-          >
-            {item.text}
-          </p>
-          <div className="mt-6">
-            <BeadRing count={item.count} taps={taps} />
-          </div>
-          <p className="mt-4 text-[11px] font-bold text-[#6B7280]">{caption}</p>
+          <ChevronLeft className="size-4" /> Previous
         </button>
 
-        {item.description && (
-          <p
-            dir="rtl"
-            lang="ar"
-            className="mt-5 border-t border-black/5 pt-4 text-right font-arabic text-[13px] leading-[1.95] text-[#6B7280]"
-          >
-            {item.description}
-          </p>
-        )}
-
-        {taps > 0 && !done && (
-          <button
-            type="button"
-            onClick={() => azkar.resetZekr(catIdx, zekrIdx)}
-            className="tap mx-auto mt-4 flex items-center gap-1 rounded-full bg-black/5 px-3.5 py-1.5 text-[11px] font-bold text-[#6B7280] hover:bg-black/10"
-          >
-            <RotateCcw className="size-3" /> Reset this zikr
-          </button>
-        )}
-
-        {done && !isLast && (
+        {done && isLast ? (
           <button
             type="button"
             onClick={() => {
-              setPendingFrom(null);
-              onZekrIdxChange(zekrIdx + 1);
+              sounds.playSuccess();
+              onBack();
             }}
-            className="tap mt-5 flex w-full items-center justify-center gap-1.5 rounded-full bg-[#12131A] py-3 text-xs font-extrabold text-white shadow-md active:scale-[0.97]"
+            className="tap flex-1 flex items-center justify-center gap-1 rounded-2xl bg-emerald-600 py-3 text-xs font-black text-white shadow-md hover:bg-emerald-700"
           >
-            Next zikr <ChevronRight className="size-4" />
+            Finished <Check className="size-4" />
           </button>
-        )}
-
-        {done && isLast && (
+        ) : (
           <button
             type="button"
-            onClick={onBack}
-            className="tap mt-5 flex w-full items-center justify-center gap-1.5 rounded-full bg-[#12131A] py-3 text-xs font-extrabold text-white shadow-md active:scale-[0.97]"
+            onClick={() => {
+              sounds.playClick();
+              goToNext();
+            }}
+            disabled={isLast}
+            className="tap flex-1 flex items-center justify-center gap-1 rounded-2xl bg-[#12131A] py-3 text-xs font-bold text-white shadow-xs hover:bg-[#12131A]/90 disabled:opacity-30"
           >
-            All {total} {total === 1 ? "zikr" : "zikrs"} done — back to categories
+            Next <ChevronRight className="size-4" />
           </button>
-        )}
-      </div>
-    </div>
-  );
-}
-
-/* -------------------------------- BeadRing ------------------------------- */
-
-/**
- * The misbaha, drawn as a ring of beads that fill one tap at a time. The ring
- * caps at 99 beads; the center always shows the true remaining count.
- */
-function BeadRing({ count, taps }: { count: number; taps: number }) {
-  const beads = Math.max(1, Math.min(count, 99));
-  const filled = Math.min(taps, beads);
-  const done = taps >= count;
-  const remaining = Math.max(0, count - filled);
-  const radius = 76;
-  const beadRadius = beads >= 40 ? 3.5 : beads >= 12 ? 5 : beads >= 4 ? 6.5 : 9;
-  const size = 176;
-
-  return (
-    <div className="relative mx-auto" style={{ width: size, height: size }}>
-      <svg viewBox="0 0 200 200" width={size} height={size} aria-hidden="true" focusable="false">
-        <circle cx="100" cy="100" r={radius} fill="none" stroke="#F3EDFC" strokeWidth="8" />
-        {Array.from({ length: beads }, (_, i) => {
-          const angle = (i / beads) * Math.PI * 2 - Math.PI / 2;
-          return (
-            <circle
-              key={i}
-              cx={100 + radius * Math.cos(angle)}
-              cy={100 + radius * Math.sin(angle)}
-              r={beadRadius}
-              fill={done ? "#10B981" : i < filled ? "#7C5CFC" : "#E8E2FF"}
-              style={{ transition: "fill 0.25s ease" }}
-            />
-          );
-        })}
-      </svg>
-      <div className="absolute inset-0 flex flex-col items-center justify-center">
-        {done ? (
-          <CheckCircle2 className="size-11 text-[#10B981]" strokeWidth={2.5} />
-        ) : (
-          <>
-            <span className="text-4xl font-black tabular-nums leading-none text-[#12131A]">
-              {remaining}
-            </span>
-            <span className="mt-1 text-[10px] font-extrabold uppercase tracking-[0.14em] text-[#6B7280]">
-              {remaining === 1 ? "tap left" : "taps left"}
-            </span>
-          </>
         )}
       </div>
     </div>

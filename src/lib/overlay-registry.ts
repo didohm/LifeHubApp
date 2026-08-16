@@ -46,5 +46,5 @@ export function isKeyboardOpen(): boolean {
   if (typeof window === "undefined" || !window.visualViewport) return false;
   const vv = window.visualViewport;
   const initial = window.innerHeight;
-  return initial - vv.height > 120;
+  return initial - vv.height > 60;
 }

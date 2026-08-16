@@ -80,11 +80,12 @@ function sortByUpcoming(birthdays: Birthday[]): Birthday[] {
   });
 }
 
-/** Get the age a person will turn on their next birthday. */
-function getNextAge(birthdayDate: string): number {
+/** Get the age a person will turn on their next birthday (null if birth year is current or future). */
+function getNextAge(birthdayDate: string): number | null {
   const bd = parseLocalDate(birthdayDate);
   const next = getNextBirthday(birthdayDate);
-  return next.getFullYear() - bd.getFullYear();
+  const age = next.getFullYear() - bd.getFullYear();
+  return age > 0 ? age : null;
 }
 
 // ─── Page Component ───────────────────────────────────────────────
@@ -421,9 +422,11 @@ function BirthdaysPage() {
                         <span className="text-xs font-semibold text-muted-foreground">
                           {formatBirthdayDisplay(birthday.birthday_date)}
                         </span>
-                        <span className="text-[11px] text-muted-foreground/70">
-                          Turns {getNextAge(birthday.birthday_date)}
-                        </span>
+                        {getNextAge(birthday.birthday_date) !== null && (
+                          <span className="text-[11px] text-muted-foreground/70">
+                            Turns {getNextAge(birthday.birthday_date)}
+                          </span>
+                        )}
                       </div>
                       {birthday.phone_number && (
                         <div className="flex items-center gap-1 mt-0.5">

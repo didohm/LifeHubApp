@@ -39,6 +39,7 @@ export default function PersonalStats({ userId, walkSessions }: PersonalStatsPro
     const totalDistance = finished.reduce((sum, w) => sum + (w.distance || 0), 0);
     const totalDuration = finished.reduce((sum, w) => sum + (w.duration || 0), 0);
     const totalSteps = finished.reduce((sum, w) => sum + (w.steps || 0), 0);
+    const totalCalories = finished.reduce((sum, w) => sum + (w.calories || 0), 0);
 
     const paces = finished
       .map((w) => {
@@ -52,6 +53,7 @@ export default function PersonalStats({ userId, walkSessions }: PersonalStatsPro
       total_distance: totalDistance,
       total_duration: totalDuration,
       total_steps: totalSteps,
+      total_calories: totalCalories,
       avg_pace:
         paces.length > 0 ? paces.reduce((a, b) => a + b, 0) / paces.length : null,
       longest_distance:

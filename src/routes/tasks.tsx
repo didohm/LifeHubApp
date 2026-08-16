@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useCallback } from "react";
 import { createFileRoute } from "@tanstack/react-router";
 import {
   Plus,
@@ -10,23 +10,28 @@ import {
   Loader2,
   Search,
   CalendarDays,
+  CheckCircle2,
 } from "lucide-react";
 import { differenceInCalendarDays, format } from "date-fns";
 import { toast } from "sonner";
-import { Screen } from "@/components/lifehub/Screen";
+import { motion, AnimatePresence } from "framer-motion";
+import { Screen, ScreenHeader } from "@/components/lifehub/Screen";
 import { Modal } from "@/components/lifehub/Modal";
 import { useAuth } from "@/hooks/use-auth";
 import { useAuthGuard } from "@/hooks/use-auth-guard";
 import { useDeleteWithGuard } from "@/hooks/use-delete-with-guard";
-import { getTodos, createTodo, updateTodo, deleteTodo, todayLocalDate } from "@/lib/api";
+import { createTodo, updateTodo, deleteTodo, todayLocalDate } from "@/lib/api";
 import { Notifications } from "@/lib/notifications-integration";
 import { Todo } from "@/lib/types";
 import { ListSkeleton } from "@/components/lifehub/SkeletonLoader";
 import { parseLocalDate } from "@/lib/date-utils";
+import { useData } from "@/lib/data-context";
+import { sounds } from "@/lib/sound";
+import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/tasks")({
   head: () => ({
-    meta: [{ title: "To-Do List — LifeHub" }],
+    meta: [{ title: "To-Do Routine & Tasks — LifeHub" }],
   }),
   component: TasksPage,
 });
@@ -46,45 +51,21 @@ function formatDueDate(value: string): string {
   const diff = differenceInCalendarDays(due, new Date());
   if (diff === 0) return "Today";
   if (diff === 1) return "Tomorrow";
+  if (diff === -1) return "Yesterday";
+  if (diff < -1) return `${Math.abs(diff)}d overdue`;
   return format(due, "EEE, MMM d");
 }
 
-const STATUS_META: Record<TaskStatus, { label: string; className: string }> = {
-  completed: {
-    label: "Completed",
-    className: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
-  },
-  in_progress: {
-    label: "In Progress",
-    className: "bg-sky-500/10 text-sky-600 dark:text-sky-400",
-  },
-  overdue: {
-    label: "Overdue",
-    className: "bg-rose-500/10 text-rose-600 dark:text-rose-400",
-  },
-};
-
-const CATEGORY_META: Record<string, string> = {
-  Health: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
-  Finance: "bg-amber-500/10 text-amber-600 dark:text-amber-400",
-  Personal: "bg-violet-500/10 text-violet-600 dark:text-violet-400",
-  Work: "bg-sky-500/10 text-sky-600 dark:text-sky-400",
-};
-
-function categoryBadgeClass(category: string): string {
-  return CATEGORY_META[category] || "bg-muted text-muted-foreground";
-}
+const CATEGORIES = ["all", "Health", "Finance", "Personal", "Work"] as const;
 
 function TasksPage() {
   const { user, loading: authLoading } = useAuth();
   useAuthGuard(user, authLoading);
 
-  const [todos, setTodos] = useState<Todo[]>([]);
+  const { todos = [], todosLoading: loading } = useData();
   const [categoryFilter, setCategoryFilter] = useState("all");
   const [searchTerm, setSearchTerm] = useState("");
-  const [loading, setLoading] = useState(true);
 
-  // Modal State
   const [modalOpen, setModalOpen] = useState(false);
   const [editingTask, setEditingTask] = useState<Todo | null>(null);
 
@@ -96,25 +77,8 @@ function TasksPage() {
 
   const { deleteWithGuard } = useDeleteWithGuard();
 
-  const loadTasks = useCallback(async () => {
-    if (!user) return;
-    setLoading(true);
-    try {
-      const data = await getTodos(user.id);
-      setTodos(data);
-    } catch (e) {
-      console.error(e);
-      toast.error("Failed to load tasks.");
-    } finally {
-      setLoading(false);
-    }
-  }, [user]);
-
-  useEffect(() => {
-    if (user) loadTasks();
-  }, [user, loadTasks]);
-
   const openAddModal = () => {
+    sounds.playActionClick();
     setEditingTask(null);
     setTitle("");
     setCategory("Health");
@@ -124,6 +88,7 @@ function TasksPage() {
   };
 
   const openEditModal = (task: Todo) => {
+    sounds.playActionClick();
     setEditingTask(task);
     setTitle(task.title);
     setCategory(task.category);
@@ -139,8 +104,6 @@ function TasksPage() {
 
     try {
       if (editingTask) {
-        // Edit existing task — keep its stored progress; completion is only
-        // toggled from the card checkbox, not from this form.
         const keptProgress = editingTask.progress || 0;
         await updateTodo(editingTask.id, user.id, {
           title,
@@ -150,22 +113,6 @@ function TasksPage() {
           progress: keptProgress,
           completed: editingTask.completed,
         });
-        setTodos((prev) =>
-          prev.map((t) =>
-            t.id === editingTask.id
-              ? {
-                  ...t,
-                  title,
-                  category,
-                  priority,
-                  due_date: dueDate,
-                  progress: keptProgress,
-                  completed: editingTask.completed,
-                }
-              : t,
-          ),
-        );
-        // Keep the real OS notification in sync with the edited task
         Notifications.cancelTodo(editingTask.id);
         Notifications.scheduleTodo({
           ...editingTask,
@@ -175,7 +122,6 @@ function TasksPage() {
         });
         toast.success("Task updated!");
       } else {
-        // Create new task
         const task = await createTodo(user.id, {
           title,
           category,
@@ -184,12 +130,11 @@ function TasksPage() {
           completed: false,
           progress: 0,
         });
-        setTodos((prev) => [task, ...prev]);
         Notifications.scheduleTodo(task);
         toast.success("Task created!");
       }
       setModalOpen(false);
-    } catch (err: any) {
+    } catch {
       toast.error("Failed to save task.");
     } finally {
       setSubmitting(false);
@@ -200,20 +145,19 @@ function TasksPage() {
     if (!user) return;
     const newStatus = !currentCompleted;
     try {
+      if (newStatus) {
+        sounds.playSuccess();
+      } else {
+        sounds.playClick();
+      }
       await updateTodo(id, user.id, { completed: newStatus, progress: newStatus ? 100 : 0 });
-      setTodos((prev) =>
-        prev.map((t) =>
-          t.id === id ? { ...t, completed: newStatus, progress: newStatus ? 100 : 0 } : t,
-        ),
-      );
-      // Real OS notification follows the task state
       if (newStatus) Notifications.cancelTodo(id);
       else {
         const todo = todos.find((t) => t.id === id);
         if (todo) Notifications.scheduleTodo({ ...todo, completed: false });
       }
       toast.success(newStatus ? "Task completed! 🎉" : "Task marked active");
-    } catch (err) {
+    } catch {
       toast.error("Could not update task status");
     }
   };
@@ -222,11 +166,10 @@ function TasksPage() {
     if (!user) return;
     await deleteWithGuard(id, async () => {
       await deleteTodo(id, user.id);
-      setTodos((prev) => prev.filter((t) => t.id !== id));
       Notifications.cancelTodo(id);
-      toast.success("Task deleted.", { id: `task-deleted-${id}` });
+      toast.success("Task deleted.");
     })().catch(() => {
-      toast.error("Failed to delete task.", { id: `task-delete-error-${id}` });
+      toast.error("Failed to delete task.");
     });
   };
 
@@ -237,201 +180,232 @@ function TasksPage() {
   });
 
   const completedCount = todos.filter((t) => t.completed).length;
+  const completionPct = todos.length > 0 ? Math.round((completedCount / todos.length) * 100) : 0;
 
   return (
     <Screen>
-      <header className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-extrabold text-foreground flex items-center gap-2">
-            <ListChecks className="size-6 text-pink-600" /> To-Do List
-          </h1>
-          <p className="text-xs text-muted-foreground">Manage your daily tasks & goals</p>
-        </div>
-        <button
-          onClick={openAddModal}
-          className="tap flex items-center gap-1 rounded-full bg-ink px-4 py-2 text-xs font-bold text-card shadow-md transition-transform active:scale-95 hover:opacity-90"
-        >
-          <Plus className="size-4" /> Add Task
-        </button>
-      </header>
+      <ScreenHeader
+        title="To-Do Routine"
+        subtitle="Daily task checklist & priority tracker"
+        showBack
+        action={
+          <button
+            onClick={openAddModal}
+            className="tap flex items-center gap-1 rounded-full bg-[#12131A] px-3.5 py-1.5 text-xs font-bold text-white shadow-xs hover:bg-[#12131A]/90 transition-transform active:scale-95"
+          >
+            <Plus className="size-3.5" /> Add Task
+          </button>
+        }
+      />
 
-      {/* Progress banner */}
-      <div className="mt-4 card-soft bg-blush p-4 text-ink flex items-center justify-between shadow-sm">
-        <div>
-          <span className="text-xs font-bold text-ink/75">Tasks Completed</span>
-          <p className="mt-1 text-2xl font-black">
-            {completedCount} of {todos.length}
-          </p>
-        </div>
-        <div className="flex size-12 items-center justify-center rounded-full bg-card shadow-sm text-pink-700">
-          <ListChecks className="size-6" />
-        </div>
-      </div>
+      {/* ════════════════════════════════════════════════════════════
+          TASK PROGRESS HERO CARD
+          ════════════════════════════════════════════════════════════ */}
+      <motion.div
+        initial={{ opacity: 0, y: 6 }}
+        animate={{ opacity: 1, y: 0 }}
+        className="card-soft mt-1 bg-gradient-to-br from-[#FFE6F2] via-[#FFF0F7] to-[#FAF8FF] p-4 sm:p-5 border border-pink-200/60 shadow-xs"
+      >
+        <div className="flex items-center justify-between">
+          <div>
+            <span className="inline-flex items-center gap-1 rounded-full bg-white/90 px-2.5 py-0.5 text-[10px] font-black text-pink-700 shadow-2xs">
+              <CheckCircle2 className="size-3" /> Routine Progress
+            </span>
+            <div className="mt-2 flex items-baseline gap-2">
+              <span className="text-2xl sm:text-3xl font-black text-[#12131A]">
+                {completedCount} <span className="text-sm font-bold text-muted-foreground">/ {todos.length} Done</span>
+              </span>
+              <span className="text-xs font-bold text-emerald-600">
+                {completionPct}% Complete
+              </span>
+            </div>
+            <p className="mt-0.5 text-xs font-medium text-muted-foreground">
+              {todos.length - completedCount} active tasks remaining today
+            </p>
+          </div>
 
-      {/* Search & Category filter */}
-      <div className="mt-4 space-y-3">
-        <div className="flex items-center gap-2 rounded-2xl border border-border/50 bg-card px-3.5 py-2 text-xs shadow-sm">
-          <Search className="size-4 text-muted-foreground" />
+          <div className="flex size-12 items-center justify-center rounded-2xl bg-white shadow-2xs text-pink-600">
+            <ListChecks className="size-6" />
+          </div>
+        </div>
+
+        <div className="mt-3.5 h-1.5 w-full rounded-full bg-white/80 overflow-hidden">
+          <div
+            className="h-full bg-pink-500 rounded-full transition-all duration-500"
+            style={{ width: `${completionPct}%` }}
+          />
+        </div>
+      </motion.div>
+
+      {/* ════════════════════════════════════════════════════════════
+          SEARCH & CATEGORY FILTERS
+          ════════════════════════════════════════════════════════════ */}
+      <div className="mt-4 space-y-2.5">
+        <div className="relative">
+          <Search className="absolute left-3.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
           <input
             type="text"
             placeholder="Search task title..."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
-            className="w-full bg-transparent outline-none"
+            className="w-full rounded-2xl border border-border/70 bg-white py-2 pl-10 pr-4 text-xs font-semibold text-foreground outline-none shadow-2xs focus:border-[#7C5CFC]"
           />
         </div>
 
-        <div className="flex gap-2 overflow-x-auto pb-1">
-          {["all", "Health", "Finance", "Personal", "Work"].map((cat) => (
-            <button
-              key={cat}
-              onClick={() => setCategoryFilter(cat)}
-              className={`rounded-full px-3.5 py-1 text-xs font-bold capitalize whitespace-nowrap ${
-                categoryFilter === cat
-                  ? "bg-slate-900 text-white shadow-sm"
-                  : "bg-muted text-muted-foreground"
-              }`}
-            >
-              {cat}
-            </button>
-          ))}
+        <div className="flex gap-1.5 overflow-x-auto pb-1 -mx-5 px-5">
+          {CATEGORIES.map((cat) => {
+            const active = categoryFilter === cat;
+            return (
+              <button
+                key={cat}
+                onClick={() => {
+                  sounds.playNavClick();
+                  setCategoryFilter(cat);
+                }}
+                className={cn(
+                  "tap shrink-0 rounded-full px-3.5 py-1 text-xs font-bold capitalize transition-all",
+                  active
+                    ? "bg-[#12131A] text-white shadow-xs"
+                    : "bg-white text-muted-foreground border border-border/60 hover:bg-slate-50",
+                )}
+              >
+                {cat}
+              </button>
+            );
+          })}
         </div>
       </div>
 
-      {/* Tasks List */}
-      <div className="mt-4 space-y-3">
+      {/* ════════════════════════════════════════════════════════════
+          TASK LIST
+          ════════════════════════════════════════════════════════════ */}
+      <div className="mt-3 space-y-2.5">
         {loading ? (
           <ListSkeleton count={3} />
         ) : filteredTasks.length === 0 ? (
-          <div className="rounded-2xl border border-dashed border-slate-200/60 p-6 text-center bg-card/40">
-            <ListChecks className="mx-auto size-12 text-muted-foreground/50" />
-            <p className="mt-2 text-sm font-bold text-foreground">No tasks found</p>
+          <div className="rounded-3xl border border-dashed border-border p-8 text-center bg-white shadow-2xs">
+            <ListChecks className="mx-auto size-10 text-muted-foreground/40" />
+            <p className="mt-2 text-sm font-extrabold text-[#12131A]">No tasks found</p>
+            <p className="mt-1 text-xs text-muted-foreground">
+              {searchTerm ? "Try searching another term" : "Tap Add Task to create your first to-do."}
+            </p>
           </div>
         ) : (
           filteredTasks.map((t) => {
             const status = getTaskStatus(t);
-            const statusMeta = STATUS_META[status];
             const overdue = status === "overdue";
+
             return (
-              <div
+              <motion.div
                 key={t.id}
-                className={`card-soft overflow-hidden border bg-card shadow-sm transition-all hover:shadow-md ${
-                  t.completed ? "border-border/40 opacity-75" : "border-border/40"
-                }`}
+                initial={{ opacity: 0, y: 4 }}
+                animate={{ opacity: 1, y: 0 }}
+                className={cn(
+                  "card-soft p-3.5 border transition-all flex items-center justify-between shadow-2xs group",
+                  t.completed
+                    ? "bg-slate-50 border-border/40 opacity-70"
+                    : "bg-white border-border/70 hover:shadow-xs",
+                )}
               >
-                <div className="flex items-center gap-3 p-4">
-                  {/* Completion checkbox — Apple Reminders style */}
+                <div className="flex items-center gap-3 min-w-0 flex-1 pr-2">
                   <button
                     onClick={() => handleToggleComplete(t.id, t.completed)}
-                    aria-label={
+                    className={cn(
+                      "tap flex size-7 shrink-0 items-center justify-center rounded-xl border transition-all active:scale-90",
                       t.completed
-                        ? `Mark task ${t.title} as active`
-                        : `Mark task ${t.title} as complete`
-                    }
-                    className={`mt-0.5 flex size-[22px] shrink-0 items-center justify-center rounded-full border-[1.5px] transition-all active:scale-90 ${
-                      t.completed
-                        ? "border-emerald-500 bg-emerald-500 text-white shadow-sm shadow-emerald-500/30"
-                        : "border-muted-foreground/25 bg-transparent text-transparent hover:border-emerald-500"
-                    }`}
+                        ? "border-emerald-500 bg-emerald-500 text-white shadow-xs"
+                        : "border-slate-300 bg-white hover:border-emerald-500",
+                    )}
+                    title={t.completed ? "Mark active" : "Mark completed"}
                   >
-                    <Check className="size-3.5" strokeWidth={3.5} />
+                    {t.completed && <Check className="size-4 stroke-[3]" />}
                   </button>
 
-                  {/* Title + meta */}
                   <div className="min-w-0 flex-1">
-                    <h3
-                      className={`truncate text-[15px] font-bold leading-snug tracking-tight ${
-                        t.completed
-                          ? "text-muted-foreground line-through decoration-muted-foreground/50"
-                          : "text-foreground"
-                      }`}
+                    <span
+                      className={cn(
+                        "block text-xs sm:text-sm font-bold text-foreground truncate",
+                        t.completed && "line-through text-muted-foreground",
+                      )}
                     >
                       {t.title}
-                    </h3>
-                    <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1">
-                      {/* Category badge */}
-                      <span
-                        className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-bold ${categoryBadgeClass(
-                          t.category,
-                        )}`}
-                      >
+                    </span>
+
+                    <div className="mt-1 flex items-center gap-2 flex-wrap">
+                      <span className="rounded-md bg-slate-100 px-2 py-0.2 text-[9.5px] font-bold text-slate-700">
                         {t.category}
                       </span>
-
-                      {/* Due date */}
                       {t.due_date && (
                         <span
-                          className={`inline-flex items-center gap-1 text-[11px] font-semibold ${
-                            overdue ? "text-rose-600 dark:text-rose-400" : "text-muted-foreground"
-                          }`}
+                          className={cn(
+                            "inline-flex items-center gap-1 text-[10px] font-semibold",
+                            overdue ? "text-rose-600 font-bold" : "text-muted-foreground",
+                          )}
                         >
-                          <CalendarDays className="size-3" />
-                          {overdue
-                            ? `${formatDueDate(t.due_date)} • Overdue`
-                            : formatDueDate(t.due_date)}
+                          <CalendarDays className="size-3" /> {formatDueDate(t.due_date)}
+                        </span>
+                      )}
+                      {t.priority === "high" && (
+                        <span className="rounded-full bg-rose-50 px-2 py-0.2 text-[9px] font-black text-rose-600">
+                          High
                         </span>
                       )}
                     </div>
                   </div>
-
-                  {/* Status badge + actions */}
-                  <div className="flex shrink-0 flex-col items-end gap-2.5 self-start">
-                    <span
-                      className={`inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[10px] font-bold ${statusMeta.className}`}
-                    >
-                      <span className="size-1.5 rounded-full bg-current" />
-                      {statusMeta.label}
-                    </span>
-                    <div className="flex items-center gap-1.5">
-                      <button
-                        onClick={() => openEditModal(t)}
-                        aria-label={`Edit task ${t.title}`}
-                        title="Edit Task"
-                        className="flex size-8 items-center justify-center rounded-full bg-muted text-muted-foreground transition-colors hover:bg-accent hover:text-foreground active:scale-95"
-                      >
-                        <Edit2 className="size-4" />
-                      </button>
-                      <button
-                        onClick={() => handleDelete(t.id)}
-                        aria-label={`Delete task ${t.title}`}
-                        title="Delete Task"
-                        className="flex size-8 items-center justify-center rounded-full bg-muted text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive active:scale-95"
-                      >
-                        <Trash2 className="size-4" />
-                      </button>
-                    </div>
-                  </div>
                 </div>
-              </div>
+
+                <div className="flex items-center gap-1 shrink-0">
+                  <button
+                    onClick={() => openEditModal(t)}
+                    className="size-7 flex items-center justify-center rounded-lg text-muted-foreground hover:bg-slate-100"
+                    title="Edit task"
+                  >
+                    <Edit2 className="size-3.5" />
+                  </button>
+                  <button
+                    onClick={() => handleDelete(t.id)}
+                    className="size-7 flex items-center justify-center rounded-lg text-rose-500 hover:bg-rose-50"
+                    title="Delete task"
+                  >
+                    <Trash2 className="size-3.5" />
+                  </button>
+                </div>
+              </motion.div>
             );
           })
         )}
       </div>
 
-      {/* Add / Edit Task Modal */}
-      <Modal open={modalOpen} onClose={() => setModalOpen(false)} className="bg-card">
+      {/* ════════════════════════════════════════════════════════════
+          ADD / EDIT TASK MODAL
+          ════════════════════════════════════════════════════════════ */}
+      <Modal
+        open={modalOpen}
+        onClose={() => setModalOpen(false)}
+        className="p-5 max-w-md bg-white rounded-3xl"
+      >
         <div className="flex items-center justify-between border-b border-border/40 pb-3">
-          <h2 className="text-lg font-extrabold text-foreground">
-            {editingTask ? "Edit Task" : "Add New Task"}
-          </h2>
+          <h3 className="text-base font-extrabold text-foreground">
+            {editingTask ? "Edit Task" : "Create New Task"}
+          </h3>
           <button
             onClick={() => setModalOpen(false)}
-            className="size-8 flex items-center justify-center rounded-full bg-muted text-muted-foreground"
+            className="size-8 flex items-center justify-center rounded-full text-muted-foreground hover:bg-slate-100"
           >
             <X className="size-4" />
           </button>
         </div>
 
-        <form onSubmit={handleSave} className="mt-4 space-y-3">
+        <form onSubmit={handleSave} className="mt-4 space-y-3.5">
           <div>
             <label className="text-xs font-bold text-foreground">Task Title</label>
             <input
               type="text"
               required
-              placeholder="Refill prescription"
+              placeholder="e.g. Schedule eye checkup, Refill vitamins"
               value={title}
               onChange={(e) => setTitle(e.target.value)}
-              className="mt-1 w-full rounded-xl border border-input bg-muted/30 p-2.5 text-sm outline-none"
+              className="mt-1 w-full rounded-xl border border-border bg-slate-50 p-2.5 text-xs font-semibold text-foreground outline-none focus:border-[#7C5CFC] focus:bg-white"
             />
           </div>
 
@@ -441,7 +415,7 @@ function TasksPage() {
               <select
                 value={category}
                 onChange={(e) => setCategory(e.target.value)}
-                className="mt-1 w-full rounded-xl border border-input bg-muted/30 p-2.5 text-sm outline-none"
+                className="mt-1 w-full rounded-xl border border-border bg-slate-50 p-2.5 text-xs font-semibold text-foreground outline-none"
               >
                 <option value="Health">Health</option>
                 <option value="Finance">Finance</option>
@@ -453,8 +427,8 @@ function TasksPage() {
               <label className="text-xs font-bold text-foreground">Priority</label>
               <select
                 value={priority}
-                onChange={(e) => setPriority(e.target.value as any)}
-                className="mt-1 w-full rounded-xl border border-input bg-muted/30 p-2.5 text-sm outline-none"
+                onChange={(e) => setPriority(e.target.value as "high" | "medium" | "light")}
+                className="mt-1 w-full rounded-xl border border-border bg-slate-50 p-2.5 text-xs font-semibold text-foreground outline-none"
               >
                 <option value="high">High</option>
                 <option value="medium">Medium</option>
@@ -470,25 +444,24 @@ function TasksPage() {
               required
               value={dueDate}
               onChange={(e) => setDueDate(e.target.value)}
-              className="mt-1 w-full rounded-xl border border-input bg-muted/30 p-2.5 text-sm outline-none"
+              className="mt-1 w-full rounded-xl border border-border bg-slate-50 p-2.5 text-xs font-semibold text-foreground outline-none focus:border-[#7C5CFC] focus:bg-white"
             />
           </div>
 
-          <div className="flex gap-2 pt-3">
+          <div className="flex gap-2 pt-2">
             <button
               type="button"
               onClick={() => setModalOpen(false)}
-              className="w-1/2 rounded-xl border border-border py-2.5 text-xs font-bold text-foreground"
+              className="w-1/2 rounded-xl border border-border py-2.5 text-xs font-bold text-foreground hover:bg-slate-50"
             >
               Cancel
             </button>
             <button
               type="submit"
               disabled={submitting}
-              className="w-1/2 flex items-center justify-center gap-1.5 rounded-xl bg-ink py-2.5 text-xs font-bold text-card shadow-md disabled:opacity-50"
+              className="w-1/2 flex items-center justify-center gap-1.5 rounded-xl bg-[#12131A] py-2.5 text-xs font-bold text-white shadow-xs hover:bg-[#12131A]/90 disabled:opacity-50"
             >
-              {submitting ? <Loader2 className="size-4 animate-spin" /> : null}
-              {submitting ? "Saving..." : "Save Task"}
+              {submitting ? <Loader2 className="size-3.5 animate-spin" /> : null} Save Task
             </button>
           </div>
         </form>

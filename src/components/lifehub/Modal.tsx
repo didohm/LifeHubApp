@@ -73,31 +73,19 @@ export function Modal({
     return () => window.removeEventListener("keydown", onKey);
   }, [open, onClose]);
 
-  // Lock body scroll while the modal is open so the page behind can't scroll
-  // and reveal a white gap at the bottom on mobile.
+  // Lock body scroll while the modal is open without triggering layout reflow
   useEffect(() => {
     if (!open) return;
 
-    const scrollY = window.scrollY;
-    const originalBodyPosition = document.body.style.position;
-    const originalBodyTop = document.body.style.top;
-    const originalBodyWidth = document.body.style.width;
-    const originalBodyOverflow = document.body.style.overflow;
-    const originalHtmlOverflow = document.documentElement.style.overflow;
+    const originalOverflow = document.body.style.overflow;
+    const originalOverscroll = document.body.style.overscrollBehavior;
 
-    document.body.style.position = "fixed";
-    document.body.style.top = `-${scrollY}px`;
-    document.body.style.width = "100%";
     document.body.style.overflow = "hidden";
-    document.documentElement.style.overflow = "hidden";
+    document.body.style.overscrollBehavior = "none";
 
     return () => {
-      document.body.style.position = originalBodyPosition;
-      document.body.style.top = originalBodyTop;
-      document.body.style.width = originalBodyWidth;
-      document.body.style.overflow = originalBodyOverflow;
-      document.documentElement.style.overflow = originalHtmlOverflow;
-      window.scrollTo(0, scrollY);
+      document.body.style.overflow = originalOverflow;
+      document.body.style.overscrollBehavior = originalOverscroll;
     };
   }, [open]);
 
@@ -111,7 +99,7 @@ export function Modal({
   const overlay = (
     <div
       className={cn(
-        "fixed inset-0 h-viewport z-[80] grid bg-black/40 p-3 backdrop-blur-xl",
+        "fixed inset-0 h-viewport z-[80] grid bg-black/50 p-3 backdrop-blur-xs transform-gpu will-change-[opacity]",
         alignTop
           ? "items-start justify-center pt-16"
           : keyboardOpen
@@ -143,7 +131,7 @@ export function Modal({
           //   tablet  → capped at 500px (≥640px viewport)
           //   desktop → capped at 560px (≥768px viewport)
           "relative z-[90] w-[92vw] max-w-[420px] min-h-0 max-h-full overflow-y-auto overscroll-contain rounded-3xl bg-white p-6 shadow-2xl",
-          "animate-in zoom-in-95 fade-in-0 duration-200",
+          "animate-in zoom-in-95 fade-in-0 duration-200 transform-gpu will-change-[transform,opacity]",
           "sm:max-w-[500px] md:max-w-[560px]",
           className,
         )}

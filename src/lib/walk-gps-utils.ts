@@ -175,27 +175,29 @@ export function computeWalkStats(
     pointsWithDistance.push({ ...curr, distance: cumulativeDistance });
   }
 
-  // Compute elevation gain/loss
+  // Compute elevation gain/loss with hysteresis noise filtering (>= 2.0m threshold)
   let elevationGain = 0;
   let elevationLoss = 0;
   let hasAltitude = false;
+  let lastAnchorAltitude: number | null = null;
 
-  for (let i = 1; i < filteredPoints.length; i++) {
-    const prev = filteredPoints[i - 1];
+  for (let i = 0; i < filteredPoints.length; i++) {
     const curr = filteredPoints[i];
 
-    if (
-      prev.altitude != null &&
-      curr.altitude != null &&
-      !isNaN(prev.altitude) &&
-      !isNaN(curr.altitude)
-    ) {
+    if (curr.altitude != null && !isNaN(curr.altitude)) {
       hasAltitude = true;
-      const elevChange = curr.altitude - prev.altitude;
-      if (elevChange > 0) {
-        elevationGain += elevChange;
+      if (lastAnchorAltitude === null) {
+        lastAnchorAltitude = curr.altitude;
       } else {
-        elevationLoss += Math.abs(elevChange);
+        const diff = curr.altitude - lastAnchorAltitude;
+        if (Math.abs(diff) >= 2.0) {
+          if (diff > 0) {
+            elevationGain += diff;
+          } else {
+            elevationLoss += Math.abs(diff);
+          }
+          lastAnchorAltitude = curr.altitude;
+        }
       }
     }
   }
@@ -213,8 +215,8 @@ export function computeWalkStats(
     duration: totalDuration,
     avgPace,
     avgSpeed,
-    elevationGain: hasAltitude ? elevationGain : null,
-    elevationLoss: hasAltitude ? elevationLoss : null,
+    elevationGain: hasAltitude ? Math.round(elevationGain * 10) / 10 : null,
+    elevationLoss: hasAltitude ? Math.round(elevationLoss * 10) / 10 : null,
     splits,
   };
 }
@@ -245,12 +247,12 @@ function computeSplits(
     const targetDistance = i * 1000;
 
     // Find the two points that bracket this kilometer mark
-    let startIdx = 0;
-    let endIdx = 0;
+    let startIdx = -1;
+    let endIdx = -1;
 
     for (let j = 0; j < pointsWithDistance.length; j++) {
       const pointDist = pointsWithDistance[j].distance ?? 0;
-      if (pointDist >= (i - 1) * 1000 && startIdx === 0) {
+      if (pointDist >= (i - 1) * 1000 && startIdx === -1) {
         startIdx = j;
       }
       if (pointDist >= targetDistance) {
@@ -259,7 +261,7 @@ function computeSplits(
       }
     }
 
-    if (startIdx >= pointsWithDistance.length || endIdx >= pointsWithDistance.length) {
+    if (startIdx === -1 || endIdx === -1 || startIdx >= pointsWithDistance.length || endIdx >= pointsWithDistance.length) {
       continue;
     }
 
@@ -271,13 +273,18 @@ function computeSplits(
       (endPoint.distance ?? 0) - (startPoint.distance ?? 0);
     const splitTimeDelta = (endPoint.ts - startPoint.ts) / 1000;
 
-    // Estimate split duration using average pace if time delta is zero
-    const splitDuration =
+    // Estimate split duration, normalizing against total active duration if pauses occurred
+    let splitDuration =
       splitTimeDelta > 0
         ? splitTimeDelta
-        : totalTimeDelta > 0
-        ? (splitDistance / totalDistance) * totalTimeDelta
+        : totalDuration > 0 && totalDistance > 0
+        ? (splitDistance / totalDistance) * totalDuration
         : 0;
+
+    if (totalTimeDelta > totalDuration && totalDuration > 0 && totalTimeDelta > 0 && splitTimeDelta > 0) {
+      // Scale out paused gaps proportionally to match active walking duration
+      splitDuration = (splitTimeDelta / totalTimeDelta) * totalDuration;
+    }
 
     // Compute pace for this split (sec/km)
     const splitPace =

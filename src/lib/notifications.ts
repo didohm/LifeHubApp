@@ -5,6 +5,8 @@ import {
   type ScheduleOn,
 } from "@capacitor/local-notifications";
 import { Capacitor } from "@capacitor/core";
+import { sounds } from "./sound";
+import { toast } from "sonner";
 
 /* ────────────────────────────────────────────────────────────────────────────
  * Channels
@@ -561,7 +563,17 @@ export class NotificationService {
     return pending.some((n) => n.id === id);
   }
 
-  /* ── Taps ──────────────────────────────────────────────────────────────── */
+  /* ── In-App Alerts & Sound Integration ──────────────────────────────────── */
+
+  /** Fires an in-app visual toast with harmonic notification chime. */
+  static notifyInApp(title: string, body?: string): void {
+    sounds.playNotification();
+    if (body) {
+      toast(title, { description: body });
+    } else {
+      toast(title);
+    }
+  }
 
   /** Fires when the user taps a delivered notification. Returns an unsubscribe. */
   static onNotificationClick(callback: (extra: Record<string, any> | undefined) => void) {
@@ -569,7 +581,22 @@ export class NotificationService {
     const listener = LocalNotifications.addListener(
       "localNotificationActionPerformed",
       (action: ActionPerformed) => {
+        sounds.playClick();
         callback(action.notification.extra as Record<string, any> | undefined);
+      },
+    );
+    return () => {
+      listener.then((l) => l.remove()).catch(() => {});
+    };
+  }
+
+  /** Listens to notifications received while the app is in the foreground. */
+  static registerForegroundListener() {
+    if (!isNative()) return () => {};
+    const listener = LocalNotifications.addListener(
+      "localNotificationReceived",
+      () => {
+        sounds.playNotification();
       },
     );
     return () => {

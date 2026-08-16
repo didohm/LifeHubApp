@@ -1,6 +1,17 @@
-import { useState, useEffect, useMemo } from "react";
-import { createFileRoute } from "@tanstack/react-router";
-import { ChevronDown, Flame, Activity, TrendingUp, Check } from "lucide-react";
+import { useState, useMemo } from "react";
+import { createFileRoute, Link } from "@tanstack/react-router";
+import {
+  Flame,
+  Activity,
+  TrendingUp,
+  Pill,
+  Wallet,
+  Calendar as CalendarIcon,
+  ListChecks,
+  Dumbbell,
+  Droplets,
+  ChevronRight,
+} from "lucide-react";
 import {
   ResponsiveContainer,
   AreaChart,
@@ -12,13 +23,15 @@ import {
   BarChart,
   Bar,
 } from "recharts";
+import { motion } from "framer-motion";
 import { Screen, ScreenHeader } from "@/components/lifehub/Screen";
 import { useAuth } from "@/hooks/use-auth";
 import { useAuthGuard } from "@/hooks/use-auth-guard";
 import { useData } from "@/lib/data-context";
 import { DashboardSkeleton } from "@/components/lifehub/SkeletonLoader";
-import { DayKey, WorkoutProgram } from "@/lib/types";
 import { parseLocalDate } from "@/lib/date-utils";
+import { sounds } from "@/lib/sound";
+import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/analytics")({
   head: () => ({
@@ -31,20 +44,14 @@ type TimeFilter = "Today" | "This Week" | "This Month" | "This Year";
 
 const FILTERS: TimeFilter[] = ["Today", "This Week", "This Month", "This Year"];
 
-// ──── Date helpers (local time) ────
-
-/** "YYYY-MM-DD" in local time. */
 function localDateStr(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
-/** Parse a "YYYY-MM-DD" string as LOCAL midnight (never UTC). */
-// Now using shared utility from date-utils
 function parseDateOnly(s: string): Date {
   return parseLocalDate(s);
 }
 
-/** Milliseconds of an ISO string, or null when invalid. */
 function isoMs(iso?: string | null): number | null {
   if (!iso) return null;
   const t = new Date(iso).getTime();
@@ -56,35 +63,8 @@ function shortLabel(d: Date): string {
   return `${days[d.getDay()]} ${d.getDate()}`;
 }
 
-function hourLabel(h: number): string {
-  if (h === 0) return "12a";
-  if (h < 12) return `${h}a`;
-  if (h === 12) return "12p";
-  return `${h - 12}p`;
-}
-
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
-const DAY_KEYS: DayKey[] = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
-
-/** Structured training days for cardio programs (with legacy text-plan fallback). */
-function cardioTrainingDays(p: WorkoutProgram): DayKey[] {
-  const structured = p.training_days;
-  if (structured && structured.length > 0) return structured;
-  return DAY_KEYS.filter((dk) => {
-    const focus = (p.weekly_plan || []).find((x) => x.day === dk)?.focus || "";
-    return focus.toLowerCase() !== "rest";
-  });
-}
-
-/** Whether a day is a training day in the program's weekly plan. */
-function isTrainingDay(p: WorkoutProgram, day: DayKey): boolean {
-  if (p.workout_type === "Cardio") return cardioTrainingDays(p).includes(day);
-  const focus = (p.weekly_plan || []).find((item) => item.day === day)?.focus || "";
-  return focus.toLowerCase() !== "rest";
-}
-
-/** Start of the calendar period for a filter (local midnight). */
 function periodStart(filter: TimeFilter): Date {
   const now = new Date();
   if (filter === "Today") {
@@ -95,13 +75,13 @@ function periodStart(filter: TimeFilter): Date {
   if (filter === "This Week") {
     const s = new Date(now);
     s.setHours(0, 0, 0, 0);
-    s.setDate(s.getDate() - s.getDay()); // Sunday start
+    s.setDate(s.getDate() - s.getDay());
     return s;
   }
   if (filter === "This Month") {
     return new Date(now.getFullYear(), now.getMonth(), 1);
   }
-  return new Date(now.getFullYear(), 0, 1); // Jan 1
+  return new Date(now.getFullYear(), 0, 1);
 }
 
 interface Bucket {
@@ -121,11 +101,6 @@ function emptyBucket(key: string, label: string): Bucket {
   return { key, label, actions: 0, doses: 0, payments: 0, fitness: 0, glasses: 0, total: 0 };
 }
 
-/**
- * Activity-log actions that represent the SAME real-world event as one of
- * the dedicated service series below (doses / payments / fitness / water).
- * They are excluded from the "Actions" series so nothing is counted twice.
- */
 const DUP_LOG_MARKERS = [
   "medication taken",
   "paid bill",
@@ -139,313 +114,327 @@ function AnalyticsPage() {
   useAuthGuard(user, authLoading);
 
   const {
-    medications,
-    medicationLogs,
-    bills,
-    payments,
-    appointments,
-    todos,
-    workouts,
-    workoutPrograms,
-    walkSessions,
-    waterLogs,
-    activityLogs,
-    medLoading,
-    billLoading,
-    appLoading,
-    fitnessLoading,
-    activityLoading,
-    todosLoading,
-    waterLoading,
+    medications = [],
+    medicationLogs = [],
+    bills = [],
+    payments = [],
+    appointments = [],
+    todos = [],
+    workouts = [],
+    walkSessions = [],
+    waterLogs = [],
+    activityLogs = [],
   } = useData();
 
   const [timeFilter, setTimeFilter] = useState<TimeFilter>("This Week");
-  const [filterOpen, setFilterOpen] = useState(false);
 
-  // Show the skeleton only until the first realtime snapshot arrives.
-  const [initialized, setInitialized] = useState(false);
-  const anyLoading =
-    medLoading ||
-    billLoading ||
-    appLoading ||
-    fitnessLoading ||
-    activityLoading ||
-    todosLoading ||
-    waterLoading;
-  useEffect(() => {
-    if (!anyLoading) setInitialized(true);
-  }, [anyLoading]);
-
-  // ──── Activity Timeline: aggregate events from every service by date ────
-  const chartData = useMemo(() => {
+  const startMs = useMemo(() => periodStart(timeFilter).getTime(), [timeFilter]);
+  const endMs = useMemo(() => {
     const now = new Date();
-    const todayStr = localDateStr(now);
-    const map = new Map<string, Bucket>();
-
-    const add = (key: string, field: CountField, amount = 1) => {
-      const b = map.get(key);
-      if (!b) return;
-      b[field] += amount;
-      b.total += amount;
-    };
-
-    // Build the bucket skeleton for the selected period.
     if (timeFilter === "Today") {
-      const curHour = now.getHours();
-      for (let h = 0; h <= curHour; h++) map.set(`h${h}`, emptyBucket(`h${h}`, hourLabel(h)));
-    } else if (timeFilter === "This Week") {
+      const e = new Date(now);
+      e.setHours(23, 59, 59, 999);
+      return e.getTime();
+    }
+    if (timeFilter === "This Week") {
       const s = periodStart(timeFilter);
-      for (let i = 0; i < 7; i++) {
-        const d = new Date(s);
-        d.setDate(s.getDate() + i);
-        const key = localDateStr(d);
-        if (key > todayStr) break;
-        map.set(key, emptyBucket(key, shortLabel(d)));
-      }
-    } else if (timeFilter === "This Month") {
-      const s = periodStart(timeFilter);
-      const daysInMonth = new Date(s.getFullYear(), s.getMonth() + 1, 0).getDate();
-      for (let i = 0; i < daysInMonth; i++) {
-        const d = new Date(s);
-        d.setDate(s.getDate() + i);
-        const key = localDateStr(d);
-        if (key > todayStr) break;
-        map.set(key, emptyBucket(key, i % 5 === 0 ? String(d.getDate()) : ""));
-      }
-    } else {
-      const s = periodStart(timeFilter);
-      for (let m = 0; m <= now.getMonth(); m++) {
-        const key = `${s.getFullYear()}-${String(m + 1).padStart(2, "0")}`;
-        map.set(key, emptyBucket(key, MONTHS[m]));
-      }
+      const e = new Date(s);
+      e.setDate(e.getDate() + 7);
+      return e.getTime();
     }
-
-    // Resolve an ISO timestamp to the right bucket key.
-    const keyForIso = (iso: string): string | undefined => {
-      const ms = isoMs(iso);
-      if (ms === null) return undefined;
-      const d = new Date(ms);
-      if (timeFilter === "Today") return `h${d.getHours()}`;
-      if (timeFilter === "This Year")
-        return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
-      return localDateStr(d);
-    };
-    // Resolve a date-only field (YYYY-MM-DD) to the right bucket key.
-    const keyForDateOnly = (s: string): string | undefined => {
-      if (timeFilter === "Today") return `h${now.getHours()}`;
-      if (timeFilter === "This Year") return s.slice(0, 7);
-      return s;
-    };
-
-    // 1) Actions — real activity logs (every service logs its user actions),
-    //    minus the events that have a dedicated series below.
-    activityLogs.forEach((log) => {
-      const a = (log.action || "").toLowerCase();
-      if (DUP_LOG_MARKERS.some((marker) => a.includes(marker))) return;
-      const key = keyForIso(log.created_at);
-      if (key) add(key, "actions");
-    });
-    // Task completions are not written to activity_logs — count them from the
-    // todos collection (updated_at is the completion timestamp).
-    todos.forEach((t) => {
-      if (!t.completed) return;
-      const key = keyForIso(t.updated_at);
-      if (key) add(key, "actions");
-    });
-    // Appointment completions are not written to activity_logs either.
-    appointments.forEach((a) => {
-      if (a.status !== "completed") return;
-      const key = keyForIso(a.updated_at);
-      if (key) add(key, "actions");
-    });
-
-    // 2) Doses — real medication-taken logs.
-    medicationLogs.forEach((log) => {
-      const key = keyForIso(log.created_at);
-      if (key) add(key, "doses");
-    });
-
-    // 3) Payments — real bill payments.
-    payments.forEach((p) => {
-      const key = keyForIso(p.payment_date);
-      if (key) add(key, "payments");
-    });
-
-    // 4) Fitness — completed workouts + finished walks.
-    // Prefer the exact ISO timestamps so the "Today" view buckets events
-    // into the hour they actually happened (date-only fields fall back to
-    // the current hour in the Today view).
-    workouts.forEach((w) => {
-      if (w.status !== "completed") return;
-      const key = keyForIso(w.scheduled_at) ?? keyForDateOnly(w.scheduled_date);
-      if (key) add(key, "fitness");
-    });
-    walkSessions.forEach((w) => {
-      if (w.status !== "finished") return;
-      const walkDay =
-        w.day || (w.started_at ? w.started_at.slice(0, 10) : w.created_at ? w.created_at.slice(0, 10) : "");
-      const key = keyForIso(w.started_at) ?? keyForDateOnly(walkDay);
-      if (key) add(key, "fitness");
-    });
-
-    // 5) Glasses — daily water intake.
-    waterLogs.forEach((l) => {
-      const key = keyForIso(l.updated_at ?? l.created_at) ?? keyForDateOnly(l.day);
-      if (key) add(key, "glasses", l.glasses || 0);
-    });
-
-    return Array.from(map.values());
-  }, [
-    activityLogs,
-    medicationLogs,
-    payments,
-    todos,
-    appointments,
-    workouts,
-    walkSessions,
-    waterLogs,
-    timeFilter,
-  ]);
-
-  // ──── Period stats — every number below is computed from the database ────
-  const stats = useMemo(() => {
-    const startMs = periodStart(timeFilter).getTime();
-    const nowMs = Date.now();
-    const inRange = (ms: number | null) => ms !== null && ms >= startMs && ms <= nowMs;
-    const inRangeDateOnly = (s?: string | null) => !!s && inRange(parseDateOnly(s).getTime());
-
-    const doses = medicationLogs.filter((l) => inRange(isoMs(l.created_at)));
-    const pays = payments.filter((p) => inRange(isoMs(p.payment_date)));
-    const apps = appointments.filter((a) => inRangeDateOnly(a.appointment_date));
-    const tasksDone = todos.filter((t) => t.completed && inRange(isoMs(t.updated_at)));
-    const workoutsDone = workouts.filter(
-      (w) => w.status === "completed" && inRangeDateOnly(w.scheduled_date),
-    );
-    const walksDone = walkSessions.filter((w) => {
-      const walkDay =
-        w.day || (w.started_at ? w.started_at.slice(0, 10) : w.created_at ? w.created_at.slice(0, 10) : "");
-      return w.status === "finished" && inRangeDateOnly(walkDay);
-    });
-    const waterDays = waterLogs.filter((l) => inRangeDateOnly(l.day));
-
-    const elapsedDays = Math.max(1, Math.floor((nowMs - startMs) / 86_400_000) + 1);
-
-    const takenMeds = medications.filter((m) => m.taken).length;
-    const completedTodos = todos.filter((t) => t.completed).length;
-    const paidBills = bills.filter((b) => b.status === "paid").length;
-
-    return {
-      dosesTaken: doses.length,
-      adherencePct: medications.length > 0 ? Math.round((takenMeds / medications.length) * 100) : 0,
-      takenMeds,
-      totalMeds: medications.length,
-      paymentsCount: pays.length,
-      paymentsTotal: pays.reduce((s, p) => s + (p.amount || 0), 0),
-      paidBills,
-      totalBills: bills.length,
-      sessionsTotal: apps.length,
-      sessionsCompleted: apps.filter((a) => a.status === "completed").length,
-      tasksDoneInPeriod: tasksDone.length,
-      tasksDone: completedTodos,
-      tasksTotal: todos.length,
-      taskPct: todos.length > 0 ? Math.round((completedTodos / todos.length) * 100) : 0,
-      workoutsDone: workoutsDone.length,
-      walksDone: walksDone.length,
-      walkKm: walksDone.reduce((s, w) => s + (w.distance || 0), 0) / 1000,
-      walkSteps: walksDone.reduce((s, w) => s + (w.steps || 0), 0),
-      waterGlasses: waterDays.reduce((s, l) => s + (l.glasses || 0), 0),
-      // Unique user events in the period: all real activity logs + the two
-      // action types that are not written to activity_logs (task completions
-      // and appointment completions).
-      // Chart "Actions" series + total events are derived from chartData
-      // (chartTotals memo) so the summary banner always matches the chart.
-      elapsedDays,
-    };
-  }, [
-    medicationLogs,
-    payments,
-    appointments,
-    todos,
-    workouts,
-    walkSessions,
-    waterLogs,
-    medications,
-    bills,
-    timeFilter,
-  ]);
-
-  // ──── Chart series totals — the source of truth for the summary banner.
-  // Derived from chartData so "Total Events" and the breakdown ALWAYS sum
-  // to exactly what the Activity Timeline chart shows.
-  const chartTotals = useMemo(() => {
-    const t = { actions: 0, doses: 0, payments: 0, fitness: 0, glasses: 0, total: 0 };
-    for (const b of chartData) {
-      t.actions += b.actions;
-      t.doses += b.doses;
-      t.payments += b.payments;
-      t.fitness += b.fitness;
-      t.glasses += b.glasses;
-      t.total += b.total;
+    if (timeFilter === "This Month") {
+      return new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999).getTime();
     }
-    return t;
-  }, [chartData]);
+    return new Date(now.getFullYear(), 11, 31, 23, 59, 59, 999).getTime();
+  }, [timeFilter]);
 
-  // ──── Workout weekly goal — training days vs completed sessions in the
-  // current Sun→Sat week, driven by the active program's weekly plan (same
-  // logic as the Workouts page). ────
-  const workoutWeek = useMemo(() => {
-    const activeProgram = workoutPrograms.find((p) => p.is_active) || workoutPrograms[0] || null;
-    const now = new Date();
-    const weekStart = new Date(now);
-    weekStart.setDate(now.getDate() - now.getDay());
-    const weekDates: string[] = [];
-    for (let i = 0; i < 7; i++) {
-      const d = new Date(weekStart);
-      d.setDate(weekStart.getDate() + i);
-      weekDates.push(localDateStr(d));
-    }
-    let goal = 0;
-    let done = 0;
-    if (activeProgram) {
-      for (let i = 0; i < 7; i++) {
-        if (!isTrainingDay(activeProgram, DAY_KEYS[i])) continue;
-        goal += 1;
-        const completed = workouts.some(
-          (w) =>
-            w.program_id === activeProgram.id &&
-            w.scheduled_date === weekDates[i] &&
-            w.status === "completed",
-        );
-        if (completed) done += 1;
-      }
-    }
-    return { goal, done, hasProgram: !!activeProgram };
-  }, [workouts, workoutPrograms]);
-
-  // ──── Water streak (consecutive goal-reached days, from water_logs) ────
   const waterStreak = useMemo(() => {
-    const byDay = new Map(waterLogs.map((l) => [l.day, l]));
+    const now = new Date();
     let streak = 0;
-    const cursor = new Date();
-    const todayLog = byDay.get(localDateStr(cursor));
-    if (!todayLog || !todayLog.goal_reached) cursor.setDate(cursor.getDate() - 1);
-    for (;;) {
-      const log = byDay.get(localDateStr(cursor));
-      if (log && log.goal_reached) {
-        streak += 1;
-        cursor.setDate(cursor.getDate() - 1);
-      } else {
+    const logMap = new Map<string, number>();
+    (waterLogs || []).forEach((l) => {
+      const dStr = l?.day || (l as any)?.date;
+      if (dStr) {
+        logMap.set(dStr, (logMap.get(dStr) || 0) + (l.glasses || 0));
+      }
+    });
+    for (let i = 0; i < 365; i++) {
+      const d = new Date(now);
+      d.setDate(d.getDate() - i);
+      const dateStr = localDateStr(d);
+      const glasses = logMap.get(dateStr) || 0;
+      if (glasses >= 8) {
+        streak++;
+      } else if (i > 0) {
         break;
       }
     }
     return streak;
   }, [waterLogs]);
 
+  const stats = useMemo(() => {
+    const now = new Date();
+    const safeMeds = medications || [];
+    const safeMedLogs = medicationLogs || [];
+    const safeBills = bills || [];
+    const safePayments = payments || [];
+    const safeAppointments = appointments || [];
+    const safeTodos = todos || [];
+    const safeWorkouts = workouts || [];
+    const safeWalks = walkSessions || [];
+    const safeWaterLogs = waterLogs || [];
+
+    const takenMeds = safeMeds.filter((m) => m?.taken).length;
+    const adherencePct =
+      safeMeds.length > 0 ? Math.round((takenMeds / safeMeds.length) * 100) : 0;
+
+    const dosesTaken = safeMedLogs.filter((l) => {
+      const t = isoMs(l?.logged_at);
+      return t !== null && t >= startMs && t <= endMs && l?.taken;
+    }).length;
+
+    const paidBills = safeBills.filter((b) => b?.status === "paid").length;
+    const periodPayments = safePayments.filter((p) => {
+      const t = isoMs(p?.paid_at);
+      return t !== null && t >= startMs && t <= endMs;
+    });
+    const paymentsCount = periodPayments.length;
+    const paymentsTotal = periodPayments.reduce((sum, p) => sum + (p?.amount || 0), 0);
+
+    const sessionsCompleted = safeAppointments.filter((a) => a?.status === "completed").length;
+
+    const tasksDoneInPeriod = safeTodos.filter((t) => {
+      if (!t?.completed) return false;
+      const ts = isoMs(t.updated_at) ?? isoMs(t.created_at);
+      return ts !== null && ts >= startMs && ts <= endMs;
+    }).length;
+    const tasksDone = safeTodos.filter((t) => t?.completed).length;
+    const tasksTotal = safeTodos.length;
+    const taskPct = tasksTotal > 0 ? Math.round((tasksDone / tasksTotal) * 100) : 0;
+
+    const workoutsDone = safeWorkouts.filter((w) => {
+      const isCompleted = w?.status === "completed" || (w as any)?.completed;
+      if (!isCompleted) return false;
+      const d = w?.scheduled_date || (w as any)?.date || w?.scheduled_at?.slice(0, 10);
+      if (!d) return false;
+      const t = parseDateOnly(d).getTime();
+      return t >= startMs && t <= endMs;
+    }).length;
+
+    const periodWalks = safeWalks.filter((s) => {
+      const isFinished = s?.status === "finished" || (!s?.status && (s as any)?.completed);
+      if (!isFinished) return false;
+      const d = s?.day || (s as any)?.date || s?.started_at?.slice(0, 10);
+      if (!d) return false;
+      const t = parseDateOnly(d).getTime();
+      return t >= startMs && t <= endMs;
+    });
+    const walkKm = periodWalks.reduce((sum, s) => sum + (s?.distance || (s as any)?.distance_meters || 0), 0) / 1000;
+    const walkSteps = periodWalks.reduce((sum, s) => sum + (s?.steps || (s as any)?.step_count || 0), 0);
+    const walksDone = periodWalks.length;
+
+    const waterGlasses = safeWaterLogs
+      .filter((l) => {
+        const d = l?.day || (l as any)?.date;
+        if (!d) return false;
+        const t = parseDateOnly(d).getTime();
+        return t >= startMs && t <= endMs;
+      })
+      .reduce((sum, l) => sum + (l?.glasses || 0), 0);
+
+    const elapsedDays = Math.max(1, Math.ceil((now.getTime() - startMs) / 86400000));
+
+    return {
+      adherencePct,
+      takenMeds,
+      totalMeds: safeMeds.length,
+      dosesTaken,
+      paidBills,
+      totalBills: safeBills.length,
+      paymentsCount,
+      paymentsTotal,
+      sessionsCompleted,
+      sessionsTotal: safeAppointments.length,
+      tasksDoneInPeriod,
+      tasksDone,
+      tasksTotal,
+      taskPct,
+      workoutsDone,
+      walkKm,
+      walkSteps,
+      walksDone,
+      waterGlasses,
+      elapsedDays,
+    };
+  }, [
+    medications,
+    medicationLogs,
+    bills,
+    payments,
+    appointments,
+    todos,
+    workouts,
+    walkSessions,
+    waterLogs,
+    startMs,
+    endMs,
+    timeFilter,
+  ]);
+
+  const overallScore = useMemo(() => {
+    let components = 0;
+    let scoreSum = 0;
+
+    if (stats.totalMeds > 0) {
+      components++;
+      scoreSum += stats.adherencePct;
+    }
+    if (stats.tasksTotal > 0) {
+      components++;
+      scoreSum += stats.taskPct;
+    }
+    if (stats.workoutsDone > 0 || stats.walksDone > 0) {
+      components++;
+      scoreSum += Math.min(100, (stats.workoutsDone + stats.walksDone) * 25);
+    }
+    if (stats.waterGlasses > 0) {
+      components++;
+      scoreSum += Math.min(100, Math.round((stats.waterGlasses / (stats.elapsedDays * 8)) * 100));
+    }
+
+    if (components === 0) return 0;
+    return Math.round(scoreSum / components);
+  }, [stats]);
+
+  const chartData = useMemo(() => {
+    const now = new Date();
+    let buckets: Bucket[] = [];
+
+    if (timeFilter === "Today") {
+      buckets = [
+        emptyBucket("0", "6a-12p"),
+        emptyBucket("1", "12p-6p"),
+        emptyBucket("2", "6p-12a"),
+        emptyBucket("3", "12a-6a"),
+      ];
+    } else if (timeFilter === "This Week") {
+      const s = periodStart("This Week");
+      buckets = Array.from({ length: 7 }, (_, i) => {
+        const d = new Date(s);
+        d.setDate(s.getDate() + i);
+        return emptyBucket(localDateStr(d), shortLabel(d));
+      });
+    } else if (timeFilter === "This Month") {
+      const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+      buckets = Array.from({ length: daysInMonth }, (_, i) => {
+        const d = new Date(now.getFullYear(), now.getMonth(), i + 1);
+        return emptyBucket(localDateStr(d), String(i + 1));
+      });
+    } else {
+      buckets = Array.from({ length: 12 }, (_, i) => {
+        return emptyBucket(String(i), MONTHS[i]);
+      });
+    }
+
+    const bucketIndex = (ts: number): number => {
+      const d = new Date(ts);
+      if (timeFilter === "Today") {
+        const h = d.getHours();
+        if (h >= 6 && h < 12) return 0;
+        if (h >= 12 && h < 18) return 1;
+        if (h >= 18) return 2;
+        return 3;
+      }
+      if (timeFilter === "This Week") {
+        const s = periodStart("This Week");
+        return Math.min(
+          6,
+          Math.max(
+            0,
+            Math.floor(
+              (new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime() -
+                new Date(s.getFullYear(), s.getMonth(), s.getDate()).getTime()) /
+                86400000,
+            ),
+          ),
+        );
+      }
+      if (timeFilter === "This Month") {
+        return Math.min(buckets.length - 1, Math.max(0, d.getDate() - 1));
+      }
+      return Math.min(11, Math.max(0, d.getMonth()));
+    };
+
+    const addEvent = (ts: number, field: CountField, amount = 1) => {
+      if (ts < startMs || ts > endMs) return;
+      const idx = bucketIndex(ts);
+      if (idx >= 0 && idx < buckets.length) {
+        buckets[idx][field] += amount;
+        buckets[idx].total += amount;
+      }
+    };
+
+    (activityLogs || []).forEach((l) => {
+      const act = (l?.action || "").toLowerCase();
+      if (DUP_LOG_MARKERS.some((m) => act.includes(m))) return;
+      const t = isoMs(l?.created_at);
+      if (t !== null) addEvent(t, "actions");
+    });
+
+    (medicationLogs || []).forEach((l) => {
+      if (!l?.taken) return;
+      const t = isoMs(l.logged_at);
+      if (t !== null) addEvent(t, "doses");
+    });
+
+    (payments || []).forEach((p) => {
+      const t = isoMs(p?.paid_at);
+      if (t !== null) addEvent(t, "payments");
+    });
+
+    (workouts || []).forEach((w) => {
+      const isCompleted = w?.status === "completed" || (w as any)?.completed;
+      if (!isCompleted) return;
+      const d = w?.scheduled_date || (w as any)?.date || w?.scheduled_at?.slice(0, 10);
+      if (!d) return;
+      const t = parseDateOnly(d).getTime();
+      addEvent(t, "fitness");
+    });
+
+    (walkSessions || []).forEach((s) => {
+      const isFinished = s?.status === "finished" || (!s?.status && (s as any)?.completed);
+      if (!isFinished) return;
+      const d = s?.day || (s as any)?.date || s?.started_at?.slice(0, 10);
+      if (!d) return;
+      const t = parseDateOnly(d).getTime();
+      addEvent(t, "fitness");
+    });
+
+    (waterLogs || []).forEach((l) => {
+      const d = l?.day || (l as any)?.date;
+      if (!d) return;
+      const t = parseDateOnly(d).getTime();
+      addEvent(t, "glasses", l.glasses || 0);
+    });
+
+    return buckets;
+  }, [timeFilter, startMs, endMs, activityLogs, medicationLogs, payments, workouts, walkSessions, waterLogs]);
+
+  const chartTotals = useMemo(() => {
+    return chartData.reduce(
+      (acc, b) => ({
+        total: acc.total + b.total,
+        actions: acc.actions + b.actions,
+        doses: acc.doses + b.doses,
+        payments: acc.payments + b.payments,
+        fitness: acc.fitness + b.fitness,
+        glasses: acc.glasses + b.glasses,
+      }),
+      { total: 0, actions: 0, doses: 0, payments: 0, fitness: 0, glasses: 0 },
+    );
+  }, [chartData]);
+
   const hasAnyData =
-    activityLogs.length > 0 ||
-    medicationLogs.length > 0 ||
-    payments.length > 0 ||
-    appointments.length > 0 ||
     todos.length > 0 ||
     workouts.length > 0 ||
     walkSessions.length > 0 ||
@@ -453,7 +442,7 @@ function AnalyticsPage() {
     medications.length > 0 ||
     bills.length > 0;
 
-  if (authLoading || !initialized) {
+  if (authLoading) {
     return (
       <Screen>
         <DashboardSkeleton />
@@ -461,239 +450,303 @@ function AnalyticsPage() {
     );
   }
 
-  const filterOptions: TimeFilter[] = FILTERS;
-
   return (
     <Screen>
-      <ScreenHeader
-        title="Progress"
-        showBack
-        action={
-          <div className="relative inline-block">
+      <ScreenHeader title="Progress" subtitle="Comprehensive health & habit analytics" showBack />
+
+      {/* ════════════════════════════════════════════════════════════
+          SPRING-ANIMATED TIME RANGE SELECTOR BAR
+          ════════════════════════════════════════════════════════════ */}
+      <div className="flex items-center justify-between gap-1 rounded-2xl bg-white p-1.5 border border-border/60 shadow-2xs">
+        {FILTERS.map((f) => {
+          const active = timeFilter === f;
+          return (
             <button
-              onClick={() => setFilterOpen(!filterOpen)}
-              className="tap flex items-center gap-1 rounded-full bg-white px-3 py-1.5 text-xs font-bold text-[#12131A] shadow-xs border border-black/5"
+              key={f}
+              onClick={() => {
+                sounds.playNavClick();
+                setTimeFilter(f);
+              }}
+              className={cn(
+                "tap relative flex-1 py-1.5 px-2 rounded-xl text-xs font-extrabold text-center transition-colors",
+                active ? "text-[#12131A]" : "text-muted-foreground hover:text-foreground",
+              )}
             >
-              {timeFilter}{" "}
-              <ChevronDown
-                className={`size-3.5 opacity-60 transition-transform ${filterOpen ? "rotate-180" : ""}`}
-              />
+              {active && (
+                <motion.div
+                  layoutId="activeFilterPill"
+                  className="absolute inset-0 rounded-xl bg-slate-100 shadow-2xs"
+                  transition={{ type: "spring", stiffness: 400, damping: 32 }}
+                />
+              )}
+              <span className="relative z-10">{f}</span>
             </button>
+          );
+        })}
+      </div>
 
-            {filterOpen && (
-              <div className="absolute right-0 top-full mt-1 z-20 w-40 rounded-2xl bg-white shadow-lg border border-black/5 py-1 animate-in fade-in slide-in-from-top-1 duration-150">
-                {filterOptions.map((opt) => (
-                  <button
-                    key={opt}
-                    onClick={() => {
-                      setTimeFilter(opt);
-                      setFilterOpen(false);
-                    }}
-                    className={`w-full px-4 py-2.5 text-left text-xs font-bold transition-colors ${
-                      timeFilter === opt
-                        ? "bg-[#E8E2FF] text-[#7C5CFC]"
-                        : "text-[#12131A] hover:bg-black/[0.03]"
-                    }`}
-                  >
-                    {opt}
-                    {timeFilter === opt && <Check className="inline size-3.5 ml-1.5" />}
-                  </button>
-                ))}
-              </div>
-            )}
+      {/* ════════════════════════════════════════════════════════════
+          OVERALL HEALTH & ACTIVITY SCORE HERO
+          ════════════════════════════════════════════════════════════ */}
+      <motion.div
+        initial={{ opacity: 0, y: 6 }}
+        animate={{ opacity: 1, y: 0 }}
+        className="card-soft mt-4 bg-gradient-to-br from-[#EAE6FF] via-[#F4F1FF] to-[#FAF8FF] p-4 sm:p-5 border border-[#7C5CFC]/20 shadow-xs"
+      >
+        <div className="flex items-center justify-between">
+          <div>
+            <span className="inline-flex items-center gap-1 rounded-full bg-white/90 px-2.5 py-0.5 text-[10px] font-black text-[#7C5CFC] shadow-2xs">
+              <Activity className="size-3" /> Health & Routine Score
+            </span>
+            <div className="mt-2 flex items-baseline gap-2">
+              <span className="text-3xl sm:text-4xl font-black text-[#12131A] tracking-tight">
+                {overallScore > 0 ? `${overallScore}%` : "—"}
+              </span>
+              <span className="text-xs font-bold text-emerald-600">
+                {overallScore >= 80 ? "✨ Optimum" : overallScore >= 50 ? "⚡ Good" : "🌱 Building"}
+              </span>
+            </div>
+            <p className="mt-1 text-xs font-medium text-muted-foreground">
+              {chartTotals.total} recorded events in {timeFilter.toLowerCase()}
+            </p>
           </div>
-        }
-      />
 
-      {/* Global empty state — the user has never used any service */}
+          <div className="flex size-14 items-center justify-center rounded-2xl bg-[#12131A] text-white shadow-md">
+            <Flame className="size-7 text-[#FFC593]" />
+          </div>
+        </div>
+
+        {/* Breakdown Progress Bars */}
+        <div className="mt-4 pt-3 border-t border-[#7C5CFC]/15 grid grid-cols-3 gap-2 text-center">
+          <div>
+            <span className="text-[10px] font-bold text-muted-foreground uppercase">Doses</span>
+            <p className="text-sm font-black text-[#12131A]">{stats.adherencePct}%</p>
+          </div>
+          <div>
+            <span className="text-[10px] font-bold text-muted-foreground uppercase">Tasks</span>
+            <p className="text-sm font-black text-[#12131A]">{stats.taskPct}%</p>
+          </div>
+          <div>
+            <span className="text-[10px] font-bold text-muted-foreground uppercase">Fitness</span>
+            <p className="text-sm font-black text-[#12131A]">
+              {stats.workoutsDone + stats.walksDone} ses
+            </p>
+          </div>
+        </div>
+      </motion.div>
+
+      {/* Global Empty State */}
       {!hasAnyData && (
-        <div className="mt-3 card-soft bg-[#F9F9FD] border border-dashed border-slate-200/60 p-6 text-center">
+        <div className="mt-3 card-soft bg-white border border-dashed border-border p-6 text-center shadow-2xs">
           <TrendingUp className="mx-auto size-10 text-[#7C5CFC]/40" />
-          <p className="mt-2 text-sm font-extrabold text-[#12131A]">No data yet</p>
-          <p className="mt-1 text-xs text-[#6B7280] max-w-xs mx-auto">
-            Everything on this page is computed from your real data. Add medications, bills,
-            appointments, tasks, workouts, walks or water and it will appear here instantly.
+          <p className="mt-2 text-sm font-extrabold text-[#12131A]">No analytics recorded</p>
+          <p className="mt-1 text-xs text-muted-foreground max-w-xs mx-auto leading-relaxed">
+            Actions from medications, water, appointments, tasks, workouts, and bills will calculate here in real time.
           </p>
         </div>
       )}
 
-      {/* Stat Cards — every number is derived from the database, filtered by the period */}
-      <div className="mt-3 grid grid-cols-2 gap-3">
-        {/* Activities — same event count as the chart's stacked total */}
-        <div className="card-soft bg-white p-4 border border-black/5 shadow-xs">
-          <span className="text-xs font-bold text-[#6B7280]">Activities</span>
-          <p className="mt-2 text-2xl font-black text-[#12131A]">
-            {chartTotals.total > 0 ? chartTotals.total : "—"}
-          </p>
-          <p className="mt-0.5 text-xs font-medium text-[#6B7280]">
-            {chartTotals.total > 0
-              ? `~${(chartTotals.total / stats.elapsedDays).toFixed(1)} / day avg`
-              : "No activity recorded"}
-          </p>
-        </div>
-
-        {/* Doses & Health Adherence */}
-        <div className="card-soft bg-white p-4 border border-black/5 shadow-xs">
-          <span className="text-xs font-bold text-[#6B7280]">Doses Taken</span>
-          <p className="mt-2 text-2xl font-black text-[#12131A]">
-            {stats.dosesTaken > 0 ? stats.dosesTaken : "—"}
-          </p>
-          <p className="mt-0.5 text-xs font-medium text-[#6B7280]">
-            {stats.totalMeds > 0
-              ? `${stats.adherencePct}% of meds taken · ${stats.takenMeds}/${stats.totalMeds}`
-              : "No medications tracked"}
-          </p>
-          {stats.totalMeds > 0 && (
-            <div className="mt-2.5 h-2 w-full rounded-full bg-black/5 overflow-hidden">
-              <div
-                className="h-full bg-[#34D399] rounded-full transition-all"
-                style={{ width: `${stats.adherencePct}%` }}
-              />
+      {/* ════════════════════════════════════════════════════════════
+          CATEGORY STAT CARDS GRID WITH DIRECT NAVIGATION LINKS
+          ════════════════════════════════════════════════════════════ */}
+      <div className="mt-4 grid grid-cols-2 gap-3">
+        {/* Doses Taken */}
+        <Link
+          to="/medications"
+          onClick={() => sounds.playCardClick()}
+          className="card-soft tap group bg-white p-3.5 border border-border/60 shadow-2xs hover:shadow-md transition-all flex flex-col justify-between"
+        >
+          <div>
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold text-muted-foreground">Medications</span>
+              <Pill className="size-4 text-pink-500" />
             </div>
-          )}
-        </div>
-
-        {/* Bills Paid */}
-        <div className="card-soft bg-[#FFC593] p-4 text-[#12131A] shadow-xs">
-          <span className="text-xs font-bold opacity-80">Bills Paid</span>
-          <p className="mt-2 text-2xl font-black">
-            {stats.paymentsCount > 0 ? stats.paymentsCount : "—"}
-          </p>
-          <p className="mt-0.5 text-xs font-medium opacity-80">
-            {stats.paymentsTotal > 0
-              ? `$${stats.paymentsTotal.toFixed(2)} paid in ${timeFilter}`
-              : "No payments in this period"}
-          </p>
-          {stats.totalBills > 0 && (
-            <div className="mt-2.5 h-2 w-full rounded-full bg-black/10 overflow-hidden">
-              <div
-                className="h-full bg-[#12131A] rounded-full transition-all"
-                style={{ width: `${Math.round((stats.paidBills / stats.totalBills) * 100)}%` }}
-              />
+            <p className="mt-2 text-2xl font-black text-[#12131A] group-hover:text-pink-600 transition-colors">
+              {stats.dosesTaken > 0 ? stats.dosesTaken : "—"}
+            </p>
+            <p className="mt-0.5 text-[11px] font-medium text-muted-foreground">
+              {stats.totalMeds > 0 ? `${stats.adherencePct}% adherence` : "No active meds"}
+            </p>
+          </div>
+          <div className="mt-2.5">
+            {stats.totalMeds > 0 && (
+              <div className="h-1.5 w-full rounded-full bg-slate-100 overflow-hidden mb-1.5">
+                <div
+                  className="h-full bg-emerald-500 rounded-full"
+                  style={{ width: `${stats.adherencePct}%` }}
+                />
+              </div>
+            )}
+            <div className="flex items-center justify-between text-[10px] font-bold text-muted-foreground">
+              <span>View Meds</span>
+              <ChevronRight className="size-3 text-pink-500 group-hover:translate-x-0.5 transition-transform" />
             </div>
-          )}
-        </div>
-
-        {/* Sessions & Goals */}
-        <div className="card-soft bg-white p-4 border border-black/5 shadow-xs">
-          <span className="text-xs font-bold text-[#6B7280]">Sessions</span>
-          <p className="mt-2 text-2xl font-black text-[#12131A]">
-            {stats.sessionsTotal > 0 ? stats.sessionsTotal : "—"}
-          </p>
-          <p className="mt-0.5 text-xs font-medium text-[#6B7280]">
-            {stats.sessionsTotal > 0 ? `${stats.sessionsCompleted} completed` : "No appointments"}
-          </p>
-          <div className="mt-2.5 h-2 w-full rounded-full bg-black/5 overflow-hidden">
-            <div
-              className="h-full bg-[#7C5CFC] rounded-full transition-all"
-              style={{
-                width: `${
-                  stats.sessionsTotal > 0
-                    ? Math.round((stats.sessionsCompleted / stats.sessionsTotal) * 100)
-                    : 0
-                }%`,
-              }}
-            />
           </div>
-        </div>
+        </Link>
 
-        {/* Tasks */}
-        <div className="card-soft bg-white p-4 border border-black/5 shadow-xs">
-          <span className="text-xs font-bold text-[#6B7280]">Tasks Done</span>
-          <p className="mt-2 text-2xl font-black text-[#12131A]">
-            {stats.tasksDoneInPeriod > 0 ? stats.tasksDoneInPeriod : "—"}
-          </p>
-          <p className="mt-0.5 text-xs font-medium text-[#6B7280]">
-            {stats.tasksTotal > 0
-              ? `${stats.tasksDone}/${stats.tasksTotal} complete (${stats.taskPct}%)`
-              : "No tasks yet"}
-          </p>
-          <div className="mt-2.5 h-2 w-full rounded-full bg-black/5 overflow-hidden">
-            <div
-              className="h-full bg-[#F59E0B] rounded-full transition-all"
-              style={{ width: `${stats.taskPct}%` }}
-            />
+        {/* Hydration */}
+        <Link
+          to="/medications"
+          onClick={() => sounds.playCardClick()}
+          className="card-soft tap group bg-white p-3.5 border border-border/60 shadow-2xs hover:shadow-md transition-all flex flex-col justify-between"
+        >
+          <div>
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold text-muted-foreground">Hydration</span>
+              <Droplets className="size-4 text-sky-500" />
+            </div>
+            <p className="mt-2 text-2xl font-black text-[#12131A] group-hover:text-sky-600 transition-colors">
+              {stats.waterGlasses > 0 ? `${stats.waterGlasses} gl` : "—"}
+            </p>
+            <p className="mt-0.5 text-[11px] font-medium text-muted-foreground">
+              {waterStreak > 0 ? `${waterStreak}d goal streak 🔥` : "Hydration logs"}
+            </p>
           </div>
-        </div>
-
-        {/* Workouts */}
-        <div className="card-soft bg-white p-4 border border-black/5 shadow-xs">
-          <span className="text-xs font-bold text-[#6B7280]">Workouts</span>
-          <p className="mt-2 text-2xl font-black text-[#12131A]">
-            {stats.workoutsDone > 0 ? stats.workoutsDone : "—"}
-          </p>
-          <p className="mt-0.5 text-xs font-medium text-[#6B7280]">
-            {workoutWeek.hasProgram && workoutWeek.goal > 0
-              ? `${workoutWeek.done} / ${workoutWeek.goal} weekly goal`
-              : stats.workoutsDone > 0
-                ? `${stats.workoutsDone} session${stats.workoutsDone === 1 ? "" : "s"} completed`
-                : "No completed workouts"}
-          </p>
-          {workoutWeek.hasProgram && workoutWeek.goal > 0 && (
-            <div className="mt-2.5 h-2 w-full rounded-full bg-black/5 overflow-hidden">
+          <div className="mt-2.5">
+            <div className="h-1.5 w-full rounded-full bg-slate-100 overflow-hidden mb-1.5">
               <div
-                className="h-full bg-[#60A5FA] rounded-full transition-all"
+                className="h-full bg-sky-500 rounded-full"
                 style={{
-                  width: `${Math.min(100, Math.round((workoutWeek.done / workoutWeek.goal) * 100))}%`,
+                  width: `${Math.min(100, (stats.waterGlasses / (stats.elapsedDays * 8)) * 100)}%`,
                 }}
               />
             </div>
-          )}
-        </div>
+            <div className="flex items-center justify-between text-[10px] font-bold text-muted-foreground">
+              <span>Log Water</span>
+              <ChevronRight className="size-3 text-sky-500 group-hover:translate-x-0.5 transition-transform" />
+            </div>
+          </div>
+        </Link>
 
-        {/* Walking */}
-        <div className="card-soft bg-white p-4 border border-black/5 shadow-xs">
-          <span className="text-xs font-bold text-[#6B7280]">Walking</span>
-          <p className="mt-2 text-2xl font-black text-[#12131A]">
-            {stats.walkKm > 0 ? `${stats.walkKm.toFixed(2)} km` : "—"}
-          </p>
-          <p className="mt-0.5 text-xs font-medium text-[#6B7280]">
-            {stats.walkSteps > 0
-              ? `${stats.walkSteps.toLocaleString()} steps · ${stats.walksDone} walk${
-                  stats.walksDone === 1 ? "" : "s"
-                }`
-              : "No finished walks"}
-          </p>
-        </div>
+        {/* Workouts & Walking */}
+        <Link
+          to="/walk"
+          onClick={() => sounds.playCardClick()}
+          className="card-soft tap group bg-white p-3.5 border border-border/60 shadow-2xs hover:shadow-md transition-all flex flex-col justify-between"
+        >
+          <div>
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold text-muted-foreground">Fitness & Walk</span>
+              <Dumbbell className="size-4 text-orange-500" />
+            </div>
+            <p className="mt-2 text-2xl font-black text-[#12131A] group-hover:text-orange-600 transition-colors">
+              {stats.walkKm > 0 ? `${stats.walkKm.toFixed(1)} km` : `${stats.workoutsDone} ses`}
+            </p>
+            <p className="mt-0.5 text-[11px] font-medium text-muted-foreground">
+              {stats.workoutsDone} workouts · {stats.walksDone} walks
+            </p>
+          </div>
+          <div className="mt-2.5 flex items-center justify-between text-[10px] font-bold text-muted-foreground">
+            <span>Open Map & Fitness</span>
+            <ChevronRight className="size-3 text-orange-500 group-hover:translate-x-0.5 transition-transform" />
+          </div>
+        </Link>
 
-        {/* Water */}
-        <div className="card-soft bg-white p-4 border border-black/5 shadow-xs">
-          <span className="text-xs font-bold text-[#6B7280]">Water</span>
-          <p className="mt-2 text-2xl font-black text-[#12131A]">
-            {stats.waterGlasses > 0 ? stats.waterGlasses : "—"}
-          </p>
-          <p className="mt-0.5 text-xs font-medium text-[#6B7280]">
-            {stats.waterGlasses > 0
-              ? waterStreak > 0
-                ? `${waterStreak}-day goal streak 🔥`
-                : `${stats.waterGlasses} glasses logged in ${timeFilter}`
-              : "No water logged in this period"}
-          </p>
-        </div>
+        {/* Tasks Completed */}
+        <Link
+          to="/tasks"
+          onClick={() => sounds.playCardClick()}
+          className="card-soft tap group bg-white p-3.5 border border-border/60 shadow-2xs hover:shadow-md transition-all flex flex-col justify-between"
+        >
+          <div>
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold text-muted-foreground">Tasks Done</span>
+              <ListChecks className="size-4 text-emerald-500" />
+            </div>
+            <p className="mt-2 text-2xl font-black text-[#12131A] group-hover:text-emerald-600 transition-colors">
+              {stats.tasksDoneInPeriod > 0 ? stats.tasksDoneInPeriod : "—"}
+            </p>
+            <p className="mt-0.5 text-[11px] font-medium text-muted-foreground">
+              {stats.tasksTotal > 0
+                ? `${stats.tasksDone}/${stats.tasksTotal} done (${stats.taskPct}%)`
+                : "No tasks"}
+            </p>
+          </div>
+          <div className="mt-2.5">
+            {stats.tasksTotal > 0 && (
+              <div className="h-1.5 w-full rounded-full bg-slate-100 overflow-hidden mb-1.5">
+                <div
+                  className="h-full bg-emerald-500 rounded-full"
+                  style={{ width: `${stats.taskPct}%` }}
+                />
+              </div>
+            )}
+            <div className="flex items-center justify-between text-[10px] font-bold text-muted-foreground">
+              <span>View Tasks</span>
+              <ChevronRight className="size-3 text-emerald-500 group-hover:translate-x-0.5 transition-transform" />
+            </div>
+          </div>
+        </Link>
+
+        {/* Bills & Payments */}
+        <Link
+          to="/bills"
+          onClick={() => sounds.playCardClick()}
+          className="card-soft tap group bg-gradient-to-br from-[#FFE0C7] to-[#FFD2AE] p-3.5 text-[#12131A] shadow-2xs border border-amber-300/20 hover:shadow-md transition-all flex flex-col justify-between"
+        >
+          <div>
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold text-amber-950/80">Bills Paid</span>
+              <Wallet className="size-4 text-amber-900" />
+            </div>
+            <p className="mt-2 text-2xl font-black text-[#12131A]">
+              {stats.paymentsCount > 0 ? `$${stats.paymentsTotal.toFixed(0)}` : "—"}
+            </p>
+            <p className="mt-0.5 text-[11px] font-semibold text-amber-900/80">
+              {stats.paymentsCount} paid in {timeFilter}
+            </p>
+          </div>
+          <div className="mt-2.5 flex items-center justify-between text-[10px] font-black text-amber-900/80">
+            <span>Manage Bills</span>
+            <ChevronRight className="size-3 text-amber-950 group-hover:translate-x-0.5 transition-transform" />
+          </div>
+        </Link>
+
+        {/* Appointments */}
+        <Link
+          to="/appointments"
+          onClick={() => sounds.playCardClick()}
+          className="card-soft tap group bg-white p-3.5 border border-border/60 shadow-2xs hover:shadow-md transition-all flex flex-col justify-between"
+        >
+          <div>
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold text-muted-foreground">Appointments</span>
+              <CalendarIcon className="size-4 text-purple-500" />
+            </div>
+            <p className="mt-2 text-2xl font-black text-[#12131A] group-hover:text-purple-600 transition-colors">
+              {stats.sessionsTotal > 0 ? stats.sessionsTotal : "—"}
+            </p>
+            <p className="mt-0.5 text-[11px] font-medium text-muted-foreground">
+              {stats.sessionsCompleted} completed
+            </p>
+          </div>
+          <div className="mt-2.5 flex items-center justify-between text-[10px] font-bold text-muted-foreground">
+            <span>Appointments</span>
+            <ChevronRight className="size-3 text-purple-500 group-hover:translate-x-0.5 transition-transform" />
+          </div>
+        </Link>
       </div>
 
-      {/* Activity Timeline — real events from every service, aggregated by date */}
-      <div className="mt-5 card-soft bg-white p-4 border border-black/5 shadow-xs">
+      {/* ════════════════════════════════════════════════════════════
+          ACTIVITY VOLUME CHART (AreaChart)
+          ════════════════════════════════════════════════════════════ */}
+      <div className="mt-4 card-soft bg-white p-4 border border-border/60 shadow-2xs">
         <div className="flex items-center justify-between mb-4">
           <h3 className="text-sm font-extrabold text-[#12131A] flex items-center gap-1.5">
-            <Activity className="size-4 text-[#7C5CFC]" /> Activity Timeline
+            <Activity className="size-4 text-[#7C5CFC]" /> Activity Breakdown
           </h3>
-          <span className="text-[10px] font-semibold text-[#6B7280] bg-[#F3F0FF] px-2 py-0.5 rounded-full">
+          <span className="text-[10px] font-bold text-muted-foreground bg-slate-100 px-2.5 py-0.5 rounded-full">
             {timeFilter}
           </span>
         </div>
 
-        <div className="h-56 w-full">
+        <div className="h-56 min-h-[224px] w-full relative">
           {chartData.every((d) => d.total === 0) ? (
-            <div className="flex h-full w-full items-center justify-center rounded-2xl bg-[#F9F9FD]">
-              <div className="text-center">
-                <TrendingUp className="mx-auto size-10 text-[#7C5CFC]/30" />
-                <p className="mt-2 text-xs font-bold text-[#6B7280]">
+            <div className="flex h-full w-full items-center justify-center rounded-2xl bg-slate-50">
+              <div className="text-center p-4">
+                <TrendingUp className="mx-auto size-8 text-muted-foreground/40" />
+                <p className="mt-2 text-xs font-bold text-muted-foreground">
                   No activity recorded for {timeFilter}
-                </p>
-                <p className="text-[10px] text-[#6B7280]/70">
-                  Actions from every service — medications, bills, appointments, tasks, workouts,
-                  walks and water — appear here automatically.
                 </p>
               </div>
             </div>
@@ -722,28 +775,27 @@ function AnalyticsPage() {
                     <stop offset="95%" stopColor="#22D3EE" stopOpacity={0.0} />
                   </linearGradient>
                 </defs>
-                <CartesianGrid strokeDasharray="3 3" stroke="#E5E7EB" vertical={false} />
+                <CartesianGrid strokeDasharray="3 3" stroke="#F1F5F9" vertical={false} />
                 <XAxis
                   dataKey="label"
-                  tick={{ fontSize: 10, fill: "#6B7280" }}
+                  tick={{ fontSize: 10, fill: "#64748B" }}
                   axisLine={false}
                   tickLine={false}
-                  interval="preserveStartEnd"
                 />
                 <YAxis
-                  tick={{ fontSize: 10, fill: "#6B7280" }}
+                  tick={{ fontSize: 10, fill: "#64748B" }}
                   axisLine={false}
                   tickLine={false}
                   allowDecimals={false}
                 />
                 <Tooltip
                   contentStyle={{
-                    backgroundColor: "#12131A",
-                    borderRadius: "14px",
+                    backgroundColor: "#0F172A",
+                    borderRadius: "16px",
                     color: "#fff",
                     fontSize: "11px",
                     border: "none",
-                    boxShadow: "0 10px 25px rgba(0,0,0,0.2)",
+                    boxShadow: "0 10px 25px rgba(0,0,0,0.25)",
                     padding: "10px 14px",
                   }}
                   itemStyle={{ color: "#fff", fontSize: "11px" }}
@@ -753,7 +805,7 @@ function AnalyticsPage() {
                   type="monotone"
                   stackId="1"
                   dataKey="actions"
-                  name="Actions"
+                  name="Tasks"
                   stroke="#7C5CFC"
                   strokeWidth={2}
                   fillOpacity={1}
@@ -773,7 +825,7 @@ function AnalyticsPage() {
                   type="monotone"
                   stackId="1"
                   dataKey="payments"
-                  name="Payments"
+                  name="Bills"
                   stroke="#FFC593"
                   strokeWidth={2}
                   fillOpacity={1}
@@ -783,7 +835,7 @@ function AnalyticsPage() {
                   type="monotone"
                   stackId="1"
                   dataKey="fitness"
-                  name="Fitness"
+                  name="Workouts"
                   stroke="#60A5FA"
                   strokeWidth={2}
                   fillOpacity={1}
@@ -793,7 +845,7 @@ function AnalyticsPage() {
                   type="monotone"
                   stackId="1"
                   dataKey="glasses"
-                  name="Glasses"
+                  name="Water"
                   stroke="#22D3EE"
                   strokeWidth={2}
                   fillOpacity={1}
@@ -804,63 +856,61 @@ function AnalyticsPage() {
           )}
         </div>
 
-        {/* Chart legend */}
-        <div className="mt-3 flex flex-wrap items-center justify-center gap-x-4 gap-y-1 text-[10px] font-bold text-[#6B7280]">
+        {/* Legend */}
+        <div className="mt-3 flex flex-wrap items-center justify-center gap-x-3.5 gap-y-1 text-[10.5px] font-bold text-muted-foreground">
           <span className="flex items-center gap-1">
-            <span className="inline-block size-2 rounded-full bg-[#7C5CFC]" /> Actions
+            <span className="inline-block size-2 rounded-full bg-[#7C5CFC]" /> Tasks
           </span>
           <span className="flex items-center gap-1">
             <span className="inline-block size-2 rounded-full bg-[#34D399]" /> Doses
           </span>
           <span className="flex items-center gap-1">
-            <span className="inline-block size-2 rounded-full bg-[#FFC593]" /> Payments
+            <span className="inline-block size-2 rounded-full bg-[#FFC593]" /> Bills
           </span>
           <span className="flex items-center gap-1">
             <span className="inline-block size-2 rounded-full bg-[#60A5FA]" /> Fitness
           </span>
           <span className="flex items-center gap-1">
-            <span className="inline-block size-2 rounded-full bg-[#22D3EE]" /> Glasses
+            <span className="inline-block size-2 rounded-full bg-[#22D3EE]" /> Water
           </span>
         </div>
       </div>
 
-      {/* Medication Doses Bar Chart — real medication log history */}
+      {/* Medication Doses Bar Chart */}
       {stats.dosesTaken > 0 && (
-        <div className="mt-4 card-soft bg-white p-4 border border-black/5 shadow-xs">
+        <div className="mt-4 card-soft bg-white p-4 border border-border/60 shadow-2xs">
           <div className="flex items-center justify-between mb-3">
             <h3 className="text-sm font-extrabold text-[#12131A] flex items-center gap-1.5">
-              💊 Medication Doses
+              💊 Dose Logging History
             </h3>
-            <span className="text-xs font-semibold text-[#6B7280]">{stats.dosesTaken} logged</span>
+            <span className="text-xs font-semibold text-muted-foreground">{stats.dosesTaken} logged</span>
           </div>
-          <div className="h-40 w-full">
+          <div className="h-40 min-h-[160px] w-full relative">
             <ResponsiveContainer width="100%" height="100%">
               <BarChart
                 data={chartData.filter((d) => d.doses > 0 || d.actions > 0)}
                 margin={{ top: 5, right: 5, left: -25, bottom: 0 }}
               >
-                <CartesianGrid strokeDasharray="3 3" stroke="#E5E7EB" vertical={false} />
+                <CartesianGrid strokeDasharray="3 3" stroke="#F1F5F9" vertical={false} />
                 <XAxis
                   dataKey="label"
-                  tick={{ fontSize: 10, fill: "#6B7280" }}
+                  tick={{ fontSize: 10, fill: "#64748B" }}
                   axisLine={false}
                   tickLine={false}
                 />
                 <YAxis
-                  tick={{ fontSize: 10, fill: "#6B7280" }}
+                  tick={{ fontSize: 10, fill: "#64748B" }}
                   axisLine={false}
                   tickLine={false}
                   allowDecimals={false}
                 />
                 <Tooltip
                   contentStyle={{
-                    backgroundColor: "#12131A",
+                    backgroundColor: "#0F172A",
                     borderRadius: "14px",
                     color: "#fff",
                     fontSize: "11px",
                     border: "none",
-                    boxShadow: "0 10px 25px rgba(0,0,0,0.2)",
-                    padding: "10px 14px",
                   }}
                 />
                 <Bar dataKey="doses" name="Doses Taken" fill="#34D399" radius={[6, 6, 0, 0]} />
@@ -869,23 +919,6 @@ function AnalyticsPage() {
           </div>
         </div>
       )}
-
-      {/* Summary Banner — all counts come from the database */}
-      <div className="mt-4 card-soft bg-[#E8E2FF] p-4 flex items-center justify-between text-[#12131A]">
-        <div>
-          <span className="text-xs font-extrabold uppercase tracking-wide opacity-80">
-            Total Events · {timeFilter}
-          </span>
-          <p className="mt-1 text-xl font-extrabold">{chartTotals.total} recorded</p>
-          <p className="text-xs text-[#12131A]/70">
-            {chartTotals.actions} actions · {chartTotals.doses} doses · {chartTotals.payments}{" "}
-            payments · {chartTotals.fitness} fitness · {chartTotals.glasses} glasses
-          </p>
-        </div>
-        <div className="flex size-12 items-center justify-center rounded-full bg-[#12131A] text-white">
-          <Flame className="size-6 text-[#FFC593]" />
-        </div>
-      </div>
     </Screen>
   );
 }

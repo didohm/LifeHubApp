@@ -325,28 +325,25 @@ public class WalkService extends Service implements LocationListener, SensorEven
         diagnostics = new WalkDiagnostics(this);
         diagnostics.info(WalkDiagnostics.CAT_LIFECYCLE, "WalkService created");
         
-        // Initialize connectivity monitor for network-aware provider switching
+        // Initialize connectivity monitor for network state diagnostics
         connectivityMonitor = new ConnectivityMonitor(this);
         connectivityMonitor.setListener(new ConnectivityMonitor.ConnectivityListener() {
             @Override
             public void onNetworkAvailable() {
-                Log.d(TAG, "Network restored, switching to fused location if appropriate");
+                Log.d(TAG, "Network restored");
                 if (diagnostics != null) {
-                    diagnostics.info(WalkDiagnostics.CAT_NETWORK, "Network available, considering provider switch");
+                    diagnostics.info(WalkDiagnostics.CAT_NETWORK, "Network available");
                 }
-                if (isTracking && !paused && "gps".equals(activeLocationProvider)) {
+                if (isTracking && !paused && "gps".equals(activeLocationProvider) && isFusedLocationAvailable()) {
                     switchToFusedLocationProvider();
                 }
             }
 
             @Override
             public void onNetworkLost() {
-                Log.d(TAG, "Network lost, switching to GPS-only mode");
+                Log.d(TAG, "Network lost (fused location provider continues on device GPS)");
                 if (diagnostics != null) {
-                    diagnostics.warn(WalkDiagnostics.CAT_NETWORK, "Network lost, switching to GPS-only");
-                }
-                if (isTracking && !paused && "fused".equals(activeLocationProvider)) {
-                    switchToGpsLocationProvider();
+                    diagnostics.warn(WalkDiagnostics.CAT_NETWORK, "Network lost (device GPS active)");
                 }
             }
         });
@@ -470,21 +467,23 @@ public class WalkService extends Service implements LocationListener, SensorEven
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
-        // P3.3: Service restart reliability guard - detect crash loops
-        long now = System.currentTimeMillis();
-        if (now - lastRestartTimeMs < 60_000L) {
-            serviceRestartCount++;
-            if (serviceRestartCount > MAX_RESTARTS_PER_MINUTE) {
-                Log.e(TAG, "Service restarting too frequently (" + serviceRestartCount + " times in 1 minute), stopping to prevent crash loop");
-                publishUpdate("service_crash_loop_detected");
-                stopForegroundTracking();
-                stopSelf();
-                return START_NOT_STICKY;
+        // P3.3: Service restart reliability guard - detect crash loops on system restarts (START_STICKY)
+        if (intent == null) {
+            long now = System.currentTimeMillis();
+            if (now - lastRestartTimeMs < 60_000L) {
+                serviceRestartCount++;
+                if (serviceRestartCount > MAX_RESTARTS_PER_MINUTE) {
+                    Log.e(TAG, "Service restarting too frequently (" + serviceRestartCount + " times in 1 minute), stopping to prevent crash loop");
+                    publishUpdate("service_crash_loop_detected");
+                    stopForegroundTracking();
+                    stopSelf();
+                    return START_NOT_STICKY;
+                }
+            } else {
+                serviceRestartCount = 1;
             }
-        } else {
-            serviceRestartCount = 1;
+            lastRestartTimeMs = now;
         }
-        lastRestartTimeMs = now;
         
         if (intent != null && intent.getAction() != null) {
             String action = intent.getAction();
@@ -612,13 +611,10 @@ public class WalkService extends Service implements LocationListener, SensorEven
                     persistSessionSnapshot();
                     break;
                 case ACTION_TICKER_UPDATE:
-                    // Doze-exempt ticker update from AlarmManager. Only
-                    // re-schedule while actually tracking (not paused) — an
-                    // in-flight alarm arriving just after a pause must let the
-                    // chain die out instead of re-arming the 1 Hz loop.
+                    // Heartbeat watchdog update from AlarmManager
                     if (isTracking && !paused) {
                         handleTickerUpdate();
-                        scheduleNextTicker();
+                        scheduleWatchdogHeartbeat();
                     }
                     break;
                 case ACTION_WAKELOCK_MAINTAIN:
@@ -777,6 +773,7 @@ public class WalkService extends Service implements LocationListener, SensorEven
                 .setColor(0xFF7C5CFC)
                 .setOngoing(true)
                 .setOnlyAlertOnce(true)
+                .setSilent(true)
                 .setContentIntent(pendingIntent)
                 .setPriority(NotificationCompat.PRIORITY_DEFAULT) // Upgraded from LOW for visibility
                 .setCategory(NotificationCompat.CATEGORY_WORKOUT); // More specific than SERVICE
@@ -1018,11 +1015,13 @@ public class WalkService extends Service implements LocationListener, SensorEven
         isVehicleFlagged = false;
         lastVehicleCheckWallMs = 0L;
         stepsAtLastVehicleCheck = 0;
-        lastGpsFixWallMs = 0L;
-        // Fresh walk: drop the previous session's step-counter baseline so the
-        // hardware accumulator is re-based on this walk's start point.
-        initialStepCounterValue = -1;
-        lastCounterTotal = -1L;
+        // Fresh walk: drop previous session's step-counter baseline only when starting a new walk.
+        // For recovered/resumed sessions, preserve the restored accumulator baseline.
+        boolean isFreshWalk = (distanceKm == 0.0 && steps == 0 && durationSec == 0L && !p.getBoolean(KEY_TRACKING, false));
+        if (isFreshWalk) {
+            initialStepCounterValue = -1;
+            lastCounterTotal = -1L;
+        }
 
         acquireWakeLock();
         registerScreenOnReceiver();
@@ -1199,130 +1198,75 @@ public class WalkService extends Service implements LocationListener, SensorEven
         }
     }
     
-    /* ── AlarmManager Ticker (Doze-Exempt) ────────────────────────────────── */
-    
-    /**
-     * True when this app may schedule exact alarms on Android 12+ (the
-     * SCHEDULE_EXACT_ALARM / USE_EXACT_ALARM grant). Older versions always
-     * allow them. The Doze-exempt AlarmManager ticker depends on exact
-     * alarms; when the grant is missing the ticker must fall back to the
-     * (wake-lock-backed) Handler ticker instead of freezing the metrics.
-     */
-    private boolean canScheduleExactAlarms() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            return alarmManager != null && alarmManager.canScheduleExactAlarms();
-        }
-        return true;
-    }
+    /* ── 1s Metric Ticker & Watchdog Heartbeat ────────────────────────── */
 
     /**
-     * Starts Doze-exempt ticker using AlarmManager for guaranteed metric updates
-     * even when device is in deep Doze mode. Falls back to Handler ticker if
-     * alarm scheduling fails or the exact-alarm grant is missing.
+     * Starts the 1-second metric ticker on the main Handler loop (held awake by
+     * PARTIAL_WAKE_LOCK) and schedules a periodic AlarmManager watchdog heartbeat.
      */
     private void startAlarmTicker() {
-        if (alarmManager == null) {
-            Log.w(TAG, "AlarmManager unavailable, using Handler ticker fallback");
-            useAlarmTicker = false;
-            startHandlerTicker();
-            return;
-        }
-
-        if (!canScheduleExactAlarms()) {
-            Log.w(TAG, "Exact alarm permission not granted, using Handler ticker fallback");
-            useAlarmTicker = false;
-            startHandlerTicker();
-            return;
-        }
-
-        // Already scheduled — never double-register (alarm ticker + Handler
-        // ticker running at once would recompute/publish twice per second).
-        if (tickerPendingIntent != null) {
-            ticker.removeCallbacks(tick);
-            return;
-        }
-
-        try {
-            Intent intent = new Intent(this, WalkTickerReceiver.class);
-            intent.setAction(WalkTickerReceiver.ACTION_TICKER);
-            
-            tickerPendingIntent = PendingIntent.getBroadcast(
-                this,
-                2001,
-                intent,
-                PendingIntent.FLAG_UPDATE_CURRENT | (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M ? PendingIntent.FLAG_IMMUTABLE : 0)
-            );
-            
-            // The alarm ticker is the single source of 1s ticks from now on —
-            // stop the fallback Handler ticker so they never run in parallel.
-            ticker.removeCallbacks(tick);
-            scheduleNextTicker();
-            useAlarmTicker = true;
-            Log.d(TAG, "AlarmManager ticker started (Doze-exempt)");
-        } catch (Exception e) {
-            Log.e(TAG, "Failed to start AlarmManager ticker, falling back to Handler", e);
-            useAlarmTicker = false;
-            startHandlerTicker();
-        }
+        startHandlerTicker();
+        scheduleWatchdogHeartbeat();
     }
-    
+
     /**
-     * Schedules next ticker alarm 1 second from now. Uses setExactAndAllowWhileIdle
-     * for Doze immunity on Android 6+.
+     * Schedules periodic watchdog heartbeat alarm (60s). Keeps the service active
+     * even if aggressive OEM power saving briefly suspends the main loop.
      */
-    private void scheduleNextTicker() {
-        if (!useAlarmTicker || alarmManager == null || tickerPendingIntent == null) return;
-        
+    private void scheduleWatchdogHeartbeat() {
+        if (alarmManager == null || !isTracking || paused) return;
+
         try {
-            long nextTriggerMs = System.currentTimeMillis() + 1000L;
-            
+            if (tickerPendingIntent == null) {
+                Intent intent = new Intent(this, WalkTickerReceiver.class);
+                intent.setAction(WalkTickerReceiver.ACTION_TICKER);
+
+                tickerPendingIntent = PendingIntent.getBroadcast(
+                    this,
+                    2001,
+                    intent,
+                    PendingIntent.FLAG_UPDATE_CURRENT | (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M ? PendingIntent.FLAG_IMMUTABLE : 0)
+                );
+            }
+
+            long nextTriggerMs = System.currentTimeMillis() + 60_000L;
+
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                alarmManager.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, nextTriggerMs, tickerPendingIntent);
-            } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT) {
-                alarmManager.setExact(AlarmManager.RTC_WAKEUP, nextTriggerMs, tickerPendingIntent);
+                alarmManager.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, nextTriggerMs, tickerPendingIntent);
             } else {
                 alarmManager.set(AlarmManager.RTC_WAKEUP, nextTriggerMs, tickerPendingIntent);
             }
+            useAlarmTicker = true;
         } catch (Exception e) {
-            // Exact alarms can be revoked mid-walk (OEM battery managers / user
-            // toggling "Alarms & reminders"): silently dying here would freeze
-            // the notification and metrics in deep Doze. Fall back to the
-            // wake-lock-backed Handler ticker instead.
-            Log.e(TAG, "Failed to schedule next ticker alarm, falling back to Handler ticker", e);
-            useAlarmTicker = false;
-            startHandlerTicker();
+            Log.w(TAG, "Failed to schedule watchdog heartbeat alarm", e);
         }
     }
 
     /**
-     * Handler-based 1s ticker fallback for when exact alarms are unavailable
-     * or revoked mid-walk. Not Doze-exempt by itself, but the service holds a
-     * PARTIAL_WAKE_LOCK for the whole walk, which keeps the main looper (and
-     * this runnable) executing with the screen off.
+     * Handler-based 1s ticker for accurate, smooth metric updates. Runs continuously
+     * while PARTIAL_WAKE_LOCK is held.
      */
     private void startHandlerTicker() {
         ticker.removeCallbacks(tick);
         ticker.postDelayed(tick, 1000);
     }
-    
+
     /**
-     * Cancels AlarmManager ticker when tracking stops. Nulls the pending
-     * intent so a later startAlarmTicker() (e.g. pause → resume) schedules a
-     * fresh alarm instead of early-returning on the stale reference.
+     * Cancels AlarmManager watchdog ticker when tracking stops.
      */
     private void stopAlarmTicker() {
         if (alarmManager != null && tickerPendingIntent != null) {
             try {
                 alarmManager.cancel(tickerPendingIntent);
-                Log.d(TAG, "AlarmManager ticker stopped");
+                Log.d(TAG, "AlarmManager watchdog ticker stopped");
             } catch (Exception e) {
-                Log.w(TAG, "Failed to cancel ticker alarm", e);
+                Log.w(TAG, "Failed to cancel watchdog alarm", e);
             }
         }
         tickerPendingIntent = null;
     }
 
-    /** Stops BOTH tickers (AlarmManager + Handler fallback). Used on pause. */
+    /** Stops BOTH tickers (Watchdog + Handler). Used on pause/stop. */
     private void stopAllTickers() {
         stopAlarmTicker();
         ticker.removeCallbacks(tick);
@@ -1510,7 +1454,7 @@ public class WalkService extends Service implements LocationListener, SensorEven
                         .setMaxUpdateDelayMillis(5000L)
                         .setMinUpdateDistanceMeters(0f) // all fixes — native filters
                         .build();
-                fusedLocationClient.requestLocationUpdates(request, fusedLocationCallback, null);
+                fusedLocationClient.requestLocationUpdates(request, fusedLocationCallback, Looper.getMainLooper());
                 isFusedLocationRequestActive = true;
                 isLocationManagerRequestActive = false;
                 activeLocationProvider = "fused";
@@ -1841,22 +1785,9 @@ public class WalkService extends Service implements LocationListener, SensorEven
         
         boolean anyRegistered = false;
         
-        // CRITICAL: Use SENSOR_DELAY_UI instead of SENSOR_DELAY_FASTEST.
-        // SENSOR_DELAY_FASTEST (0ms) can overwhelm the sensor HAL and cause it to stop
-        // responding entirely, especially on low-end devices or when screen is off.
-        // SENSOR_DELAY_UI (16ms / ~60Hz) is more than sufficient for step counting
-        // and far more reliable for background/lock screen operation.
-        if (stepDetectorSensor != null) {
-            boolean registered = sensorManager.registerListener(this, stepDetectorSensor, SensorManager.SENSOR_DELAY_UI);
-            if (registered) {
-                boolean isWakeup = Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP && stepDetectorSensor.isWakeUpSensor();
-                Log.d(TAG, "Step detector registered (attempt " + (attemptNumber + 1) + ", " + (isWakeup ? "wake-up" : "non-wake-up") + ")");
-                anyRegistered = true;
-            } else {
-                Log.e(TAG, "Failed to register step detector sensor");
-            }
-        }
-        
+        // CRITICAL: Prefer TYPE_STEP_COUNTER when available as the single authoritative hardware accumulator.
+        // Registering both detector and counter simultaneously causes race conditions and step overcounting.
+        // Fall back to TYPE_STEP_DETECTOR only if TYPE_STEP_COUNTER is not supported.
         if (stepCounterSensor != null) {
             boolean registered = sensorManager.registerListener(this, stepCounterSensor, SensorManager.SENSOR_DELAY_UI);
             if (registered) {
@@ -1865,6 +1796,15 @@ public class WalkService extends Service implements LocationListener, SensorEven
                 anyRegistered = true;
             } else {
                 Log.e(TAG, "Failed to register step counter sensor");
+            }
+        } else if (stepDetectorSensor != null) {
+            boolean registered = sensorManager.registerListener(this, stepDetectorSensor, SensorManager.SENSOR_DELAY_UI);
+            if (registered) {
+                boolean isWakeup = Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP && stepDetectorSensor.isWakeUpSensor();
+                Log.d(TAG, "Step detector registered as fallback (attempt " + (attemptNumber + 1) + ", " + (isWakeup ? "wake-up" : "non-wake-up") + ")");
+                anyRegistered = true;
+            } else {
+                Log.e(TAG, "Failed to register step detector sensor");
             }
         }
         
@@ -1943,7 +1883,10 @@ public class WalkService extends Service implements LocationListener, SensorEven
         }
     };
 
+    private boolean isScreenOnReceiverRegistered = false;
+
     private void registerScreenOnReceiver() {
+        if (isScreenOnReceiverRegistered) return;
         try {
             IntentFilter filter = new IntentFilter();
             filter.addAction(Intent.ACTION_SCREEN_ON);
@@ -1953,16 +1896,20 @@ public class WalkService extends Service implements LocationListener, SensorEven
             } else {
                 registerReceiver(screenOnReceiver, filter);
             }
+            isScreenOnReceiverRegistered = true;
         } catch (Exception e) {
             Log.w(TAG, "Failed to register screen-on receiver (may already be registered)", e);
         }
     }
 
     private void unregisterScreenOnReceiver() {
+        if (!isScreenOnReceiverRegistered) return;
         try {
             unregisterReceiver(screenOnReceiver);
         } catch (Exception e) {
             Log.d(TAG, "Screen-on receiver not registered or already unregistered", e);
+        } finally {
+            isScreenOnReceiverRegistered = false;
         }
     }
 
@@ -2207,19 +2154,9 @@ public class WalkService extends Service implements LocationListener, SensorEven
     };
 
     private void startTicker() {
-        // A paused walk is frozen: no ticker at all (the alarm variant would
-        // burn a 1 Hz Doze-exempt wakeup per second doing nothing). The walk
-        // clock restarts via ACTION_RESUME.
         if (paused) return;
-        // Start AlarmManager ticker for Doze immunity if available
-        if (useAlarmTicker && alarmManager != null) {
-            startAlarmTicker();
-        } else {
-            // Fallback to Handler ticker (not Doze-exempt)
-            Log.w(TAG, "Using Handler ticker (not Doze-exempt)");
-            ticker.removeCallbacks(tick);
-            ticker.postDelayed(tick, 1000);
-        }
+        startHandlerTicker();
+        scheduleWatchdogHeartbeat();
     }
 
     private void recomputeDerived() {
@@ -2300,7 +2237,11 @@ public class WalkService extends Service implements LocationListener, SensorEven
             // Only flag if: speed exceeds threshold AND less than 5 steps in 20 seconds
             // This reduces false positives from brief GPS jumps or standing still at traffic lights
             if (speedMs > 4.16f) {
-                if (nowWall - lastVehicleCheckWallMs > 20000L) {
+                if (lastVehicleCheckWallMs == 0L) {
+                    // Initialize the 20s observation window on first high-speed fix
+                    lastVehicleCheckWallMs = nowWall;
+                    stepsAtLastVehicleCheck = currentSteps;
+                } else if (nowWall - lastVehicleCheckWallMs > 20000L) {
                     int stepsSinceLastCheck = currentSteps - stepsAtLastVehicleCheck;
                     // Require sustained low step activity (< 5 steps in 20s = < 15 steps/min)
                     // Normal walking is ~100-120 steps/min, so this clearly indicates vehicle use
@@ -2314,22 +2255,26 @@ public class WalkService extends Service implements LocationListener, SensorEven
                     lastVehicleCheckWallMs = nowWall;
                     stepsAtLastVehicleCheck = currentSteps;
                 }
+            } else {
+                // Reset window if speed drops back below vehicle threshold
+                lastVehicleCheckWallMs = 0L;
             }
 
             boolean accepted = distancePlausible && speedPlausible && motionPlausible;
             if (accepted) {
                 gpsDistanceKm += (distMeters / 1000.0);
+                lastLocation = location;
                 // updateCount only grows on ACCEPTED fixes (plus the baseline
                 // first fix) — rejected stationary-jitter fixes must not look
                 // like motion, or JS would never auto-pause a stopped walk.
                 updateCount++;
                 lastGpsFixWallMs = nowWall;
+                lastFixElapsedRealtime = nowElapsed;
 
-                // Step floor: ensure step count never stalls behind GPS walking
-                // displacement during screen lock. Skipped while vehicle motion
-                // is flagged — a car ride would otherwise invent thousands of
-                // "steps" from the GPS distance (e.g. 10 km ≈ 13,000 fake steps).
-                if (!isVehicleFlagged) {
+                // If device completely lacks hardware step sensors, estimate steps from GPS distance as fallback.
+                // When hardware sensors are available, currentSteps is driven purely by physical sensor events
+                // to prevent GPS drift/jitter from corrupting the hardware step baseline.
+                if (!isVehicleFlagged && stepDetectorSensor == null && stepCounterSensor == null) {
                     int impliedSteps = (int) Math.round((gpsDistanceKm * 1000.0) / STRIDE_METERS);
                     if (impliedSteps > currentSteps) {
                         currentSteps = impliedSteps;
@@ -2349,7 +2294,6 @@ public class WalkService extends Service implements LocationListener, SensorEven
                     );
                 }
             }
-            lastFixElapsedRealtime = nowElapsed;
 
             Log.d(TAG, "fix: lat=" + location.getLatitude()
                     + " lng=" + location.getLongitude()
@@ -2384,7 +2328,6 @@ public class WalkService extends Service implements LocationListener, SensorEven
             return;
         }
         
-        lastLocation = location;
         recomputeDerived();
         updateNotification();
         publishUpdate();
@@ -2510,6 +2453,12 @@ public class WalkService extends Service implements LocationListener, SensorEven
                     lastCounterTotal = total;
                     changed = true;
                     Log.d(TAG, "step: counter sync to " + currentSteps);
+                } else if (calculatedSteps < currentSteps) {
+                    // Baseline is behind currentSteps (e.g. state restored from JS/SQLite) - realign baseline
+                    initialStepCounterValue = (int) (total - currentSteps);
+                    lastCounterTotal = total;
+                    rebased = true;
+                    Log.d(TAG, "step: counter re-aligned baseline to " + initialStepCounterValue + " for currentSteps=" + currentSteps);
                 }
             }
 

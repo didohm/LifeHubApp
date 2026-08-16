@@ -29,7 +29,7 @@ export function BottomNav() {
     const vv = window.visualViewport;
     if (!vv) return;
     const onResize = () => {
-      setKeyboardOpen(window.innerHeight - vv.height > 120);
+      setKeyboardOpen(window.innerHeight - vv.height > 60);
     };
     onResize();
     vv.addEventListener("resize", onResize);

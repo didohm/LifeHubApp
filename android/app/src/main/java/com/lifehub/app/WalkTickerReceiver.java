@@ -37,9 +37,6 @@ public class WalkTickerReceiver extends BroadcastReceiver {
         try {
             Intent serviceIntent = new Intent(context, WalkService.class);
             serviceIntent.setAction(WalkService.ACTION_TICKER_UPDATE);
-            
-            // Use startService (not startForegroundService) since the service
-            // is already running in foreground - this just delivers the intent
             context.startService(serviceIntent);
         } catch (Exception e) {
             Log.e(TAG, "Failed to deliver ticker update to service", e);

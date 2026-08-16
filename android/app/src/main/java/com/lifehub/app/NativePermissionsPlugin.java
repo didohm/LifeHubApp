@@ -63,22 +63,29 @@ import org.json.JSONObject;
                 Manifest.permission.READ_EXTERNAL_STORAGE
             }
         ),
-        @Permission(alias = "audio", strings = { Manifest.permission.RECORD_AUDIO })
+        @Permission(alias = "audio", strings = { Manifest.permission.RECORD_AUDIO }),
+        @Permission(alias = "notifications", strings = { Manifest.permission.POST_NOTIFICATIONS })
     }
 )
 public class NativePermissionsPlugin extends Plugin {
 
     private static final String CALL_DATA_ALIAS_KEY = "lifehub_permission_alias";
 
-    /** Background location only exists on Android 10+ (API 29+). */
-    private boolean backgroundAutoGranted(String alias) {
-        return "background".equals(alias) && Build.VERSION.SDK_INT < Build.VERSION_CODES.Q;
+    /** Auto-granted permissions on older Android versions */
+    private boolean isAutoGranted(String alias) {
+        if ("background".equals(alias) && Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+            return true;
+        }
+        if ("notifications".equals(alias) && Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
+            return true;
+        }
+        return false;
     }
 
     @PluginMethod
     public void check(PluginCall call) {
         String alias = call.getString("alias");
-        if (backgroundAutoGranted(alias)) {
+        if (isAutoGranted(alias)) {
             JSObject ret = new JSObject();
             ret.put("granted", true);
             call.resolve(ret);
@@ -97,7 +104,7 @@ public class NativePermissionsPlugin extends Plugin {
             call.reject("alias is required");
             return;
         }
-        if (backgroundAutoGranted(alias)) {
+        if (isAutoGranted(alias)) {
             JSObject ret = new JSObject();
             ret.put("granted", true);
             ret.put("permanentlyDenied", false);

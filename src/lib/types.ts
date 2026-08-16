@@ -315,6 +315,7 @@ export interface AggregatedWalkStats {
   total_distance: number; // meters
   total_duration: number; // seconds
   total_steps: number;
+  total_calories: number; // kcal
   avg_pace: number | null; // seconds per km
   longest_distance: number | null; // meters
   fastest_pace: number | null; // seconds per km
