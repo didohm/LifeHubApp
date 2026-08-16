@@ -113,7 +113,6 @@ export interface DocumentItem {
   file_size?: string | null;
   file_type?: string | null;
   preview_url?: string | null;
-  summary?: string | null;
   created_at: string;
   updated_at: string;
 }

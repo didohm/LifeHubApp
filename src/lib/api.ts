@@ -339,7 +339,6 @@ export async function createDocument(
     file_url: data.file_url || "",
     file_size: data.file_size || "",
     file_type: data.file_type || "",
-    summary: data.summary || "",
     created_at: now(),
     updated_at: now(),
   };
@@ -360,7 +359,6 @@ export async function updateDocument(
   if (data.file_url !== undefined) updates.file_url = data.file_url;
   if (data.file_size !== undefined) updates.file_size = data.file_size;
   if (data.file_type !== undefined) updates.file_type = data.file_type;
-  if (data.summary !== undefined) updates.summary = data.summary;
 
   await updateDoc(docRef, updates);
   const updated = await getDoc(docRef);
@@ -1364,16 +1362,10 @@ export function estimateWalkCalories(
   durationSeconds: number,
   weightKg: number = 0,
 ): number {
-  const hours = Math.max(0, durationSeconds) / 3600;
-  const baseMet = 3.5;
   const distanceKm = Math.max(0, distanceMeters) / 1000;
-  if (weightKg <= 0) return 0;
-  const byDuration = baseMet * weightKg * hours;
-  const byDistance = distanceKm * 55 * (weightKg / 70); // ~55 kcal per km walked for 70kg
-  if (durationSeconds <= 0 && distanceKm > 0) return Math.round(byDistance);
-  if (distanceKm <= 0 && durationSeconds > 0) return Math.round(byDuration);
-  if (distanceKm <= 0 && durationSeconds <= 0) return 0;
-  return Math.round((byDuration + byDistance) / 2);
+  if (weightKg <= 0 || distanceKm <= 0.001) return 0;
+  // Standard walking energy expenditure formula: ~0.755 kcal per kg per km
+  return Math.round(weightKg * distanceKm * 0.755);
 }
 
 export async function getWalkSessions(userId: string): Promise<WalkSession[]> {

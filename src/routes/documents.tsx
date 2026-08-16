@@ -5,7 +5,6 @@ import {
   FileText,
   Trash2,
   Eye,
-  Bot,
   Upload,
   Search,
   Edit2,
@@ -16,9 +15,6 @@ import {
   Image as ImageIcon,
   Shield,
   Clock,
-  Sparkles,
-  Copy,
-  Check,
   Plus,
   Filter,
   FileCheck,
@@ -32,7 +28,6 @@ import { useAuthGuard } from "@/hooks/use-auth-guard";
 import { useDeleteWithGuard } from "@/hooks/use-delete-with-guard";
 import { createDocument, updateDocument, deleteDocument } from "@/lib/api";
 import { DocumentItem } from "@/lib/types";
-import { generateAssistantReply } from "@/lib/ai-provider";
 import { useData } from "@/lib/data-context";
 import { ListSkeleton } from "@/components/lifehub/SkeletonLoader";
 import {
@@ -126,7 +121,7 @@ export const Route = createFileRoute("/documents")({
 });
 
 function DocumentsPage() {
-  const { user, loading: authLoading } = useAuth();
+  const { user, firebaseUser, loading: authLoading } = useAuth();
   useAuthGuard(user, authLoading);
 
   const { documents, docLoading: loading } = useData();
@@ -138,10 +133,6 @@ function DocumentsPage() {
   const [uploadModalOpen, setUploadModalOpen] = useState(false);
   const [editingDoc, setEditingDoc] = useState<DocumentItem | null>(null);
   const [previewDoc, setPreviewDoc] = useState<DocumentItem | null>(null);
-  const [summaryDoc, setSummaryDoc] = useState<DocumentItem | null>(null);
-  const [summaryModalText, setSummaryModalText] = useState<string | null>(null);
-  const [summarizing, setSummarizing] = useState(false);
-  const [copiedSummary, setCopiedSummary] = useState(false);
 
   // Upload Form State
   const [docName, setDocName] = useState("");
@@ -213,7 +204,6 @@ function DocumentsPage() {
           file_url: editingDoc.file_url,
           file_size: editingDoc.file_size,
           file_type: editingDoc.file_type,
-          summary: editingDoc.summary,
         });
         sounds.playSuccess();
         toast.success("Document updated successfully!");
@@ -237,7 +227,6 @@ function DocumentsPage() {
           file_url: fileUrl,
           file_size: fileSize,
           file_type: fileType,
-          summary: "",
         });
 
         sounds.playUploadSuccess();
@@ -265,57 +254,12 @@ function DocumentsPage() {
     });
   };
 
-  const handleAiSummarize = async (docItem: DocumentItem) => {
-    if (!user) return;
-
-    setSummaryDoc(docItem);
-    setSummarizing(true);
-    sounds.playActionClick();
-    toast.info(`Analyzing ${docItem.name}...`);
-    try {
-      const summary = await generateAssistantReply({
-        prompt: `You are an expert document assistant in LifeHub. Analyze the following document metadata and provide high-value, structured takeaways for the user:
-        - Document Name: ${docItem.name}
-        - Category: ${docItem.category}
-        - File Type: ${docItem.file_type || "N/A"}
-        - File Size: ${docItem.file_size || "N/A"}
-        - Date Added: ${docItem.created_at || "Recent"}
-
-        Provide:
-        1. 📋 **Document Overview**: A 2-sentence summary of what this document is.
-        2. 🔑 **Key Action Items & Reminders**: Bullet points for important considerations (expiration, prescription refill, next checkup, filing, privacy).
-        3. 💡 **Pro-tip**: One practical suggestion for managing this record. Keep it structured and concise.`,
-        userId: user.id,
-      });
-
-      await updateDocument(docItem.id, user.id, { summary });
-      setSummaryModalText(summary);
-      sounds.playSuccess();
-      toast.success("AI insights generated!");
-    } catch {
-      sounds.playError();
-      toast.error("Could not generate AI insights.");
-    } finally {
-      setSummarizing(false);
-    }
-  };
-
-  const copySummaryToClipboard = () => {
-    if (!summaryModalText) return;
-    navigator.clipboard.writeText(summaryModalText);
-    sounds.playClick();
-    setCopiedSummary(true);
-    toast.success("Summary copied to clipboard!");
-    setTimeout(() => setCopiedSummary(false), 2000);
-  };
-
   const filteredDocs = useMemo(() => {
     return documents.filter((d: DocumentItem) => {
       const matchesCat = categoryFilter === "all" ? true : d.category === categoryFilter;
       const matchesSearch =
         d.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        (d.category || "").toLowerCase().includes(searchTerm.toLowerCase()) ||
-        (d.summary || "").toLowerCase().includes(searchTerm.toLowerCase());
+        (d.category || "").toLowerCase().includes(searchTerm.toLowerCase());
       return matchesCat && matchesSearch;
     });
   }, [documents, categoryFilter, searchTerm]);
@@ -400,7 +344,7 @@ function DocumentsPage() {
           <Search className="absolute left-3.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
           <input
             type="text"
-            placeholder="Search documents by name, category or AI summary..."
+            placeholder="Search documents by name or category..."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
             className="w-full rounded-2xl border border-border/70 bg-white py-2.5 pl-10 pr-4 text-xs font-semibold text-foreground outline-none shadow-2xs focus:border-[#7C5CFC] transition-all"
@@ -478,10 +422,11 @@ function DocumentsPage() {
           </div>
         ) : (
           filteredDocs.map((docItem: DocumentItem) => {
-            const { Icon: FileIconComponent, color, badge } = getFileIcon(
-              docItem.file_type,
-              docItem.file_url,
-            );
+            const {
+              Icon: FileIconComponent,
+              color,
+              badge,
+            } = getFileIcon(docItem.file_type, docItem.file_url);
 
             return (
               <div
@@ -535,13 +480,6 @@ function DocumentsPage() {
                       </button>
                     )}
                     <button
-                      onClick={() => handleAiSummarize(docItem)}
-                      title="AI Summarize"
-                      className="tap size-8 flex items-center justify-center rounded-full text-[#7C5CFC] bg-[#7C5CFC]/10 hover:bg-[#7C5CFC]/20 transition-colors"
-                    >
-                      <Bot className="size-4" />
-                    </button>
-                    <button
                       onClick={() => openEditModal(docItem)}
                       title="Edit Document Info"
                       className="tap size-8 flex items-center justify-center rounded-full text-slate-500 hover:bg-slate-100 transition-colors"
@@ -557,25 +495,6 @@ function DocumentsPage() {
                     </button>
                   </div>
                 </div>
-
-                {/* AI Summary Excerpt (if generated) */}
-                {docItem.summary && (
-                  <div className="rounded-xl bg-purple-50/50 border border-purple-100 p-2.5 text-xs text-purple-950 font-medium flex items-start gap-2">
-                    <Sparkles className="size-3.5 text-[#7C5CFC] shrink-0 mt-0.5" />
-                    <p className="line-clamp-2 leading-relaxed text-[11px]">{docItem.summary}</p>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        sounds.playClick();
-                        setSummaryDoc(docItem);
-                        setSummaryModalText(docItem.summary || null);
-                      }}
-                      className="text-[10px] font-black text-[#7C5CFC] underline shrink-0 self-end ml-auto"
-                    >
-                      Full
-                    </button>
-                  </div>
-                )}
               </div>
             );
           })
@@ -585,7 +504,11 @@ function DocumentsPage() {
       {/* ══════════════════════════════════════════════════════════════
           UPLOAD / EDIT DOCUMENT MODAL
           ══════════════════════════════════════════════════════════════ */}
-      <Modal open={uploadModalOpen} onClose={() => setUploadModalOpen(false)} className="bg-white max-w-lg">
+      <Modal
+        open={uploadModalOpen}
+        onClose={() => setUploadModalOpen(false)}
+        className="bg-white max-w-lg"
+      >
         <div className="flex items-center justify-between border-b border-black/5 pb-3">
           <div className="flex items-center gap-2">
             <div className="flex size-8 items-center justify-center rounded-xl bg-[#12131A] text-white">
@@ -638,7 +561,9 @@ function DocumentsPage() {
 
           {!editingDoc && (
             <div>
-              <label className="text-xs font-bold text-[#12131A] block mb-1">Select File (PDF or Image)</label>
+              <label className="text-xs font-bold text-[#12131A] block mb-1">
+                Select File (PDF or Image)
+              </label>
               <div
                 onDragOver={(e) => {
                   e.preventDefault();
@@ -805,57 +730,6 @@ function DocumentsPage() {
           </div>
         </Modal>
       )}
-
-      {/* ══════════════════════════════════════════════════════════════
-          AI SUMMARY MODAL
-          ══════════════════════════════════════════════════════════════ */}
-      <Modal
-        open={!!summaryModalText}
-        onClose={() => setSummaryModalText(null)}
-        className="bg-white max-w-lg"
-      >
-        <div className="flex items-center justify-between border-b border-black/5 pb-3">
-          <div className="flex items-center gap-2">
-            <div className="flex size-8 items-center justify-center rounded-xl bg-[#7C5CFC]/10 text-[#7C5CFC]">
-              <Bot className="size-4" />
-            </div>
-            <div>
-              <h3 className="text-base font-black text-[#12131A]">AI Document Analysis</h3>
-              <p className="text-[11px] font-semibold text-muted-foreground truncate max-w-[240px]">
-                {summaryDoc?.name}
-              </p>
-            </div>
-          </div>
-          <button
-            onClick={() => setSummaryModalText(null)}
-            className="size-7 flex items-center justify-center rounded-full bg-black/5 text-muted-foreground hover:text-foreground"
-          >
-            <X className="size-4" />
-          </button>
-        </div>
-
-        <div className="mt-4 text-xs leading-relaxed text-[#12131A] whitespace-pre-line max-h-96 overflow-y-auto font-medium bg-slate-50/70 p-4 rounded-2xl border border-slate-100">
-          {summaryModalText}
-        </div>
-
-        <div className="mt-4 flex items-center justify-end gap-2">
-          <button
-            type="button"
-            onClick={copySummaryToClipboard}
-            className="tap inline-flex items-center gap-1.5 rounded-full bg-slate-100 px-4 py-2 text-xs font-black text-slate-700 hover:bg-slate-200 transition-colors"
-          >
-            {copiedSummary ? <Check className="size-3.5 text-emerald-600" /> : <Copy className="size-3.5" />}
-            {copiedSummary ? "Copied!" : "Copy Summary"}
-          </button>
-          <button
-            type="button"
-            onClick={() => setSummaryModalText(null)}
-            className="tap rounded-full bg-[#12131A] px-5 py-2 text-xs font-black text-white shadow-md hover:bg-slate-800"
-          >
-            Done
-          </button>
-        </div>
-      </Modal>
     </Screen>
   );
 }

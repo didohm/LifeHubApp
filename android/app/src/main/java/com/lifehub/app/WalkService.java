@@ -171,6 +171,7 @@ public class WalkService extends Service implements LocationListener, SensorEven
     private SensorManager sensorManager;
     private Sensor stepDetectorSensor;
     private Sensor stepCounterSensor;
+    private Sensor accelerometerSensor;
     private int initialStepCounterValue = -1;
     // Last hardware TYPE_STEP_COUNTER accumulator value received. Persisted so
     // a process death (OOM, swipe-away) can resume the walk against the SAME
@@ -178,6 +179,8 @@ public class WalkService extends Service implements LocationListener, SensorEven
     // persisted step count and every step taken while dead is discarded, which
     // permanently freezes the step counter.
     private long lastCounterTotal = -1L;
+    private long lastAccStepMs = 0L;
+    private long lastNotificationUpdateMs = 0L;
     private PowerManager.WakeLock wakeLock;
     private NotificationCompat.Builder notificationBuilder;
     private boolean isInForeground = false;
@@ -283,18 +286,22 @@ public class WalkService extends Service implements LocationListener, SensorEven
                 // Wake-up sensors continue to deliver events and wake the CPU to process them.
                 stepDetectorSensor = sensorManager.getDefaultSensor(Sensor.TYPE_STEP_DETECTOR, true);
                 if (stepDetectorSensor == null) {
-                    // Fallback to non-wake-up if wake-up variant not available
                     stepDetectorSensor = sensorManager.getDefaultSensor(Sensor.TYPE_STEP_DETECTOR);
-                    Log.w(TAG, "Wake-up step detector not available, using non-wake-up variant (may not work when screen is off)");
+                    Log.w(TAG, "Wake-up step detector not available, using non-wake-up variant");
                 }
                 stepCounterSensor = sensorManager.getDefaultSensor(Sensor.TYPE_STEP_COUNTER, true);
                 if (stepCounterSensor == null) {
                     stepCounterSensor = sensorManager.getDefaultSensor(Sensor.TYPE_STEP_COUNTER);
-                    Log.w(TAG, "Wake-up step counter not available, using non-wake-up variant (may not work when screen is off)");
+                    Log.w(TAG, "Wake-up step counter not available, using non-wake-up variant");
+                }
+                accelerometerSensor = sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER, true);
+                if (accelerometerSensor == null) {
+                    accelerometerSensor = sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER);
                 }
             } else {
                 stepDetectorSensor = sensorManager.getDefaultSensor(Sensor.TYPE_STEP_DETECTOR);
                 stepCounterSensor = sensorManager.getDefaultSensor(Sensor.TYPE_STEP_COUNTER);
+                accelerometerSensor = sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER);
             }
             
             // Log sensor availability for debugging
@@ -305,6 +312,9 @@ public class WalkService extends Service implements LocationListener, SensorEven
             if (stepCounterSensor != null) {
                 boolean isWakeup = Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP && stepCounterSensor.isWakeUpSensor();
                 Log.d(TAG, "Step counter available: " + (isWakeup ? "wake-up" : "non-wake-up"));
+            }
+            if (accelerometerSensor != null) {
+                Log.d(TAG, "Accelerometer available for fallback step detection");
             }
         }
         createNotificationChannel();
@@ -733,7 +743,7 @@ public class WalkService extends Service implements LocationListener, SensorEven
             NotificationChannel channel = new NotificationChannel(
                     CHANNEL_ID,
                     "Walking Tracking",
-                    NotificationManager.IMPORTANCE_DEFAULT // Upgraded from LOW for OEM compatibility
+                    NotificationManager.IMPORTANCE_LOW
             );
             channel.setDescription("Live walking session metrics during active walks");
             channel.setSound(null, null);
@@ -774,9 +784,10 @@ public class WalkService extends Service implements LocationListener, SensorEven
                 .setOngoing(true)
                 .setOnlyAlertOnce(true)
                 .setSilent(true)
+                .setShowWhen(false)
                 .setContentIntent(pendingIntent)
-                .setPriority(NotificationCompat.PRIORITY_DEFAULT) // Upgraded from LOW for visibility
-                .setCategory(NotificationCompat.CATEGORY_WORKOUT); // More specific than SERVICE
+                .setPriority(NotificationCompat.PRIORITY_LOW)
+                .setCategory(NotificationCompat.CATEGORY_WORKOUT);
 
         // "Pause/Resume" and "Finish" action buttons drive the React app through the
         // walkUpdate event (the app owns the actual session lifecycle).
@@ -1785,9 +1796,19 @@ public class WalkService extends Service implements LocationListener, SensorEven
         
         boolean anyRegistered = false;
         
-        // CRITICAL: Prefer TYPE_STEP_COUNTER when available as the single authoritative hardware accumulator.
-        // Registering both detector and counter simultaneously causes race conditions and step overcounting.
-        // Fall back to TYPE_STEP_DETECTOR only if TYPE_STEP_COUNTER is not supported.
+        // Register TYPE_STEP_DETECTOR for instant 1-step real-time UI response
+        if (stepDetectorSensor != null) {
+            boolean registered = sensorManager.registerListener(this, stepDetectorSensor, SensorManager.SENSOR_DELAY_UI);
+            if (registered) {
+                boolean isWakeup = Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP && stepDetectorSensor.isWakeUpSensor();
+                Log.d(TAG, "Step detector registered (attempt " + (attemptNumber + 1) + ", " + (isWakeup ? "wake-up" : "non-wake-up") + ")");
+                anyRegistered = true;
+            } else {
+                Log.w(TAG, "Failed to register step detector sensor");
+            }
+        }
+
+        // Register TYPE_STEP_COUNTER as authoritative hardware accumulator for screen-off / Doze catch-up
         if (stepCounterSensor != null) {
             boolean registered = sensorManager.registerListener(this, stepCounterSensor, SensorManager.SENSOR_DELAY_UI);
             if (registered) {
@@ -1795,19 +1816,19 @@ public class WalkService extends Service implements LocationListener, SensorEven
                 Log.d(TAG, "Step counter registered (attempt " + (attemptNumber + 1) + ", " + (isWakeup ? "wake-up" : "non-wake-up") + ")");
                 anyRegistered = true;
             } else {
-                Log.e(TAG, "Failed to register step counter sensor");
-            }
-        } else if (stepDetectorSensor != null) {
-            boolean registered = sensorManager.registerListener(this, stepDetectorSensor, SensorManager.SENSOR_DELAY_UI);
-            if (registered) {
-                boolean isWakeup = Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP && stepDetectorSensor.isWakeUpSensor();
-                Log.d(TAG, "Step detector registered as fallback (attempt " + (attemptNumber + 1) + ", " + (isWakeup ? "wake-up" : "non-wake-up") + ")");
-                anyRegistered = true;
-            } else {
-                Log.e(TAG, "Failed to register step detector sensor");
+                Log.w(TAG, "Failed to register step counter sensor");
             }
         }
         
+        // Fallback to accelerometer peak detector if hardware step sensors are missing
+        if (!anyRegistered && accelerometerSensor != null) {
+            boolean registered = sensorManager.registerListener(this, accelerometerSensor, SensorManager.SENSOR_DELAY_UI);
+            if (registered) {
+                Log.d(TAG, "Accelerometer step fallback registered");
+                anyRegistered = true;
+            }
+        }
+
         if (!anyRegistered) {
             Log.e(TAG, "No step sensors available or registration failed");
             sensorsRegistered = false;
@@ -1826,33 +1847,31 @@ public class WalkService extends Service implements LocationListener, SensorEven
     /**
      * Monitors step sensor health and recovers from HAL failures.
      * Called periodically from ticker. Detects stalled sensor streams.
-     * CRITICAL: Prevents duplicate recovery attempts using isSensorRecoveryInProgress flag.
+     * Prevents duplicate recovery attempts using isSensorRecoveryInProgress flag.
      */
     private void monitorSensorHealth() {
         if (!isTracking || paused || !sensorsRegistered) return;
         
-        // CRITICAL: Do not start new recovery if one is already in progress
+        // Do not start new recovery if one is already in progress
         if (isSensorRecoveryInProgress) {
             Log.d(TAG, "Sensor recovery already in progress, skipping health check");
             return;
         }
         
         long now = System.currentTimeMillis();
-        // A sensor that NEVER delivered a single event (HAL quirk, missing
-        // permission on a retry) must be treated as maximally stale — the old
-        // `lastStepEventWallMs > 0L` guard skipped recovery for exactly those
-        // walks and left them counting steps at 0 while GPS showed movement.
-        long timeSinceLastStep = lastStepEventWallMs > 0L ? now - lastStepEventWallMs : Long.MAX_VALUE;
+        // Do not evaluate stalls during startup window (< 30s)
+        if (durationSec < 30) return;
 
-        // If GPS shows movement (speed > 0.5 m/s) but no step events for 30+ seconds,
-        // sensor stream likely stalled
-        if (timeSinceLastStep > 30_000L && lastLocation != null) {
+        long timeSinceLastStep = lastStepEventWallMs > 0L ? now - lastStepEventWallMs : (durationSec * 1000L);
+
+        // If GPS shows sustained movement (speed > 0.8 m/s) but no step events for 45+ seconds,
+        // sensor stream may have stalled
+        if (timeSinceLastStep > 45_000L && lastLocation != null) {
             float speed = lastLocation.hasSpeed() ? lastLocation.getSpeed() : 0f;
             
-            if (speed > 0.5f) {
+            if (speed > 0.8f) {
                 Log.w(TAG, "Sensor stream stalled (no steps for " + (timeSinceLastStep / 1000L) + "s but GPS shows movement), attempting recovery");
                 
-                // Mark recovery in progress and force re-registration
                 isSensorRecoveryInProgress = true;
                 sensorsRegistered = false;
                 registerStepListenersWithRetry(0);
@@ -1914,6 +1933,10 @@ public class WalkService extends Service implements LocationListener, SensorEven
     }
 
     private void updateNotification() {
+        updateNotification(false);
+    }
+
+    private void updateNotification(boolean force) {
         if (notificationManager == null) return;
         
         // If not yet in foreground, enter foreground first (creates builder)
@@ -1922,9 +1945,17 @@ public class WalkService extends Service implements LocationListener, SensorEven
             return;
         }
         
-        // If pause state changed, we need to recreate the builder to update the
-        // action button label (Pause ↔ Resume). Otherwise just update the content.
-        if (lastNotifiedPauseState != paused) {
+        long now = System.currentTimeMillis();
+        boolean pauseStateChanged = (lastNotifiedPauseState != paused);
+        
+        // Throttle continuous metric updates to max 1 Hz (1000ms) to prevent notification flickering & system throttling
+        if (!force && !pauseStateChanged && (now - lastNotificationUpdateMs < 1000L)) {
+            return;
+        }
+        lastNotificationUpdateMs = now;
+        
+        // If pause state changed, recreate the builder to update action button label (Pause ↔ Resume)
+        if (pauseStateChanged) {
             createNotificationBuilder();
             lastNotifiedPauseState = paused;
         } else {
@@ -1932,11 +1963,12 @@ public class WalkService extends Service implements LocationListener, SensorEven
             updateNotificationContent();
         }
         
-        // Notify with the updated notification - this does NOT recreate the
-        // service or call startForeground() again, just updates the existing
-        // notification with the same ID, preventing flicker.
         if (isTracking || paused) {
-            notificationManager.notify(NOTIFICATION_ID, notificationBuilder.build());
+            try {
+                notificationManager.notify(NOTIFICATION_ID, notificationBuilder.build());
+            } catch (Exception e) {
+                Log.w(TAG, "Failed to update notification", e);
+            }
         }
     }
 
@@ -2171,12 +2203,12 @@ public class WalkService extends Service implements LocationListener, SensorEven
 
         double km = currentDistanceKm;
         currentPace = (km > 0.001 && durationSec > 0) ? (durationSec / 60.0) / km : 0.0;
-        // Calories (kcal): MET-based formula — MET_WALKING × weight ×
-        // duration_hours. Recomputed from CURRENT duration on every tick, so
-        // it can never stay at 0 while a walk is running. When the user's
-        // weight was never provided, calories stay 0 — no default is invented.
-        currentCalories = userWeightKg > 0.0
-                ? MET_WALKING * userWeightKg * (durationSec / 3600.0)
+        // Calories (kcal): strictly activity-based. Derived from real physical distance and steps walked.
+        // Standard energy expenditure for walking is ~0.755 kcal / kg / km.
+        // If the user has not moved (0 km, 0 steps), calories strictly remain 0.
+        double effectiveWeight = userWeightKg > 0.0 ? userWeightKg : 70.0;
+        currentCalories = (currentDistanceKm > 0.001 || currentSteps > 0)
+                ? effectiveWeight * currentDistanceKm * 0.755
                 : 0.0;
 
         Log.d(TAG, "recompute: steps=" + currentSteps
@@ -2411,7 +2443,7 @@ public class WalkService extends Service implements LocationListener, SensorEven
         if (!isTracking || paused) return;
 
         if (event.sensor.getType() == Sensor.TYPE_STEP_DETECTOR) {
-            // TYPE_STEP_DETECTOR: one event per physical step detected.
+            // TYPE_STEP_DETECTOR: real-time per-step event
             lastStepEventWallMs = System.currentTimeMillis();
             currentSteps++;
             Log.d(TAG, "step: detector total=" + currentSteps);
@@ -2420,12 +2452,7 @@ public class WalkService extends Service implements LocationListener, SensorEven
             publishUpdate();
             persistState();
         } else if (event.sensor.getType() == Sensor.TYPE_STEP_COUNTER) {
-            // TYPE_STEP_COUNTER: hardware accumulator since boot (or since the
-            // last reboot). The walk's count is total − baseline. `lastCounterTotal`
-            // is the last hardware value WE saw (persisted across process death);
-            // the difference total − lastCounterTotal is exactly the steps taken
-            // while the stream was dead (screen-off stall, killed process) and
-            // must be credited on the FIRST event after resume.
+            // TYPE_STEP_COUNTER: hardware accumulator since boot
             long total = (long) event.values[0];
             lastStepEventWallMs = System.currentTimeMillis();
             Log.d(TAG, "step: counter raw=" + total
@@ -2436,12 +2463,7 @@ public class WalkService extends Service implements LocationListener, SensorEven
             boolean changed = false;
             boolean rebased = false;
 
-            // CRITICAL: First event of this walk, or device rebooted (counter restarts near
-            // zero) — establish/re-establish the baseline from the walk's CURRENT
-            // step count so the walk is never double-counted on resume and never
-            // loses earned steps on reboot.
             if (initialStepCounterValue < 0 || total < initialStepCounterValue) {
-                // Fresh baseline: set it such that (total - baseline) = currentSteps
                 initialStepCounterValue = (int) (total - currentSteps);
                 lastCounterTotal = total;
                 rebased = true;
@@ -2454,7 +2476,6 @@ public class WalkService extends Service implements LocationListener, SensorEven
                     changed = true;
                     Log.d(TAG, "step: counter sync to " + currentSteps);
                 } else if (calculatedSteps < currentSteps) {
-                    // Baseline is behind currentSteps (e.g. state restored from JS/SQLite) - realign baseline
                     initialStepCounterValue = (int) (total - currentSteps);
                     lastCounterTotal = total;
                     rebased = true;
@@ -2469,9 +2490,26 @@ public class WalkService extends Service implements LocationListener, SensorEven
                 publishUpdate();
                 persistState();
             } else if (rebased) {
-                // Persist the fresh baseline immediately so a process death
-                // right after start can still resume against the same counter.
                 persistState();
+            }
+        } else if (event.sensor.getType() == Sensor.TYPE_ACCELEROMETER) {
+            // Accelerometer fallback for devices lacking hardware step sensors
+            if (stepDetectorSensor == null && stepCounterSensor == null) {
+                float x = event.values[0];
+                float y = event.values[1];
+                float z = event.values[2];
+                double mag = Math.sqrt(x * x + y * y + z * z);
+                long now = System.currentTimeMillis();
+                // Step peak detection: magnitude spike > 11.5 m/s^2 with min 320ms interval
+                if (mag > 11.5 && (now - lastAccStepMs > 320)) {
+                    lastAccStepMs = now;
+                    lastStepEventWallMs = now;
+                    currentSteps++;
+                    recomputeDerived();
+                    updateNotification();
+                    publishUpdate();
+                    persistState();
+                }
             }
         }
     }

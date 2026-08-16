@@ -41,12 +41,12 @@ import type {
   Appointment,
   Medication,
   Bill,
-  DocumentItem,
   Birthday,
   Workout,
   WalkSession,
   WaterLog,
   ActivityLog,
+  DocumentItem,
   User,
 } from "./types";
 import type { ProfileStats } from "./api";
@@ -100,12 +100,12 @@ type IntentKind =
   | "medications"
   | "appointments"
   | "bills"
-  | "documents"
   | "birthdays"
   | "workouts"
   | "walks"
   | "water"
   | "activity"
+  | "documents"
   | "profile"
   | "help"
   | "general";
@@ -119,17 +119,6 @@ interface IntentPlan {
 function detectIntent(prompt: string): IntentPlan {
   const q = prompt.toLowerCase().trim();
   const has = (re: RegExp) => re.test(q);
-
-  // Documents / OCR / summarising a specific record
-  if (
-    has(
-      /\b(ocr|scan|scanne[dr]|extract|parse this|read (?:my )?(?:document|prescription|lab|report))\b/,
-    ) ||
-    (has(/\b(document|prescription|lab report|blood test|results?)\b/) &&
-      has(/\b(summar|explain|read|understand|what does|parse)\b/))
-  ) {
-    return { kind: "documents", modules: ["documents"], filters: { limit: 5 } };
-  }
 
   // Medications (check before overview: "what meds do I have today" → meds)
   if (
@@ -147,6 +136,11 @@ function detectIntent(prompt: string): IntentPlan {
     )
   ) {
     return { kind: "appointments", modules: ["appointments"], filters: { limit: 20 } };
+  }
+
+  // Documents / records / vault
+  if (has(/\b(documents?|files?|records?|prescriptions?|reports?|lab|vault|my docs)\b/)) {
+    return { kind: "documents", modules: ["documents"], filters: { limit: 50 } };
   }
 
   // Bills / finance
@@ -359,7 +353,6 @@ function buildBuiltInReply(prompt: string, data: FetchedData): string {
       );
     case "documents":
       return replyDocuments(
-        prompt,
         data.results.find((r) => r.module === "documents")?.items as DocumentItem[] | undefined,
       );
     case "birthdays":
@@ -402,7 +395,6 @@ function replyHelp(): string {
     "✅ **Tasks** — prioritise your day and clear your list",
     "🏋️ **Workouts & Walks** — today's sessions, distance, and steps",
     "💧 **Hydration** — glasses vs your daily goal",
-    "📄 **Documents** — summarise a prescription or lab report you uploaded",
     '☀️ **Day overview** — ask "What should I do today?" for a live snapshot',
   ];
   return [
@@ -649,47 +641,26 @@ function replyBills(bills: Bill[] | undefined): string {
   return lines.join("\n");
 }
 
-function replyDocuments(prompt: string, docs: DocumentItem[] | undefined): string {
-  const items = docs || [];
+function replyDocuments(documents: DocumentItem[] | undefined): string {
+  const items = documents || [];
   if (items.length === 0) {
     return [
-      "📄 **Document summary**",
+      "📄 **Documents**",
       "",
       NO_DATA_PHRASE,
       "",
-      "Upload a document in the **Document Vault** first, then ask me about it and I'll use its real contents.",
-      "",
-      `_${MEDICAL_DISCLAIMER}_`,
+      "Add documents on the **Documents** tab and I'll list them, explain what they are, or help you prepare for appointments with them.",
     ].join("\n");
   }
-
-  // Match the document the user is asking about (by name in their prompt), else the newest.
-  const q = prompt.toLowerCase();
-  const target =
-    items.find((d) => q.includes(d.name.toLowerCase())) || items.find((d) => d.summary) || items[0];
-
-  if (!target.summary) {
-    return [
-      "📄 **Document summary**",
-      "",
-      `I found **${target.name}** (${target.category}) in your Document Vault, but it has no readable content or summary stored, so I can't summarise it without inventing details.`,
-      "",
-      "Add a summary to the document (or re-upload it) in the **Document Vault** and I'll work from its real contents.",
-      "",
-      `_${MEDICAL_DISCLAIMER}_`,
-    ].join("\n");
-  }
-
   return [
-    "📄 **Document summary**",
+    "📄 **Your Documents**",
     "",
-    `**${target.name}** (${target.category})`,
+    ...items.map(
+      (d) =>
+        `- **${d.name}** (${d.category})${d.file_type ? ` — ${d.file_type}` : ""}${d.created_at ? ` · uploaded ${new Date(d.created_at).toLocaleDateString()}` : ""}`,
+    ),
     "",
-    `**What it says:** ${target.summary}`,
-    "",
-    "> Tip: keep the original in your Vault and ask me follow-up questions about it anytime.",
-    "",
-    `_${MEDICAL_DISCLAIMER}_`,
+    `You have **${items.length}** document${items.length === 1 ? "" : "s"} in your vault.`,
   ].join("\n");
 }
 
@@ -856,7 +827,7 @@ function replyGeneral(prompt: string): string {
     "",
     "This is general information only — it is **not** from your account data, and I won't pretend otherwise.",
     "",
-    "If you'd like answers based on your own real data, ask me about your medications, appointments, bills, tasks, workouts, water, or documents — I'll fetch them live.",
+    "If you'd like answers based on your own real data, ask me about your medications, appointments, bills, tasks, workouts, or water — I'll fetch them live.",
     "",
     `_${MEDICAL_DISCLAIMER}_`,
   ].join("\n");

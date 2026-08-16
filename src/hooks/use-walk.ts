@@ -151,21 +151,19 @@ export function useWalk(
   isAutoPausedRef.current = isAutoPaused;
   const isNative = Capacitor.isNativePlatform();
 
-  // Calculate real calories based on elapsed time (MET-based formula).
-  // MET_WALKING (3.5) × weight × duration_hours — recomputed from the current
-  // duration on every tick, so it can never stay at 0 while a walk runs and
-  // never drifts out of sync with the native service (which uses the same
-  // formula on the same inputs).
+  // Calculate real calories based on actual movement (distance & steps).
+  // Standard energy expenditure for walking is ~0.755 kcal / kg / km.
+  // When the user has not moved (0 km, 0 steps), calories strictly remain 0.
   useEffect(() => {
-    if (duration === 0) {
+    const distKm = distance / 1000;
+    if (distKm <= 0.001 && steps === 0) {
       setCalories(0);
       return;
     }
-    const met = 3.5;
-    const weightKg = userWeightKg > 0 ? userWeightKg : 0;
-    const kcal = met * weightKg * (duration / 3600);
+    const weightKg = userWeightKg > 0 ? userWeightKg : 70;
+    const kcal = weightKg * distKm * 0.755;
     setCalories((prev) => Math.max(prev, Math.round(kcal)));
-  }, [duration, userWeightKg]);
+  }, [distance, steps, userWeightKg]);
 
   // Active Timer Loop
   useEffect(() => {
@@ -240,7 +238,7 @@ export function useWalk(
       if (data.durationSec > 0) {
         setDuration((prev) => Math.max(prev, data.durationSec));
       }
-      if (data.calories > 0) {
+      if (typeof data.calories === "number" && data.calories >= 0) {
         setCalories((prev) => Math.max(prev, Math.round(data.calories)));
       }
     }
@@ -328,78 +326,87 @@ export function useWalk(
     }
   }, []);
 
-  // Restore in-progress walk after reload. Placed after applyNativeStatus
-  // (stable useCallback) so the re-arm path can reuse the native snapshot
-  // sync logic.
+  // Restore in-progress walk after reload.
   useEffect(() => {
     if (!userId) return;
     let cancelled = false;
     (async () => {
       try {
+        let nativeStatus: WalkStatusUpdate | null = null;
+        if (isNative) {
+          try {
+            nativeStatus = await WalkServicePlugin.getStatus();
+          } catch (e) {
+            console.warn("Failed to check native status during restore:", e);
+          }
+        }
+
+        const isNativeTracking = !!(nativeStatus && nativeStatus.tracking);
         const abandoned = await getAbandonedWalkSessions(userId);
         if (cancelled || userActedRef.current) return;
         const latest = abandoned[0];
-        // Restore the latest session when it is RECENT (started within the last
-        // 12h), not merely "today": a genuine walk started 23:50 yesterday and
-        // opened 00:10 today has day = yesterday, so the calendar-day check
-        // alone would cancel a real in-progress walk (data loss) the moment it
-        // crossed midnight.
         const startedAtMs = latest?.started_at ? new Date(latest.started_at).getTime() : 0;
         const isRecent =
           Number.isFinite(startedAtMs) && Date.now() - startedAtMs < 12 * 60 * 60 * 1000;
-        const restoreSession = !!latest && isRecent && (latest.duration || 0) > 0;
+        const restoreSession = isNativeTracking || (!!latest && isRecent);
 
         if (restoreSession) {
-          setActiveSession(latest);
-          setStatus("paused");
-          setDuration(latest.duration || 0);
-          setDistance(latest.distance || 0);
-          setCalories(latest.calories || 0);
-          setSteps(latest.steps || 0);
-          setVehicleFlagged(!!latest.vehicle);
-          const path = latest.path || [];
-          setLastCoords(
-            path.length > 0
-              ? { lat: path[path.length - 1].lat, lng: path[path.length - 1].lng }
-              : null,
-          );
-          abandoned.slice(1).forEach((s) => {
-            cancelWalkSession(s.id, userId).catch(() => {});
-          });
+          const sessionToUse: WalkSession = latest || {
+            id: nativeStatus?.sessionId || "current_session",
+            user_id: userId,
+            status: "active",
+            duration: nativeStatus?.durationSec || 0,
+            distance: Math.round((nativeStatus?.distanceKm || 0) * 1000),
+            calories: Math.round(nativeStatus?.calories || 0),
+            steps: nativeStatus?.steps || 0,
+            started_at: new Date(Date.now() - (nativeStatus?.durationSec || 0) * 1000).toISOString(),
+            day: todayLocalDate(),
+            path: [],
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          };
 
-          // Re-arm the native foreground walk service so the recovered walk
-          // keeps its OS notification and background tracking instead of
-          // silently degrading to JS-only tracking. The service is started
-          // PAUSED: the walk stays frozen exactly where Firestore left it
-          // until the user taps Resume (matching the in-app "Walk Paused"
-          // state). Native startForegroundTracking() merges the persisted
-          // counters, so the dead process's freshest snapshot is never lost.
-          if (isNative && !restoredRef.current) {
+          setActiveSession(sessionToUse);
+          if (nativeStatus && nativeStatus.tracking) {
+            setStatus(nativeStatus.paused ? "paused" : "active");
+            applyNativeStatus(nativeStatus);
+          } else {
+            setStatus("paused");
+            setDuration(latest?.duration || 0);
+            setDistance(latest?.distance || 0);
+            setCalories(latest?.calories || 0);
+            setSteps(latest?.steps || 0);
+            setVehicleFlagged(!!latest?.vehicle);
+            const path = latest?.path || [];
+            setLastCoords(
+              path.length > 0
+                ? { lat: path[path.length - 1].lat, lng: path[path.length - 1].lng }
+                : null,
+            );
+          }
+
+          if (abandoned.length > 1) {
+            abandoned.slice(1).forEach((s) => {
+              cancelWalkSession(s.id, userId).catch(() => {});
+            });
+          }
+
+          // Re-arm native foreground walk service if not already tracking
+          if (isNative && !restoredRef.current && !isNativeTracking && latest) {
             restoredRef.current = true;
             try {
-              const st = await WalkServicePlugin.getStatus();
-              if (st && st.tracking) {
-                // The OS already restarted the foreground service on its own
-                // (START_STICKY + stopWithTask="false") and it kept tracking
-                // in the background — it is the authoritative source, so just
-                // resync the UI with its current snapshot.
-                applyNativeStatus(st);
-              } else {
-                await Notifications.startWalkForeground(
-                  (latest.distance || 0) / 1000,
-                  latest.steps || 0,
-                  latest.duration || 0,
-                  latest.calories || 0,
-                  0,
-                  userWeightKgRef.current,
-                  latest.id,
-                  true, // start paused — user resumes deliberately
-                );
-                // Sync the re-armed service's (possibly fresher) persisted
-                // counters into the UI.
-                const st2 = await WalkServicePlugin.getStatus();
-                if (st2) applyNativeStatus(st2);
-              }
+              await Notifications.startWalkForeground(
+                (latest.distance || 0) / 1000,
+                latest.steps || 0,
+                latest.duration || 0,
+                latest.calories || 0,
+                0,
+                userWeightKgRef.current,
+                latest.id,
+                true, // start paused — user resumes deliberately
+              );
+              const st2 = await WalkServicePlugin.getStatus();
+              if (st2) applyNativeStatus(st2);
             } catch (e) {
               console.warn("Failed to re-arm native walk service after restore:", e);
             }
@@ -579,36 +586,8 @@ export function useWalk(
       lastMotionTimeRef.current = Date.now();
 
       if (isNative) {
-        try {
-          const avail = await StepCounter.isAvailable();
-          if (avail.available && !nativeActiveRef.current) {
-            await StepCounter.startStepping();
-            const listener = await StepCounter.addListener("stepEvent", (data) => {
-              lastMotionTimeRef.current = Date.now();
-              if (nativeActiveRef.current) return; // native steps are authoritative
-              jsStepsRef.current += data.increment;
-              setSteps(jsStepsRef.current);
-              // Step-derived distance floor — mirrors the native rule
-              // (distance = max(GPS distance, steps × stride)) so a walk with
-              // poor GPS never reports 0.00 km while steps are counting.
-              if (!nativeActiveRef.current) {
-                setDistance((prev) => Math.max(prev, Math.round(jsStepsRef.current * 0.762)));
-              }
-              if (isAutoPausedRef.current) {
-                setStatus("active");
-                setIsAutoPaused(false);
-              }
-            });
-            cleanupListener = () => {
-              listener.remove();
-              StepCounter.stopStepping().catch(() => {});
-            };
-            stepCleanupRef.current = cleanupListener;
-            return;
-          }
-        } catch (err) {
-          console.warn("Native step counter unavailable fallback to motion events:", err);
-        }
+        // Native WalkService foreground service already tracks hardware step sensors
+        return;
       }
 
       // Fallback: Web DeviceMotion Accelerometer Peak Detection Filter
@@ -898,7 +877,32 @@ export function useWalk(
 
   // Finish Walk Session
   const finishWalk = useCallback(async () => {
-    if (!activeSession || !userId) return null;
+    let sessionObj = activeSession;
+    if (!sessionObj && userId && isNative) {
+      try {
+        const data = await WalkServicePlugin.getStatus();
+        if (data && data.tracking) {
+          sessionObj = {
+            id: data.sessionId || "current_session",
+            user_id: userId,
+            status: "active",
+            duration: data.durationSec || 0,
+            distance: Math.round((data.distanceKm || 0) * 1000),
+            calories: Math.round(data.calories || 0),
+            steps: data.steps || 0,
+            started_at: new Date(Date.now() - (data.durationSec || 0) * 1000).toISOString(),
+            day: todayLocalDate(),
+            path: [],
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          };
+          setActiveSession(sessionObj);
+        }
+      } catch (e) {
+        console.warn("Failed to recover active session from native status:", e);
+      }
+    }
+    if (!sessionObj || !userId) return null;
     userActedRef.current = true;
     setLoading(true);
     try {
@@ -942,7 +946,7 @@ export function useWalk(
         // the activity ends.
         try {
           const route = await WalkServicePlugin.getRoutePoints({
-            sessionId: activeSession.id,
+            sessionId: sessionObj.id,
           });
           if (route && route.points) {
             const parsed = JSON.parse(route.points) as WalkRoutePoint[];
@@ -1039,15 +1043,15 @@ export function useWalk(
       const endLat = routeEnd?.lat ?? lastCoords?.lat ?? null;
       const endLng = routeEnd?.lng ?? lastCoords?.lng ?? null;
 
-      const finalCaloriesValue = Math.max(
-        finalCalories,
-        Math.round(3.5 * (userWeightKg > 0 ? userWeightKg : 0) * (finalDuration / 3600)),
-      );
+      const finalEffectiveWeight = userWeightKg > 0 ? userWeightKg : 70;
+      const finalCaloriesValue = (resolvedDistance > 1 || finalSteps > 0)
+        ? Math.max(finalCalories, Math.round(finalEffectiveWeight * (resolvedDistance / 1000) * 0.755))
+        : 0;
 
       // Create walk summary for local SQLite storage
       const now = new Date().toISOString();
       const summary: WalkSummary = {
-        id: activeSession.id,
+        id: sessionObj.id,
         user_id: userId,
         status: isStray ? "cancelled" : "finished",
         duration: finalDuration,
@@ -1062,7 +1066,7 @@ export function useWalk(
         elevation_gain: stats.elevationGain,
         elevation_loss: stats.elevationLoss,
         day: todayLocalDate(),
-        started_at: activeSession.started_at,
+        started_at: sessionObj.started_at,
         finished_at: now,
         encoded_polyline: encodedPolyline,
         start_lat: startLat,
@@ -1071,13 +1075,13 @@ export function useWalk(
         end_lng: endLng,
         photo_urls: [],
         vehicle_flagged: finalVehicleFlagged,
-        created_at: activeSession.created_at,
+        created_at: sessionObj.created_at || now,
         updated_at: now,
       };
 
       // Convert splits to WalkSplit format
       const splits: WalkSplit[] = stats.splits.map((split) => ({
-        session_id: activeSession.id,
+        session_id: sessionObj.id,
         split_number: split.splitNumber,
         distance: split.distance,
         duration: split.duration,
@@ -1089,7 +1093,7 @@ export function useWalk(
       if (isStray) {
         // Accidentally started session: record as cancelled (audit only).
         try {
-          await cancelWalkSession(activeSession.id, userId);
+          await cancelWalkSession(sessionObj.id, userId);
         } catch (error) {
           console.error("Failed to cancel stray walk session in Firestore:", error);
         }
@@ -1104,12 +1108,12 @@ export function useWalk(
         }
         try {
           await withTimeout(
-            finishWalkSession(activeSession.id, userId, {
+            finishWalkSession(sessionObj.id, userId, {
               duration: finalDuration,
               distance: resolvedDistance,
               calories: finalCaloriesValue,
               steps: finalSteps,
-              day: activeSession.day || todayLocalDate(),
+              day: sessionObj.day || todayLocalDate(),
               finished_at: now,
               path: finalPath.length > 0 ? finalPath : null,
               vehicle: finalVehicleFlagged,
@@ -1149,12 +1153,12 @@ export function useWalk(
       // Free the native SQLite route_points storage — the route now lives in
       // walk_summaries table with encoded polyline
       if (isNative) {
-        WalkServicePlugin.clearRoutePoints({ sessionId: activeSession.id }).catch(() => {});
+        WalkServicePlugin.clearRoutePoints({ sessionId: sessionObj.id }).catch(() => {});
       }
 
       // Create a finished session object for the callback
       const finishedSession: WalkSession = {
-        ...activeSession,
+        ...sessionObj,
         status: isStray ? "cancelled" : "finished",
         duration: finalDuration,
         distance: resolvedDistance,
@@ -1223,6 +1227,8 @@ export function useWalk(
     distance,
     calories,
     steps,
+    path: (activeSession?.path && activeSession.path.length > 0) ? activeSession.path : jsTrailRef.current,
+    lastCoords,
     gpsAvailable,
     nativeTracking,
     vehicleFlagged,

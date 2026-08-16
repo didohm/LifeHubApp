@@ -96,7 +96,12 @@ const MAX_ROUTE_POINTS = 500;
 
 function defaultDeps(): ActivityCardDeps {
   return {
-    createCanvas: () => document.createElement("canvas"),
+    createCanvas: (width: number, height: number) => {
+      const canvas = document.createElement("canvas");
+      canvas.width = width;
+      canvas.height = height;
+      return canvas;
+    },
     loadImage: (src) =>
       new Promise((resolve) => {
         const img = new Image();
@@ -117,6 +122,8 @@ export async function renderActivityCard(
 ): Promise<Blob> {
   const resolved = deps ?? defaultDeps();
   const canvas = resolved.createCanvas(ACTIVITY_CARD_WIDTH, ACTIVITY_CARD_HEIGHT);
+  canvas.width = ACTIVITY_CARD_WIDTH;
+  canvas.height = ACTIVITY_CARD_HEIGHT;
   const ctx = canvas.getContext("2d");
   if (!ctx) throw new Error("Canvas 2D context unavailable");
 

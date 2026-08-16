@@ -1,6 +1,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { registerOverlay } from "@/lib/overlay-registry";
+import { useKeyboard } from "@/hooks/use-keyboard";
 import { cn } from "@/lib/utils";
 
 interface ModalProps {
@@ -40,7 +41,7 @@ export function Modal({
   alignTop = false,
   closeOnBackdrop = true,
 }: ModalProps) {
-  const [keyboardOpen, setKeyboardOpen] = useState(false);
+  const { isKeyboardOpen: keyboardOpen } = useKeyboard();
   const [viewportHeight, setViewportHeight] = useState<number | null>(null);
 
   // Register in the global overlay registry for the whole lifetime of the modal
@@ -49,14 +50,13 @@ export function Modal({
     return registerOverlay();
   }, [open]);
 
-  // Keyboard detection — keep the dialog visible above the on-screen keyboard
+  // Keep track of viewport height when open
   useEffect(() => {
     if (!open) return;
     const vv = window.visualViewport;
     if (!vv) return;
     const onResize = () => {
       setViewportHeight(vv.height);
-      setKeyboardOpen(window.innerHeight - vv.height > 120);
     };
     onResize();
     vv.addEventListener("resize", onResize);

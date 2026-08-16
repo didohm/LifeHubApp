@@ -22,10 +22,9 @@ import {
   ChevronRight,
   HelpCircle,
   Activity,
-  StopCircle,
-  TrendingUp,
-  Brain,
   Zap,
+  Sparkles,
+  Droplets,
 } from "lucide-react";
 import { toast } from "sonner";
 import { motion, AnimatePresence } from "framer-motion";
@@ -33,6 +32,7 @@ import { Screen } from "@/components/lifehub/Screen";
 import { Modal } from "@/components/lifehub/Modal";
 import { useAuth } from "@/hooks/use-auth";
 import { useAuthGuard } from "@/hooks/use-auth-guard";
+import { useKeyboard } from "@/hooks/use-keyboard";
 import { generateAssistantReply } from "@/lib/ai-provider";
 import {
   getAiConversations,
@@ -54,39 +54,43 @@ export const Route = createFileRoute("/ai")({
   component: AiPage,
 });
 
-// ─── Quick Action Cards (Empty State) ────────────────────────────────
+// ─── Quick Action Cards (Empty State 2x2 Grid) ───────────────────────
 const quickActions = [
   {
     icon: Pill,
     title: "Medication Plan",
-    desc: "Dosage, schedule & safety",
-    prompt: "Walk me through my current medication schedule — what I should take and when.",
-    color: "from-blue-500/10 to-sky-500/10 border-sky-500/20 text-sky-700",
-    badge: "Prescriptions",
+    desc: "Dosage & schedule",
+    prompt: "Walk me through my current medication schedule — what I should take and when, plus any safety precautions.",
+    bgGradient: "bg-gradient-to-br from-sky-50 to-blue-50/70 border-sky-200/80 text-sky-900",
+    iconBg: "bg-sky-500/15 text-sky-600",
+    accentHover: "hover:border-sky-400 hover:shadow-sky-100",
   },
   {
     icon: Calendar,
-    title: "Doctor Appointment",
-    desc: "Questions & prep notes",
-    prompt: "I have an upcoming doctor appointment. Help me prepare questions to ask and documents to bring.",
-    color: "from-amber-500/10 to-orange-500/10 border-amber-500/20 text-amber-700",
-    badge: "Preparation",
+    title: "Doctor Visit",
+    desc: "Prep & questions",
+    prompt: "I have an upcoming doctor appointment. Help me prepare important questions to ask and notes to review.",
+    bgGradient: "bg-gradient-to-br from-amber-50 to-orange-50/70 border-amber-200/80 text-amber-900",
+    iconBg: "bg-amber-500/15 text-amber-600",
+    accentHover: "hover:border-amber-400 hover:shadow-amber-100",
   },
   {
     icon: ScrollText,
     title: "Health Summary",
-    desc: "Overview of your health data",
-    prompt: "Summarize all my health records — medications, appointments, and recent activities.",
-    color: "from-purple-500/10 to-indigo-500/10 border-purple-500/20 text-purple-700",
-    badge: "Records",
+    desc: "Records & vitals",
+    prompt: "Summarize all my health data — medications, appointments, and recent activities.",
+    bgGradient: "bg-gradient-to-br from-purple-50 to-indigo-50/70 border-purple-200/80 text-purple-900",
+    iconBg: "bg-purple-500/15 text-purple-600",
+    accentHover: "hover:border-purple-400 hover:shadow-purple-100",
   },
   {
     icon: Leaf,
     title: "Daily Wellness",
-    desc: "Actionable routine advice",
-    prompt: "Give me personalized wellness and hydration tips based on my recent activity.",
-    color: "from-emerald-500/10 to-teal-500/10 border-emerald-500/20 text-emerald-700",
-    badge: "Lifestyle",
+    desc: "Habits & routines",
+    prompt: "Give me personalized wellness, hydration, and recovery tips based on my recent routines.",
+    bgGradient: "bg-gradient-to-br from-emerald-50 to-teal-50/70 border-emerald-200/80 text-emerald-900",
+    iconBg: "bg-emerald-500/15 text-emerald-600",
+    accentHover: "hover:border-emerald-400 hover:shadow-emerald-100",
   },
 ];
 
@@ -97,14 +101,15 @@ const suggestedPrompts = [
   { icon: Calendar, label: "Next upcoming appointment?" },
   { icon: FileText, label: "Explain my lab results" },
   { icon: HelpCircle, label: "How to improve my sleep?" },
+  { icon: Droplets, label: "Check my hydration goal" },
 ];
 
 // ─── Follow-up Prompts ───────────────────────────────────────────────
 const defaultFollowUps = [
   "Can you explain this in simpler terms?",
-  "What steps should I take next?",
+  "What actionable steps should I take next?",
   "Are there any side effects or precautions?",
-  "Summarize key takeaways as a bulleted checklist",
+  "Summarize key takeaways as a checklist",
 ];
 
 // ─── Helper: Time-based greeting ─────────────────────────────────────
@@ -261,7 +266,7 @@ function MarkdownContent({ content }: { content: string }) {
       const text = line.replace(/^[\s]*[-*+]\s/, "");
       elements.push(
         <div key={i} className="flex gap-2 pl-2" style={{ paddingLeft: `${indent + 8}px` }}>
-          <span className="mt-1 size-1.5 shrink-0 rounded-full bg-[#7C5CFC]" />
+          <span className="mt-1.5 size-1.5 shrink-0 rounded-full bg-[#7C5CFC]" />
           <span className="text-[13.5px] leading-relaxed text-foreground/90">{renderInline(text)}</span>
         </div>,
       );
@@ -352,7 +357,7 @@ function TypingIndicator({ onStop }: { onStop?: () => void }) {
             style={{ animationDelay: "300ms" }}
           />
         </div>
-        <span className="text-xs font-semibold text-muted-foreground">Thinking...</span>
+        <span className="text-xs font-semibold text-muted-foreground">Analyzing your health data...</span>
         {onStop && (
           <button
             onClick={onStop}
@@ -371,7 +376,10 @@ function TypingIndicator({ onStop }: { onStop?: () => void }) {
 function AiPage() {
   const { user, firebaseUser, loading: authLoading } = useAuth();
   useAuthGuard(user, authLoading);
-  
+
+  const { isKeyboardOpen, isInputFocused } = useKeyboard();
+  const [isLocalFocused, setIsLocalFocused] = useState(false);
+
   const chatEndRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -387,20 +395,10 @@ function AiPage() {
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
   const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
   const [showScrollBottom, setShowScrollBottom] = useState(false);
-  const [isKeyboardOpen, setIsKeyboardOpen] = useState(false);
   const [historySearch, setHistorySearch] = useState("");
 
-  // Track virtual keyboard on mobile devices
-  useEffect(() => {
-    if (typeof window === "undefined" || !window.visualViewport) return;
-    const vv = window.visualViewport;
-    const handleResize = () => {
-      const keyboardActive = window.innerHeight - vv.height > 60;
-      setIsKeyboardOpen(keyboardActive);
-    };
-    vv.addEventListener("resize", handleResize);
-    return () => vv.removeEventListener("resize", handleResize);
-  }, []);
+  const hasConversation = messages.length > 0;
+  const isTyping = isKeyboardOpen || isInputFocused || isLocalFocused;
 
   // Load conversations
   const loadConvs = useCallback(async () => {
@@ -429,9 +427,14 @@ function AiPage() {
     if (activeConvId && user) {
       getAiMessages(activeConvId, user.id).then((msgs) => {
         setMessages(msgs);
-        setTimeout(() => {
-          chatEndRef.current?.scrollIntoView({ behavior: "instant" });
-        }, 50);
+        if (msgs.length > 0) {
+          setTimeout(() => {
+            chatEndRef.current?.scrollIntoView({ behavior: "instant" });
+          }, 60);
+        } else if (scrollContainerRef.current) {
+          // Keep empty state scrolled to top
+          scrollContainerRef.current.scrollTop = 0;
+        }
       });
     }
   }, [activeConvId, user]);
@@ -441,24 +444,27 @@ function AiPage() {
     const el = scrollContainerRef.current;
     if (!el) return;
     const distanceToBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
-    setShowScrollBottom(distanceToBottom > 180);
+    setShowScrollBottom(distanceToBottom > 160 && hasConversation);
   };
 
   const scrollToBottom = (smooth = true) => {
+    if (!hasConversation && !loading) return;
     chatEndRef.current?.scrollIntoView({ behavior: smooth ? "smooth" : "auto" });
   };
 
-  // Auto scroll on new messages
+  // Auto scroll on new messages or generation
   useEffect(() => {
-    scrollToBottom(true);
-  }, [messages, loading]);
+    if (messages.length > 0 || loading) {
+      scrollToBottom(true);
+    }
+  }, [messages.length, loading]);
 
   // Auto-resize textarea
   useEffect(() => {
     const ta = textareaRef.current;
     if (ta) {
       ta.style.height = "auto";
-      ta.style.height = `${Math.min(ta.scrollHeight, 140)}px`;
+      ta.style.height = `${Math.min(ta.scrollHeight, 130)}px`;
     }
   }, [inputPrompt]);
 
@@ -530,6 +536,9 @@ function AiPage() {
       setActiveConvId(newConv.id);
       setMessages([]);
       setHistoryModalOpen(false);
+      if (scrollContainerRef.current) {
+        scrollContainerRef.current.scrollTop = 0;
+      }
       toast.success("New conversation started");
     } catch {
       toast.error("Failed to start new chat");
@@ -583,7 +592,6 @@ function AiPage() {
     }
   };
 
-  const hasConversation = messages.length > 0;
   const filteredConversations = conversations.filter((c) =>
     (c.title || "Health Chat").toLowerCase().includes(historySearch.toLowerCase()),
   );
@@ -591,7 +599,7 @@ function AiPage() {
   return (
     <Screen fullHeight noBottomPadding contentClassName="px-3 sm:px-5">
       {/* ════════════════════════════════════════════════════════════
-          APP HEADER — Fixed Top Bar
+          APP HEADER — Clean Fixed Top Bar
           ════════════════════════════════════════════════════════════ */}
       <header className="flex items-center justify-between pb-3 border-b border-border/40 shrink-0">
         <Link to="/profile" className="flex items-center gap-2.5 group">
@@ -671,78 +679,85 @@ function AiPage() {
       <div
         ref={scrollContainerRef}
         onScroll={handleScroll}
-        className="flex-1 min-h-0 overflow-y-auto overscroll-contain py-3 px-1 space-y-4 scroll-smooth"
+        className="flex-1 min-h-0 overflow-y-auto overscroll-contain py-2.5 px-0.5 space-y-3.5 scroll-smooth"
         role="log"
         aria-label="Chat conversation"
         aria-live="polite"
       >
         {!hasConversation ? (
-          /* Empty / Welcome State */
-          <div className="space-y-4 pt-1 pb-4">
-            {/* Welcome Banner */}
+          /* Empty / Welcome State — Compact, balanced, non-overflowing */
+          <div className="space-y-3.5 pt-1 pb-3">
+            {/* Hero Welcome Banner */}
             <motion.div
-              initial={{ opacity: 0, scale: 0.97 }}
-              animate={{ opacity: 1, scale: 1 }}
-              transition={{ duration: 0.3 }}
-              className="rounded-3xl bg-gradient-to-br from-[#EAE6FF] via-[#F4F1FF] to-[#FAF8FF] p-4 sm:p-5 border border-[#7C5CFC]/20 shadow-xs relative overflow-hidden"
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.25 }}
+              className="rounded-3xl bg-gradient-to-br from-[#ECE8FF] via-[#F5F2FF] to-[#FAF8FF] p-4 sm:p-5 border border-[#7C5CFC]/25 shadow-xs relative overflow-hidden"
             >
               <div className="flex items-center justify-between gap-3 relative z-10">
                 <div className="max-w-[70%]">
-                  <span className="inline-flex items-center gap-1.5 rounded-full bg-white/90 px-3 py-1 text-[11px] font-black text-[#7C5CFC] shadow-xs">
-                    <Bot className="size-3 text-[#7C5CFC]" /> Personal Health AI
+                  <span className="inline-flex items-center gap-1 rounded-full bg-white/95 px-2.5 py-0.5 text-[10.5px] font-extrabold text-[#7C5CFC] shadow-2xs border border-[#7C5CFC]/15">
+                    <Sparkles className="size-3 text-[#7C5CFC]" /> Clinical & Wellness AI
                   </span>
-                  <h2 className="mt-2 text-base sm:text-lg font-black text-[#12131A] tracking-tight">
+                  <h2 className="mt-1.5 text-base sm:text-lg font-black text-[#12131A] tracking-tight leading-snug">
                     How can I assist your health today?
                   </h2>
-                  <p className="mt-1 text-xs font-medium text-[#6B7280] leading-relaxed">
-                    Ask about your medications, doctor visits, health history, or daily routines.
+                  <p className="mt-0.5 text-[11.5px] font-medium text-[#6B7280] leading-relaxed">
+                    Ask about medications, appointments, health records, or daily wellness routines.
                   </p>
                 </div>
                 <img
                   src="/illustration/ai-robot.png"
                   alt="AI Assistant"
-                  className="h-20 w-20 sm:h-24 sm:w-24 object-contain shrink-0 drop-shadow-[0_8px_16px_rgba(124,92,252,0.25)]"
+                  className="h-16 w-16 sm:h-20 sm:w-20 object-contain shrink-0 drop-shadow-[0_6px_14px_rgba(124,92,252,0.22)]"
                 />
               </div>
             </motion.div>
 
-            {/* Quick Action Prompt Cards */}
+            {/* Quick Action Prompt Cards — High-density 2x2 Grid */}
             <div>
-              <p className="text-xs font-bold text-muted-foreground uppercase tracking-wider mb-2.5 px-1">
-                Suggested Actions
-              </p>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+              <div className="flex items-center justify-between px-1 mb-2">
+                <p className="text-[11px] font-bold text-muted-foreground uppercase tracking-wider">
+                  Suggested Actions
+                </p>
+                <span className="text-[10px] text-muted-foreground/80 font-medium">Tap to ask</span>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2.5">
                 {quickActions.map((action, idx) => (
                   <motion.button
                     key={action.title}
-                    initial={{ opacity: 0, y: 10 }}
+                    initial={{ opacity: 0, y: 8 }}
                     animate={{ opacity: 1, y: 0 }}
-                    transition={{ duration: 0.25, delay: idx * 0.05 }}
-                    whileTap={{ scale: 0.98 }}
+                    transition={{ duration: 0.2, delay: idx * 0.04 }}
+                    whileTap={{ scale: 0.97 }}
                     onClick={() => {
                       sounds.playCardClick();
                       handleSend(action.prompt);
                     }}
                     className={cn(
-                      "tap group flex items-start gap-3 rounded-2xl border bg-card p-3.5 text-left shadow-xs hover:shadow-md hover:border-[#7C5CFC]/30 transition-all",
+                      "tap group flex flex-col justify-between rounded-2xl border p-3 text-left shadow-2xs transition-all",
+                      action.bgGradient,
+                      action.accentHover,
                     )}
                   >
-                    <div
-                      className={cn(
-                        "flex size-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br transition-transform group-hover:scale-105",
-                        action.color,
-                      )}
-                    >
-                      <action.icon className="size-5" />
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center justify-between">
-                        <span className="text-xs font-bold text-foreground group-hover:text-[#7C5CFC] transition-colors">
-                          {action.title}
-                        </span>
-                        <ChevronRight className="size-3.5 text-muted-foreground/60 group-hover:translate-x-0.5 transition-transform" />
+                    <div className="flex items-center justify-between w-full mb-2">
+                      <div
+                        className={cn(
+                          "flex size-8 shrink-0 items-center justify-center rounded-xl transition-transform group-hover:scale-105 shadow-2xs",
+                          action.iconBg,
+                        )}
+                      >
+                        <action.icon className="size-4" />
                       </div>
-                      <p className="mt-0.5 text-[11px] text-muted-foreground leading-snug line-clamp-2">
+                      <ChevronRight className="size-3.5 text-muted-foreground/60 group-hover:translate-x-0.5 group-hover:text-foreground transition-all" />
+                    </div>
+
+                    <div>
+                      <h4 className="text-xs font-extrabold tracking-tight group-hover:text-[#7C5CFC] transition-colors leading-tight">
+                        {action.title}
+                      </h4>
+                      <p className="mt-0.5 text-[10.5px] text-muted-foreground leading-snug line-clamp-1">
                         {action.desc}
                       </p>
                     </div>
@@ -753,10 +768,10 @@ function AiPage() {
 
             {/* Starter Prompt Chips */}
             <div>
-              <p className="text-xs font-bold text-muted-foreground uppercase tracking-wider mb-2 px-1">
+              <p className="text-[11px] font-bold text-muted-foreground uppercase tracking-wider mb-2 px-1">
                 Quick Questions
               </p>
-              <div className="flex flex-wrap gap-2">
+              <div className="flex flex-wrap gap-1.5">
                 {suggestedPrompts.map((prompt) => (
                   <button
                     key={prompt.label}
@@ -764,9 +779,9 @@ function AiPage() {
                       sounds.playClick();
                       handleSend(prompt.label);
                     }}
-                    className="tap inline-flex items-center gap-1.5 rounded-full border border-border/70 bg-white px-3.5 py-1.5 text-xs font-semibold text-foreground/85 shadow-2xs hover:bg-slate-50 hover:border-[#7C5CFC]/40 transition-all active:scale-95"
+                    className="tap inline-flex items-center gap-1.5 rounded-full border border-border/70 bg-white px-3 py-1.5 text-xs font-semibold text-foreground/85 shadow-2xs hover:bg-slate-50 hover:border-[#7C5CFC]/40 hover:text-[#7C5CFC] transition-all active:scale-95"
                   >
-                    <prompt.icon className="size-3.5 text-[#7C5CFC]" />
+                    <prompt.icon className="size-3 text-[#7C5CFC]" />
                     <span>{prompt.label}</span>
                   </button>
                 ))}
@@ -775,7 +790,7 @@ function AiPage() {
           </div>
         ) : (
           /* Active Messages Thread */
-          <div className="space-y-4">
+          <div className="space-y-3.5 pb-2">
             <AnimatePresence initial={false}>
               {messages.map((m) => (
                 <motion.div
@@ -784,31 +799,31 @@ function AiPage() {
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ duration: 0.18 }}
                   className={cn(
-                    "flex items-start gap-2.5",
+                    "flex items-start gap-2",
                     m.role === "user" ? "flex-row-reverse" : "",
                   )}
                 >
                   {/* Avatar */}
                   <div
                     className={cn(
-                      "flex size-8 shrink-0 items-center justify-center rounded-full text-xs font-bold shadow-xs",
+                      "flex size-7 sm:size-8 shrink-0 items-center justify-center rounded-full text-xs font-bold shadow-xs",
                       m.role === "user" ? "bg-slate-900 text-white" : "bg-[#7C5CFC]/15 text-[#7C5CFC]",
                     )}
                   >
                     {m.role === "user" ? (
-                      <UserIcon className="size-4" />
+                      <UserIcon className="size-3.5 sm:size-4" />
                     ) : (
-                      <Bot className="size-4" />
+                      <Bot className="size-3.5 sm:size-4" />
                     )}
                   </div>
 
                   {/* Message Bubble */}
                   <div
                     className={cn(
-                      "relative max-w-[88%] sm:max-w-[82%] px-4 py-3 text-[13.5px] leading-relaxed shadow-xs",
+                      "relative max-w-[88%] sm:max-w-[82%] px-3.5 py-2.5 sm:px-4 sm:py-3 text-[13.5px] leading-relaxed shadow-xs",
                       m.role === "user"
                         ? "bg-slate-900 text-white rounded-3xl rounded-tr-sm"
-                        : "bg-white border border-[#7C5CFC]/15 text-foreground rounded-3xl rounded-tl-sm",
+                        : "bg-white border border-[#7C5CFC]/20 text-foreground rounded-3xl rounded-tl-sm",
                     )}
                   >
                     {m.role === "assistant" ? (
@@ -817,7 +832,7 @@ function AiPage() {
 
                         {/* Copy & Status Bar */}
                         <div className="mt-2.5 pt-2 flex items-center justify-between border-t border-border/40 text-[10.5px] text-muted-foreground">
-                          <span className="font-medium">LifeHub Assistant</span>
+                          <span className="font-semibold text-[#7C5CFC]">LifeHub Clinical AI</span>
                           <button
                             onClick={() => handleCopy(m.content, m.id)}
                             className="flex items-center gap-1 rounded-md px-2 py-0.5 font-semibold text-[#7C5CFC] hover:bg-[#7C5CFC]/10 transition-colors"
@@ -855,7 +870,7 @@ function AiPage() {
               <motion.div
                 initial={{ opacity: 0, y: 6 }}
                 animate={{ opacity: 1, y: 0 }}
-                className="pt-2 pl-10 flex flex-wrap gap-1.5"
+                className="pt-1.5 pl-8 sm:pl-10 flex flex-wrap gap-1.5"
               >
                 {defaultFollowUps.map((prompt) => (
                   <button
@@ -864,7 +879,7 @@ function AiPage() {
                       sounds.playClick();
                       handleSend(prompt);
                     }}
-                    className="tap inline-flex items-center gap-1 rounded-full border border-[#7C5CFC]/25 bg-white/90 px-3 py-1 text-[11.5px] font-medium text-[#7C5CFC] hover:bg-[#7C5CFC]/10 active:scale-95 transition-all shadow-2xs"
+                    className="tap inline-flex items-center gap-1 rounded-full border border-[#7C5CFC]/25 bg-white/90 px-2.5 py-1 text-[11px] font-medium text-[#7C5CFC] hover:bg-[#7C5CFC]/10 active:scale-95 transition-all shadow-2xs"
                   >
                     <Zap className="size-3" />
                     <span>{prompt}</span>
@@ -889,7 +904,7 @@ function AiPage() {
               sounds.playClick();
               scrollToBottom(true);
             }}
-            className="absolute right-6 bottom-28 z-20 flex size-9 items-center justify-center rounded-full bg-slate-900 text-white shadow-lg border border-white/20 active:scale-95"
+            className="absolute right-6 bottom-24 z-20 flex size-9 items-center justify-center rounded-full bg-slate-900 text-white shadow-lg border border-white/20 active:scale-95"
             aria-label="Scroll to bottom"
           >
             <ArrowDown className="size-4" />
@@ -903,7 +918,7 @@ function AiPage() {
       <div
         className={cn(
           "w-full shrink-0 transition-all duration-200",
-          isKeyboardOpen ? "pb-2 pt-1" : "pb-24 pt-2",
+          isTyping ? "pb-2 pt-1" : "pb-24 pt-2",
         )}
       >
         <div className="flex items-end gap-2 rounded-3xl border border-border/80 bg-white px-3.5 py-2 shadow-[0_8px_24px_-8px_rgba(18,19,26,0.12)] focus-within:border-[#7C5CFC] focus-within:ring-2 focus-within:ring-[#7C5CFC]/20 transition-all duration-200">
@@ -911,12 +926,14 @@ function AiPage() {
             ref={textareaRef}
             value={inputPrompt}
             onChange={(e) => setInputPrompt(e.target.value)}
+            onFocus={() => setIsLocalFocused(true)}
+            onBlur={() => setIsLocalFocused(false)}
             onKeyDown={handleKeyDown}
-            placeholder="Ask anything about medications, vitals, appointments..."
+            placeholder="Ask about medications, appointments, symptoms..."
             rows={1}
             aria-label="Message input"
             style={{ fontSize: "16px" }}
-            className="flex-1 resize-none bg-transparent py-1.5 text-base sm:text-[15px] text-foreground outline-none placeholder:text-muted-foreground leading-relaxed max-h-[140px]"
+            className="flex-1 resize-none bg-transparent py-1.5 text-base sm:text-[15px] text-foreground outline-none placeholder:text-muted-foreground leading-relaxed max-h-[130px]"
           />
 
           {/* Clear Button */}

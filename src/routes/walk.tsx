@@ -490,7 +490,7 @@ function WalkPage() {
             {showLiveMap && (
               <div className="mt-3 h-56 rounded-2xl overflow-hidden border border-white/20 shadow-md">
                 <Suspense fallback={<div className="h-full bg-slate-900 animate-pulse" />}>
-                  <RouteMap path={path || []} isLive interactive />
+                  <RouteMap points={path || []} interactive />
                 </Suspense>
               </div>
             )}

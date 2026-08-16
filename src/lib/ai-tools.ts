@@ -538,7 +538,7 @@ function serializeItem(module: DataModule, item: Record<string, unknown>): strin
     case "bills":
       return `- ${item.title} — $${Number(item.amount ?? 0).toFixed(2)} (${item.status}, due ${item.due_date}, ${item.category})`;
     case "documents":
-      return `- ${item.name} (${item.category})${item.summary ? ` — ${item.summary}` : ""}`;
+      return `- ${item.name} (${item.category})`;
     case "birthdays":
       return `- ${item.full_name} — ${item.birthday_date}${item.phone_number ? ` (phone: ${item.phone_number})` : ""}`;
     case "workouts":
