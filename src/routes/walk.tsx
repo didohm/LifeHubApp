@@ -119,7 +119,11 @@ function WalkPage() {
       if (!result) return;
       refreshFitness();
       if (result.status === "cancelled") {
+        // Stray/accidental sessions are still surfaced visibly: Finish must
+        // always produce a result on screen. Open the summary modal with the
+        // cancelled session (the toast explains why it wasn't recorded).
         toast.info("Walk cancelled — too short to record. Tap Start to begin again.");
+        setCompletedSession(result);
         return;
       }
       sounds.playWalkFinish();

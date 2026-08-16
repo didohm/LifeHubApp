@@ -78,6 +78,17 @@ function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise
   ]);
 }
 
+/**
+ * Helper: Monotonic merge - updates state only if new value is greater.
+ * Prevents metrics from moving backwards during native/JS handover.
+ */
+function useMonotonicUpdate<T extends number>(
+  setter: React.Dispatch<React.SetStateAction<T>>,
+  newValue: T,
+) {
+  setter((prev) => Math.max(prev, newValue) as T);
+}
+
 export function useWalk(
   userId: string | null | undefined,
   userWeightKg: number = 0,
@@ -129,6 +140,11 @@ export function useWalk(
   // re-run of the restore effect can never restart the service with a stale
   // baseline. Reset when a brand-new walk starts.
   const restoredRef = useRef(false);
+  // In-flight restore effect — startWalk awaits it (with a cap) before tearing
+  // anything down, so a quick Start tap landing in the restore window can
+  // never wipe a walk the restore is about to resurrect (native prefs + the
+  // Firestore session it cancels via getAbandonedWalkSessions).
+  const restorePromiseRef = useRef<Promise<void> | null>(null);
   const userWeightKgRef = useRef(userWeightKg);
   userWeightKgRef.current = userWeightKg;
   // True once the native WalkService has reported at least one live update.
@@ -236,10 +252,10 @@ export function useWalk(
     // never fire freezes the whole card at 0.00 while the native clock runs.
     if (data.tracking) {
       if (data.durationSec > 0) {
-        setDuration((prev) => Math.max(prev, data.durationSec));
+        useMonotonicUpdate(setDuration, data.durationSec);
       }
       if (typeof data.calories === "number" && data.calories >= 0) {
-        setCalories((prev) => Math.max(prev, Math.round(data.calories)));
+        useMonotonicUpdate(setCalories, Math.round(data.calories));
       }
     }
 
@@ -247,7 +263,14 @@ export function useWalk(
       const becameNativeActive = !nativeActiveRef.current;
       nativeActiveRef.current = true;
       setNativeTracking(true);
-      lastMotionTimeRef.current = Date.now();
+      // Only reset the motion clock on the JS→native handover. Resetting it on
+      // every event/poll would keep refreshing it while the user stands still
+      // (the 4s status poll delivers tracking+progress with frozen
+      // updateCount/steps), silently disabling the 12s auto-pause gate below.
+      // Ongoing motion is credited by the updateCount/steps gate at the bottom.
+      if (becameNativeActive) {
+        lastMotionTimeRef.current = Date.now();
+      }
 
       // The native service owns step counting from here on. Tear down the JS
       // StepCounter/devicemotion fallback listener so both never register the
@@ -277,7 +300,12 @@ export function useWalk(
       });
 
       if (data.steps > 0) {
-        setSteps((prev) => Math.max(prev, data.steps));
+        useMonotonicUpdate(setSteps, data.steps);
+      } else if (data.distanceKm > 0.01) {
+        // Sensorless / silent-sensor devices: native GPS distance is the only
+        // movement signal, so mirror the native stride estimate (0.762 m/step)
+        // as a floor — the counter must never sit at 0 while distance moves.
+        useMonotonicUpdate(setSteps, Math.round((data.distanceKm * 1000) / 0.762));
       }
 
       // Feed native GPS fixes into the JS coordinate trail so the path
@@ -330,7 +358,7 @@ export function useWalk(
   useEffect(() => {
     if (!userId) return;
     let cancelled = false;
-    (async () => {
+    const run = (async () => {
       try {
         let nativeStatus: WalkStatusUpdate | null = null;
         if (isNative) {
@@ -420,8 +448,10 @@ export function useWalk(
         console.error("Failed to restore walk session:", e);
       }
     })();
+    restorePromiseRef.current = run;
     return () => {
       cancelled = true;
+      restorePromiseRef.current = null;
     };
   }, [userId, applyNativeStatus, isNative]);
 
@@ -585,10 +615,13 @@ export function useWalk(
     const setupStepTracking = async () => {
       lastMotionTimeRef.current = Date.now();
 
-      if (isNative) {
-        // Native WalkService foreground service already tracks hardware step sensors
-        return;
-      }
+      // No early return on native: the WebView accelerometer fallback also
+      // registers here and only fills the gap while the native foreground
+      // service has produced nothing yet (FGS failed to start — permissions
+      // denied / Android 12+ launch restriction — or the stream is still
+      // warming up). applyNativeStatus tears it down the moment the native
+      // stream reports real progress (becameNativeActive), and every counter
+      // merge is monotonic (Math.max), so the two can never double-count.
 
       // Fallback: Web DeviceMotion Accelerometer Peak Detection Filter
       devicemotionHandler = (event: DeviceMotionEvent) => {
@@ -686,6 +719,15 @@ export function useWalk(
                     Math.round(jsStepsRef.current * 0.762),
                   ),
                 );
+                // GPS-derived step floor (mirrors the native stride estimate):
+                // on devices where the devicemotion stream never fires
+                // (permission denied / unsupported), steps still track the
+                // distance instead of freezing at 0.
+                const impliedSteps = Math.round(gpsDistanceRef.current / 0.762);
+                if (impliedSteps > jsStepsRef.current) {
+                  jsStepsRef.current = impliedSteps;
+                  setSteps(impliedSteps);
+                }
               }
               jsTrailRef.current.push(currentPoint);
               if (isAutoPausedRef.current) {
@@ -735,9 +777,27 @@ export function useWalk(
   // Start Walk Session
   const startWalk = useCallback(async () => {
     if (!userId) return;
-    userActedRef.current = true;
     setLoading(true);
     try {
+      // Wait for the initial restore to settle before touching anything: a
+      // Start tap landing in the restore window would otherwise tear down a
+      // live native walk (stopWalkForeground wipes its prefs) and cancel its
+      // Firestore session. Capped so a hung restore can never block Start.
+      const restorePromise = restorePromiseRef.current;
+      if (restorePromise) {
+        try {
+          await Promise.race([restorePromise, new Promise((resolve) => setTimeout(resolve, 5000))]);
+        } catch {
+          /* restore self-handles errors */
+        }
+        restorePromiseRef.current = null;
+        // The restore may have resurrected an in-progress walk — never tear
+        // it down from a stale Start tap; the UI now shows Resume/Pause.
+        if (statusRef.current === "active" || statusRef.current === "paused") {
+          return;
+        }
+      }
+      userActedRef.current = true;
       // Tear down any live native foreground service FIRST: its SQLite route
       // points and SharedPreferences are keyed on the previous session id. A
       // new walk must not inherit, orphan, or double-own them — the native

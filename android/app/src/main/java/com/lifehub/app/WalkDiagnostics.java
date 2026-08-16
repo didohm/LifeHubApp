@@ -5,16 +5,18 @@ import android.util.Log;
 import org.json.JSONArray;
 import org.json.JSONObject;
 import java.text.SimpleDateFormat;
+import java.util.ArrayList;
 import java.util.Date;
+import java.util.List;
 import java.util.Locale;
 
 /**
  * Diagnostic logging system for WalkService debugging.
  * 
- * Maintains a circular buffer of the last 100 log entries in SharedPreferences,
- * accessible from JS via WalkServicePlugin.getDiagnosticLogs(). Each log entry
- * includes timestamp, category, level, and message for post-mortem analysis
- * of background execution issues on user devices.
+ * Maintains a circular buffer of the last 100 log entries with in-memory buffering
+ * and periodic flushing to SharedPreferences for performance. Accessible from JS via
+ * WalkServicePlugin.getDiagnosticLogs(). Each log entry includes timestamp, category,
+ * level, and message for post-mortem analysis of background execution issues.
  */
 public class WalkDiagnostics {
     
@@ -22,6 +24,8 @@ public class WalkDiagnostics {
     private static final String PREFS_NAME = "lifehub_walk_diagnostics";
     private static final String KEY_LOGS = "diagnostic_logs";
     private static final int MAX_LOG_ENTRIES = 100;
+    private static final int FLUSH_THRESHOLD = 10; // Flush after 10 logs
+    private static final long FLUSH_INTERVAL_MS = 30_000L; // Or flush every 30s
     
     // Log categories for filtering
     public static final String CAT_WAKELOCK = "WakeLock";
@@ -41,46 +45,69 @@ public class WalkDiagnostics {
     
     private final SharedPreferences prefs;
     private final SimpleDateFormat dateFormat;
+    private final List<JSONObject> memoryBuffer;
+    private long lastFlushTimeMs = 0L;
+    private boolean isDirty = false;
     
     public WalkDiagnostics(android.content.Context context) {
         this.prefs = context.getSharedPreferences(PREFS_NAME, android.content.Context.MODE_PRIVATE);
         this.dateFormat = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.US);
+        this.memoryBuffer = new ArrayList<>();
+        this.lastFlushTimeMs = System.currentTimeMillis();
+        
+        // Load existing logs from SharedPreferences into memory buffer on init
+        loadFromPreferences();
+    }
+    
+    /**
+     * Load existing logs from SharedPreferences into memory buffer on initialization.
+     */
+    private synchronized void loadFromPreferences() {
+        try {
+            String logsJson = prefs.getString(KEY_LOGS, "[]");
+            JSONArray array = new JSONArray(logsJson);
+            memoryBuffer.clear();
+            for (int i = 0; i < array.length(); i++) {
+                memoryBuffer.add(array.getJSONObject(i));
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to load logs from SharedPreferences", e);
+            memoryBuffer.clear();
+        }
     }
     
     /**
      * Logs a diagnostic event with timestamp, category, level, and message.
-     *
-     * The read-modify-write of the SharedPreferences array is synchronized:
-     * WalkService's main thread and the broadcast-receiver thread both log
-     * concurrently, and an unsynchronized read-modify-write would drop entries
-     * whenever two threads interleave.
+     * Uses in-memory buffer with periodic flushing to avoid excessive disk I/O.
+     * Automatically flushes when buffer reaches threshold or time interval passes.
      */
     public synchronized void log(String category, String level, String message) {
         try {
-            JSONArray logs = getLogs();
-            
             JSONObject entry = new JSONObject();
             entry.put("timestamp", dateFormat.format(new Date()));
             entry.put("category", category);
             entry.put("level", level);
             entry.put("message", message);
             
-            // Add to end of array
-            logs.put(entry);
+            // Add to in-memory buffer
+            memoryBuffer.add(entry);
+            isDirty = true;
             
-            // Keep only last MAX_LOG_ENTRIES
-            if (logs.length() > MAX_LOG_ENTRIES) {
-                JSONArray trimmed = new JSONArray();
-                for (int i = logs.length() - MAX_LOG_ENTRIES; i < logs.length(); i++) {
-                    trimmed.put(logs.get(i));
-                }
-                logs = trimmed;
+            // Trim buffer if it exceeds max size
+            while (memoryBuffer.size() > MAX_LOG_ENTRIES) {
+                memoryBuffer.remove(0);
             }
             
-            // Save back to SharedPreferences
-            prefs.edit().putString(KEY_LOGS, logs.toString()).apply();
+            // Auto-flush if threshold reached or time interval passed
+            long now = System.currentTimeMillis();
+            boolean shouldFlush = memoryBuffer.size() >= FLUSH_THRESHOLD 
+                    || (now - lastFlushTimeMs) >= FLUSH_INTERVAL_MS;
             
-            // Also log to logcat
+            if (shouldFlush) {
+                flushToPreferences();
+            }
+            
+            // Also log to logcat for immediate visibility
             switch (level) {
                 case LEVEL_ERROR:
                     Log.e(TAG, "[" + category + "] " + message);
@@ -98,6 +125,34 @@ public class WalkDiagnostics {
         } catch (Exception e) {
             Log.e(TAG, "Failed to write diagnostic log", e);
         }
+    }
+    
+    /**
+     * Flush in-memory buffer to SharedPreferences.
+     * Called automatically based on threshold/interval, or manually when needed.
+     */
+    private synchronized void flushToPreferences() {
+        if (!isDirty) return;
+        
+        try {
+            JSONArray logs = new JSONArray();
+            for (JSONObject entry : memoryBuffer) {
+                logs.put(entry);
+            }
+            prefs.edit().putString(KEY_LOGS, logs.toString()).apply();
+            lastFlushTimeMs = System.currentTimeMillis();
+            isDirty = false;
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to flush logs to SharedPreferences", e);
+        }
+    }
+    
+    /**
+     * Explicitly flush logs to disk. Call this before service destruction or
+     * when you need to ensure logs are persisted immediately.
+     */
+    public void flush() {
+        flushToPreferences();
     }
     
     /**
@@ -120,12 +175,15 @@ public class WalkDiagnostics {
     }
     
     /**
-     * Retrieves all diagnostic logs as JSONArray.
+     * Retrieves all diagnostic logs as JSONArray from in-memory buffer.
      */
     public synchronized JSONArray getLogs() {
         try {
-            String logsJson = prefs.getString(KEY_LOGS, "[]");
-            return new JSONArray(logsJson);
+            JSONArray logs = new JSONArray();
+            for (JSONObject entry : memoryBuffer) {
+                logs.put(entry);
+            }
+            return logs;
         } catch (Exception e) {
             Log.e(TAG, "Failed to read diagnostic logs", e);
             return new JSONArray();
@@ -133,10 +191,12 @@ public class WalkDiagnostics {
     }
     
     /**
-     * Clears all diagnostic logs.
+     * Clears all diagnostic logs from memory and SharedPreferences.
      */
-    public void clearLogs() {
+    public synchronized void clearLogs() {
+        memoryBuffer.clear();
         prefs.edit().remove(KEY_LOGS).apply();
+        isDirty = false;
         Log.d(TAG, "Diagnostic logs cleared");
     }
     

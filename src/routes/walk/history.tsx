@@ -8,6 +8,7 @@ import { getWalkSummary } from "@/lib/walk-storage";
 import { WalkSummaryModal } from "@/routes/walk";
 import type { WalkSession, WalkSummary } from "@/lib/types";
 import { formatPace, formatDuration } from "@/lib/walk-gps-utils";
+import { parseLocalDate } from "@/lib/date-utils";
 
 const EnhancedWalkSummary = lazy(() => import("@/components/lifehub/EnhancedWalkSummary"));
 const RouteMapGL = lazy(() => import("@/components/lifehub/RouteMapGL"));
@@ -42,9 +43,13 @@ function WalkHistoryPage() {
     const walkDay =
       s.day || (s.started_at ? s.started_at.slice(0, 10) : s.created_at ? s.created_at.slice(0, 10) : "");
     if (!walkDay) return true;
-    const walkDate = new Date(walkDay);
+    // Parse as LOCAL midnight (new Date("YYYY-MM-DD") is UTC midnight, which
+    // shifts the day boundary for non-UTC users and skews the week/month diff).
+    const walkDate = parseLocalDate(walkDay);
+    walkDate.setHours(0, 0, 0, 0);
     const now = new Date();
-    const diffDays = Math.floor((now.getTime() - walkDate.getTime()) / (1000 * 60 * 60 * 24));
+    now.setHours(0, 0, 0, 0);
+    const diffDays = Math.round((now.getTime() - walkDate.getTime()) / (1000 * 60 * 60 * 24));
 
     if (filter === "week") return diffDays <= 7;
     if (filter === "month") return diffDays <= 30;

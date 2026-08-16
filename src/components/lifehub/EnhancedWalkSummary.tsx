@@ -236,6 +236,18 @@ export default function EnhancedWalkSummary({
 
         {/* Scrollable Content Body */}
         <div className="flex-1 overflow-y-auto overscroll-contain space-y-4 p-5">
+          {/* Cancelled / too-short walk banner — Finish always yields visible
+              feedback, so a stray session explains itself instead of looking
+              like the button did nothing. */}
+          {session?.status === "cancelled" && (
+            <div className="flex items-center gap-2 rounded-2xl bg-amber-500/15 border border-amber-500/30 px-4 py-3">
+              <Footprints className="size-4 shrink-0 text-amber-400" />
+              <p className="text-xs font-bold text-amber-300">
+                Walk too short to record — tap Start New Walk to begin again.
+              </p>
+            </div>
+          )}
+
           {/* Activity Title & Time */}
           <div>
             <h2 className="text-2xl font-black tracking-tight text-white">Your Progress</h2>

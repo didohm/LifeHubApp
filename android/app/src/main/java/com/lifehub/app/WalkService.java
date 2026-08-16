@@ -142,6 +142,11 @@ public class WalkService extends Service implements LocationListener, SensorEven
     // calorie formula: MET × weight × duration_hours.
     private static final double MET_WALKING = 3.5;
     private static final String TAG = "LifeHubWalk";
+    
+    // PendingIntent flags for Android M+ immutability requirement
+    private static final int PENDING_INTENT_FLAGS = Build.VERSION.SDK_INT >= Build.VERSION_CODES.M
+            ? PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
+            : PendingIntent.FLAG_UPDATE_CURRENT;
 
     // SystemClock.elapsedRealtime() of the last accepted fix — feeds the GPS
     // speed gate that rejects jittery (implausibly fast) fix-to-fix jumps.
@@ -774,8 +779,7 @@ public class WalkService extends Service implements LocationListener, SensorEven
                 this,
                 0,
                 launchIntent,
-                PendingIntent.FLAG_UPDATE_CURRENT
-                        | (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M ? PendingIntent.FLAG_IMMUTABLE : 0)
+                PENDING_INTENT_FLAGS
         );
 
         notificationBuilder = new NotificationCompat.Builder(this, CHANNEL_ID)
@@ -797,8 +801,7 @@ public class WalkService extends Service implements LocationListener, SensorEven
                 this,
                 1,
                 pauseIntent,
-                PendingIntent.FLAG_UPDATE_CURRENT
-                        | (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M ? PendingIntent.FLAG_IMMUTABLE : 0)
+                PENDING_INTENT_FLAGS
         );
 
         Intent finishIntent = new Intent(this, WalkService.class);
@@ -807,8 +810,7 @@ public class WalkService extends Service implements LocationListener, SensorEven
                 this,
                 2,
                 finishIntent,
-                PendingIntent.FLAG_UPDATE_CURRENT
-                        | (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M ? PendingIntent.FLAG_IMMUTABLE : 0)
+                PENDING_INTENT_FLAGS
         );
 
         // Clear existing actions before adding to prevent duplicates
@@ -953,11 +955,9 @@ public class WalkService extends Service implements LocationListener, SensorEven
      * cannot substitute for location tracking.
      */
     private int computeFgsType() {
-        boolean hasFineLocation = ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION)
-                        == PackageManager.PERMISSION_GRANTED;
-        boolean hasCoarseLocation = ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION)
-                        == PackageManager.PERMISSION_GRANTED;
-        boolean hasLocation = hasFineLocation || hasCoarseLocation;
+        boolean hasFineLocation = hasFineLocationPermission();
+        boolean hasCoarseLocation = hasCoarseLocationPermission();
+        boolean hasLocation = hasLocationPermission();
         boolean hasActivity = ContextCompat.checkSelfPermission(this, Manifest.permission.ACTIVITY_RECOGNITION)
                         == PackageManager.PERMISSION_GRANTED;
         // FOREGROUND_SERVICE_TYPE_HEALTH requires the BODY_SENSORS runtime
@@ -1162,7 +1162,7 @@ public class WalkService extends Service implements LocationListener, SensorEven
                 this,
                 2002,
                 intent,
-                PendingIntent.FLAG_UPDATE_CURRENT | (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M ? PendingIntent.FLAG_IMMUTABLE : 0)
+                PENDING_INTENT_FLAGS
             );
             
             long maintainAtMs = System.currentTimeMillis() + WAKELOCK_TIMEOUT_MS - WAKELOCK_REACQUIRE_BEFORE_MS;
@@ -1236,7 +1236,7 @@ public class WalkService extends Service implements LocationListener, SensorEven
                     this,
                     2001,
                     intent,
-                    PendingIntent.FLAG_UPDATE_CURRENT | (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M ? PendingIntent.FLAG_IMMUTABLE : 0)
+                    PENDING_INTENT_FLAGS
                 );
             }
 
@@ -1418,6 +1418,23 @@ public class WalkService extends Service implements LocationListener, SensorEven
             return false;
         }
     }
+    
+    /** Helper: Check if FINE location permission is granted. */
+    private boolean hasFineLocationPermission() {
+        return ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION)
+                == PackageManager.PERMISSION_GRANTED;
+    }
+    
+    /** Helper: Check if COARSE location permission is granted. */
+    private boolean hasCoarseLocationPermission() {
+        return ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION)
+                == PackageManager.PERMISSION_GRANTED;
+    }
+    
+    /** Helper: Check if any location permission (FINE or COARSE) is granted. */
+    private boolean hasLocationPermission() {
+        return hasFineLocationPermission() || hasCoarseLocationPermission();
+    }
 
     private void registerLocationUpdates() {
         // CRITICAL: Prevent duplicate registration during recovery
@@ -1427,14 +1444,10 @@ public class WalkService extends Service implements LocationListener, SensorEven
         }
         
         // Check for either FINE or COARSE location permission
-        boolean hasFineLocation =
-                ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION)
-                        == PackageManager.PERMISSION_GRANTED;
-        boolean hasCoarseLocation =
-                ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION)
-                        == PackageManager.PERMISSION_GRANTED;
+        boolean hasFineLocation = hasFineLocationPermission();
+        boolean hasCoarseLocation = hasCoarseLocationPermission();
 
-        if (!hasFineLocation && !hasCoarseLocation) {
+        if (!hasLocationPermission()) {
             Log.w(TAG, "No location permission, cannot register location updates");
             return;
         }
@@ -1444,18 +1457,17 @@ public class WalkService extends Service implements LocationListener, SensorEven
         // is missing or the request fails (device, test, or provider quirk).
         if (fusedLocationClient != null && isFusedLocationAvailable()) {
             try {
-                // CRITICAL: Remove any existing requests first to clean up dead callbacks
-                // from previous service instances (process death). Without this, duplicate
+                // CRITICAL: Always attempt removal to clean up dead callbacks from previous
+                // service instances (process death). The flag may be false after restart even
+                // if a request was active before. Without unconditional cleanup, duplicate
                 // requests pile up and drain battery.
-                if (isFusedLocationRequestActive) {
-                    try {
-                        fusedLocationClient.removeLocationUpdates(fusedLocationCallback);
-                        isFusedLocationRequestActive = false;
-                        Log.d(TAG, "Removed previous fused location request");
-                    } catch (Exception e) {
-                        Log.w(TAG, "Failed to remove previous fused request (may not exist)", e);
-                    }
+                try {
+                    fusedLocationClient.removeLocationUpdates(fusedLocationCallback);
+                    Log.d(TAG, "Removed previous fused location request (if any)");
+                } catch (Exception e) {
+                    Log.w(TAG, "Failed to remove previous fused request (may not exist)", e);
                 }
+                isFusedLocationRequestActive = false;
                 
                 LocationRequest request = new LocationRequest.Builder(
                         Priority.PRIORITY_HIGH_ACCURACY,
@@ -1486,16 +1498,15 @@ public class WalkService extends Service implements LocationListener, SensorEven
 
         if (locationManager == null) return;
 
-        // CRITICAL: Remove existing LocationManager listeners to prevent duplicates
-        if (isLocationManagerRequestActive) {
-            try {
-                locationManager.removeUpdates(this);
-                isLocationManagerRequestActive = false;
-                Log.d(TAG, "Removed previous LocationManager listeners");
-            } catch (Exception e) {
-                Log.w(TAG, "Failed to remove previous LocationManager listeners", e);
-            }
+        // CRITICAL: Always attempt removal to prevent duplicates, even if flag is false
+        // (flag may be incorrect after process death). Unconditional cleanup is safe.
+        try {
+            locationManager.removeUpdates(this);
+            Log.d(TAG, "Removed previous LocationManager listeners (if any)");
+        } catch (Exception e) {
+            Log.w(TAG, "Failed to remove previous LocationManager listeners", e);
         }
+        isLocationManagerRequestActive = false;
 
         try {
             boolean anyProvider = false;
@@ -1770,15 +1781,14 @@ public class WalkService extends Service implements LocationListener, SensorEven
         }
         
         // CRITICAL: Prevent duplicate registration if already in progress
-        if (isSensorRecoveryInProgress && attemptNumber > 0) {
+        // Set flag BEFORE checking to prevent race conditions on rapid calls
+        if (isSensorRecoveryInProgress) {
             Log.d(TAG, "Sensor recovery already in progress, skipping duplicate attempt");
             return;
         }
         
-        // Mark recovery in progress for retry attempts
-        if (attemptNumber > 0) {
-            isSensorRecoveryInProgress = true;
-        }
+        // Mark recovery in progress for ALL attempts (not just retries)
+        isSensorRecoveryInProgress = true;
         
         // Cancel any pending sensor validation from previous attempt
         if (pendingSensorValidation != null) {
@@ -1820,12 +1830,19 @@ public class WalkService extends Service implements LocationListener, SensorEven
             }
         }
         
-        // Fallback to accelerometer peak detector if hardware step sensors are missing
-        if (!anyRegistered && accelerometerSensor != null) {
+        // Register the accelerometer peak detector as a SECONDARY step source
+        // on every walk. It only counts in onSensorChanged() once the hardware
+        // step stream (detector/counter) goes silent, so devices whose step
+        // sensors register but never deliver events (suspended non-wake-up
+        // sensors, HAL quirks) still count steps instead of freezing at 0
+        // while GPS distance keeps advancing.
+        if (accelerometerSensor != null) {
             boolean registered = sensorManager.registerListener(this, accelerometerSensor, SensorManager.SENSOR_DELAY_UI);
             if (registered) {
                 Log.d(TAG, "Accelerometer step fallback registered");
                 anyRegistered = true;
+            } else {
+                Log.w(TAG, "Failed to register accelerometer step fallback");
             }
         }
 
@@ -2180,8 +2197,9 @@ public class WalkService extends Service implements LocationListener, SensorEven
         public void run() {
             if (isTracking && !paused) {
                 handleTickerUpdate();
+                // Only reschedule when actively tracking to prevent infinite CPU wake-ups
+                ticker.postDelayed(this, 1000);
             }
-            ticker.postDelayed(this, 1000);
         }
     };
 
@@ -2303,10 +2321,15 @@ public class WalkService extends Service implements LocationListener, SensorEven
                 lastGpsFixWallMs = nowWall;
                 lastFixElapsedRealtime = nowElapsed;
 
-                // If device completely lacks hardware step sensors, estimate steps from GPS distance as fallback.
-                // When hardware sensors are available, currentSteps is driven purely by physical sensor events
-                // to prevent GPS drift/jitter from corrupting the hardware step baseline.
-                if (!isVehicleFlagged && stepDetectorSensor == null && stepCounterSensor == null) {
+                // GPS-derived step fallback: estimate steps from the accepted
+                // GPS distance whenever NO step source (hardware detector/
+                // counter or accelerometer) has delivered an event recently.
+                // While any step stream is live it stays authoritative — the
+                // estimate only fills in for sensorless devices or streams the
+                // HAL never delivers, so the counter never freezes at 0 while
+                // GPS distance is advancing. Monotonic (never reduces), so it
+                // cannot double-count or corrupt a working hardware baseline.
+                if (!isVehicleFlagged && nowWall - lastStepEventWallMs >= 15_000L) {
                     int impliedSteps = (int) Math.round((gpsDistanceKm * 1000.0) / STRIDE_METERS);
                     if (impliedSteps > currentSteps) {
                         currentSteps = impliedSteps;
@@ -2493,23 +2516,28 @@ public class WalkService extends Service implements LocationListener, SensorEven
                 persistState();
             }
         } else if (event.sensor.getType() == Sensor.TYPE_ACCELEROMETER) {
-            // Accelerometer fallback for devices lacking hardware step sensors
-            if (stepDetectorSensor == null && stepCounterSensor == null) {
-                float x = event.values[0];
-                float y = event.values[1];
-                float z = event.values[2];
-                double mag = Math.sqrt(x * x + y * y + z * z);
-                long now = System.currentTimeMillis();
-                // Step peak detection: magnitude spike > 11.5 m/s^2 with min 320ms interval
-                if (mag > 11.5 && (now - lastAccStepMs > 320)) {
-                    lastAccStepMs = now;
-                    lastStepEventWallMs = now;
-                    currentSteps++;
-                    recomputeDerived();
-                    updateNotification();
-                    publishUpdate();
-                    persistState();
-                }
+            // Accelerometer peak detector — secondary step source that only
+            // takes over when the hardware step stream (detector/counter) has
+            // gone silent (sensors absent, suspended non-wake-up sensors, HAL
+            // quirks). Hardware events are authoritative whenever they flow;
+            // the 15s staleness gate keeps both sources from counting the same
+            // steps simultaneously.
+            long now = System.currentTimeMillis();
+            if (now - lastStepEventWallMs < 15_000L) return;
+            float x = event.values[0];
+            float y = event.values[1];
+            float z = event.values[2];
+            double mag = Math.sqrt(x * x + y * y + z * z);
+            // Step peak detection: magnitude spike > 11.0 m/s^2 with min 320ms
+            // interval (11.5 was too strict for loose pockets / damped bags).
+            if (mag > 11.0 && (now - lastAccStepMs > 320)) {
+                lastAccStepMs = now;
+                lastStepEventWallMs = now;
+                currentSteps++;
+                recomputeDerived();
+                updateNotification();
+                publishUpdate();
+                persistState();
             }
         }
     }

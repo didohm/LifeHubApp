@@ -8,6 +8,8 @@
 import { registerPlugin, Capacitor } from "@capacitor/core";
 import type { WalkSummary, WalkSplit, AggregatedWalkStats, WalkSession } from "./types";
 import { todayLocalDate, updateWalkSession } from "./api";
+import { decodePolyline } from "./walk-gps-utils";
+import { parseLocalDate } from "./date-utils";
 
 interface WalkServicePlugin {
   saveWalkSummary(options: {
@@ -314,11 +316,11 @@ export async function getWeeklyStats(
 ): Promise<{ distance: number; duration: number; walks: number }> {
   const allSummaries = await getWalkSummaries(userId, 1000);
 
-  const startTime = new Date(startDate).getTime();
+  const startTime = parseLocalDate(startDate).getTime();
   const endTime = startTime + 7 * 24 * 60 * 60 * 1000;
 
   const weekSummaries = allSummaries.filter((s) => {
-    const walkTime = new Date(s.day).getTime();
+    const walkTime = parseLocalDate(s.day).getTime();
     return walkTime >= startTime && walkTime < endTime && s.status === "finished";
   });
 
@@ -392,6 +394,16 @@ export async function mergeLocalWalkSummaries(
       const existing = firestoreMap.get(local.id);
       if (!existing || existing.status !== "finished") {
         hasChanges = true;
+        // Rebuild a route path from the encoded polyline so offline-finished
+        // walks keep their map trail in Firestore history (the online finish
+        // path was never written when the finish write timed out / was offline).
+        let mergedPath: { lat: number; lng: number; ts: number }[] | null = null;
+        if (local.encoded_polyline) {
+          const decoded = decodePolyline(local.encoded_polyline);
+          if (decoded.length >= 2) {
+            mergedPath = decoded.map((p) => ({ lat: p.lat, lng: p.lng, ts: 0 }));
+          }
+        }
         const mergedSession: WalkSession = {
           id: local.id,
           user_id: local.user_id,
@@ -403,7 +415,7 @@ export async function mergeLocalWalkSummaries(
           day: local.day || (local.started_at ? local.started_at.slice(0, 10) : todayLocalDate()),
           started_at: local.started_at,
           finished_at: local.finished_at,
-          path: null,
+          path: mergedPath,
           vehicle: local.vehicle_flagged,
           created_at: local.created_at,
           updated_at: local.updated_at,
@@ -420,6 +432,7 @@ export async function mergeLocalWalkSummaries(
           day: mergedSession.day,
           finished_at: local.finished_at || undefined,
           vehicle: local.vehicle_flagged,
+          path: mergedPath ?? undefined,
         }).catch(() => {});
       }
     }
