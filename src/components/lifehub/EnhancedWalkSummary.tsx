@@ -182,7 +182,7 @@ export default function EnhancedWalkSummary({
         avgSpeedKmH,
         elevationGain: elevationGain ?? null,
         routePoints: cardPoints,
-        logoSrc: "/illustration/LifeHub icon.png",
+        logoSrc: "/illustration/LifeHub icon.webp",
       });
 
       const fileName = `lifehub-activity-${sessionId || "walk"}.png`;

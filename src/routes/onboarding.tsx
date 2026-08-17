@@ -92,7 +92,7 @@ function OnboardingPage() {
         <div className="card-soft bg-white p-6 border border-black/5 shadow-xs">
           <div className="mx-auto mb-3 flex h-32 w-full max-w-[220px] items-center justify-center">
             <img
-              src="/illustration/daily-routine.png"
+              src="/illustration/daily-routine.webp"
               alt="Daily Routine Onboarding"
               className="h-full w-full object-contain drop-shadow-[0_8px_16px_rgba(124,92,252,0.2)]"
             />

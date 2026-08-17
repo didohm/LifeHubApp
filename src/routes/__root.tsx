@@ -157,7 +157,7 @@ function AuthLoadingSplash() {
         <div className="relative size-20">
           <div className="absolute inset-0 animate-spin rounded-full border-4 border-[#E8E2FF] border-t-[#7C5CFC]" />
           <div className="absolute inset-0 flex items-center justify-center">
-            <img src="/illustration/LifeHub icon.png" alt="" className="size-12 object-contain" />
+            <img src="/illustration/LifeHub icon.webp" alt="" className="size-12 object-contain" />
           </div>
         </div>
         <p className="text-sm font-semibold text-[#6B7280]">Loading…</p>

@@ -374,7 +374,7 @@ function WorkoutProgramsPage() {
           <div className="rounded-3xl border border-dashed border-slate-200 bg-white p-8 text-center shadow-xs">
             <div className="mx-auto mb-3 flex h-36 w-full max-w-[220px] items-center justify-center">
               <img
-                src="/illustration/workout-programs.png"
+                src="/illustration/workout-programs.webp"
                 alt="Workout Programs"
                 className="h-full w-full object-contain drop-shadow-[0_10px_20px_rgba(0,0,0,0.08)]"
               />

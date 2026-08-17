@@ -122,7 +122,7 @@ async function renderAndCheck(
     },
   };
   const blob = await renderActivityCard(
-    { ...BASE_INPUT, routePoints, logoSrc: "public/illustration/LifeHub icon.png" },
+    { ...BASE_INPUT, routePoints, logoSrc: "public/illustration/LifeHub icon.webp" },
     deps,
   );
   const buffer = Buffer.from(await blob.arrayBuffer());

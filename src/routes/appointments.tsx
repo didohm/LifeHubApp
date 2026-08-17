@@ -493,7 +493,7 @@ function AppointmentsPage() {
           <div className="rounded-3xl border border-dashed border-slate-200 bg-white p-6 text-center shadow-xs">
             <div className="mx-auto mb-3 flex h-32 w-full max-w-[190px] items-center justify-center">
               <img
-                src="/illustration/empty-appointments.png"
+                src="/illustration/empty-appointments.webp"
                 alt="Appointments Illustration"
                 className="h-full w-full object-contain"
               />

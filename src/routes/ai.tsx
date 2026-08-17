@@ -707,7 +707,7 @@ function AiPage() {
                   </p>
                 </div>
                 <img
-                  src="/illustration/ai-robot.png"
+                  src="/illustration/ai-robot.webp"
                   alt="AI Assistant"
                   className="h-16 w-16 sm:h-20 sm:w-20 object-contain shrink-0 drop-shadow-[0_6px_14px_rgba(124,92,252,0.22)]"
                 />

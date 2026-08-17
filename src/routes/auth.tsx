@@ -84,7 +84,7 @@ function AuthPage() {
         {/* Hero cluster: logo + tagline */}
         <div className="flex flex-col items-center">
           <img
-            src="/illustration/LifeHub icon.png"
+            src="/illustration/LifeHub icon.webp"
             alt="LifeHub"
             className="h-32 w-auto object-contain"
           />

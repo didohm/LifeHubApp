@@ -367,7 +367,7 @@ function Index() {
         </div>
 
         <img
-          src="/illustration/hero-health.png"
+          src="/illustration/hero-health.webp"
           alt="Health & LifeHub Illustration"
           width={400}
           height={400}

@@ -35,7 +35,7 @@ export interface ActivityCardInput {
   elevationGain: number | null;
   /** Raw route trail (lat/lng). Invalid entries are filtered out. */
   routePoints: RoutePointInput[];
-  /** Optional bundled logo asset (e.g. "/illustration/LifeHub icon.png"). */
+  /** Optional bundled logo asset (e.g. "/illustration/LifeHub icon.webp"). */
   logoSrc?: string | null;
 }
 
