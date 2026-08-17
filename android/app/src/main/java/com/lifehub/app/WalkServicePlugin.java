@@ -146,8 +146,12 @@ public class WalkServicePlugin extends Plugin {
     @PluginMethod
     public void startService(PluginCall call) {
         JSObject ret = new JSObject();
-        if (WalkService.isTracking && !WalkService.paused) {
+        // A live paused walk is still the same native session. Starting a new
+        // service intent here used to replace its session id/baseline with a
+        // newly-created JS session, orphaning data and desynchronising Resume.
+        if (WalkService.isTracking) {
             ret.put("started", true);
+            ret.put("alreadyTracking", true);
             call.resolve(ret);
             return;
         }

@@ -129,6 +129,9 @@ public class WalkService extends Service implements LocationListener, SensorEven
     private static final String KEY_WAKELOCK_ACQUIRED_AT = "wakelock_acquired_at";
     private static final String KEY_SENSOR_REGISTRATION_FAILURES = "sensor_failures";
     private static final String KEY_LOCATION_PROVIDER_TYPE = "location_provider_type";
+    // elapsedRealtime() resets on a device reboot, so it must be paired with a
+    // boot identifier before using it to restore a persisted duration.
+    private static final String KEY_BOOT_COUNT = "boot_count";
 
     // Average adult step length in meters (standard average stride). Height is
     // collected at onboarding, but a fixed constant is deliberately used on
@@ -370,6 +373,15 @@ public class WalkService extends Service implements LocationListener, SensorEven
         return getSharedPreferences(PREFS, MODE_PRIVATE);
     }
 
+    private int currentBootCount() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) return -1;
+        try {
+            return Settings.Global.getInt(getContentResolver(), Settings.Global.BOOT_COUNT, -1);
+        } catch (Exception ignored) {
+            return -1;
+        }
+    }
+
     private void persistState() {
         prefs()
             .edit()
@@ -397,6 +409,7 @@ public class WalkService extends Service implements LocationListener, SensorEven
             .putLong(KEY_WAKELOCK_ACQUIRED_AT, wakeLockAcquiredAtMs)
             .putInt(KEY_SENSOR_REGISTRATION_FAILURES, sensorRegistrationAttempts)
             .putString(KEY_LOCATION_PROVIDER_TYPE, activeLocationProvider)
+            .putInt(KEY_BOOT_COUNT, currentBootCount())
             .apply();
     }
 
@@ -443,7 +456,8 @@ public class WalkService extends Service implements LocationListener, SensorEven
         }
 
         long nowElapsed = SystemClock.elapsedRealtime();
-        if (startedAtMs > nowElapsed || startedAtMs <= 0) {
+        if (p.getInt(KEY_BOOT_COUNT, -1) != currentBootCount()
+                || startedAtMs > nowElapsed || startedAtMs <= 0) {
             startedAtMs = nowElapsed - durationSec * 1000L;
         }
 
@@ -678,7 +692,11 @@ public class WalkService extends Service implements LocationListener, SensorEven
     private void resumeTrackingEnginesIfNeeded() {
         // Already live: wake lock held + foreground notification shown means
         // the sensors were registered at start — do not double-register.
-        if (isInForeground && wakeLock != null && wakeLock.isHeld()) return;
+        if (isInForeground && wakeLock != null && wakeLock.isHeld()
+                && sensorsRegistered
+                && (isFusedLocationRequestActive || isLocationManagerRequestActive || !hasLocationPermission())) {
+            return;
+        }
 
         enterForeground();
         acquireWakeLock();
@@ -1022,6 +1040,7 @@ public class WalkService extends Service implements LocationListener, SensorEven
         paused = startPaused;
         startedAtMs = SystemClock.elapsedRealtime() - this.durationSec * 1000L;
         lastLocation = null; // first fix after (re)start only sets the baseline
+        lastProcessedLocationTimeMs = 0L;
         updateCount = 0;
         isVehicleFlagged = false;
         lastVehicleCheckWallMs = 0L;
@@ -1573,7 +1592,7 @@ public class WalkService extends Service implements LocationListener, SensorEven
      * CRITICAL: Properly tracks state to prevent duplicate listeners on re-registration.
      */
     private void removeLocationUpdates() {
-        if (fusedLocationClient != null && fusedLocationCallback != null && isFusedLocationRequestActive) {
+        if (fusedLocationClient != null && fusedLocationCallback != null) {
             try {
                 fusedLocationClient.removeLocationUpdates(fusedLocationCallback);
                 isFusedLocationRequestActive = false;
@@ -1583,7 +1602,7 @@ public class WalkService extends Service implements LocationListener, SensorEven
                 isFusedLocationRequestActive = false;
             }
         }
-        if (locationManager != null && isLocationManagerRequestActive) {
+        if (locationManager != null) {
             try {
                 locationManager.removeUpdates(this);
                 isLocationManagerRequestActive = false;
@@ -1806,8 +1825,10 @@ public class WalkService extends Service implements LocationListener, SensorEven
         
         boolean anyRegistered = false;
         
-        // Register TYPE_STEP_DETECTOR for instant 1-step real-time UI response
-        if (stepDetectorSensor != null) {
+        // A detector and a counter describe the same physical steps. The
+        // counter is authoritative (and catches up after screen-off), so the
+        // detector is a fallback only on hardware that lacks a counter.
+        if (stepCounterSensor == null && stepDetectorSensor != null) {
             boolean registered = sensorManager.registerListener(this, stepDetectorSensor, SensorManager.SENSOR_DELAY_UI);
             if (registered) {
                 boolean isWakeup = Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP && stepDetectorSensor.isWakeUpSensor();
@@ -1889,7 +1910,6 @@ public class WalkService extends Service implements LocationListener, SensorEven
             if (speed > 0.8f) {
                 Log.w(TAG, "Sensor stream stalled (no steps for " + (timeSinceLastStep / 1000L) + "s but GPS shows movement), attempting recovery");
                 
-                isSensorRecoveryInProgress = true;
                 sensorsRegistered = false;
                 registerStepListenersWithRetry(0);
                 publishUpdate("sensor_recovery_attempted");
@@ -2090,6 +2110,7 @@ public class WalkService extends Service implements LocationListener, SensorEven
         lastLocation = null;
         lastGpsFixWallMs = 0L;
         lastFixElapsedRealtime = 0L;
+        lastProcessedLocationTimeMs = 0L;
         lastStepEventWallMs = 0L;
         try {
             stopForeground(true);
@@ -2260,7 +2281,15 @@ public class WalkService extends Service implements LocationListener, SensorEven
             float distMeters = lastLocation.distanceTo(location);
             long nowElapsed = SystemClock.elapsedRealtime();
             long dtMs = lastFixElapsedRealtime > 0L ? nowElapsed - lastFixElapsedRealtime : 0L;
-            float speedMs = location.hasSpeed() ? location.getSpeed() : (dtMs > 0L ? (distMeters * 1000f) / (float) dtMs : 0f);
+            // Fused batches can be delivered in one main-thread turn. In that
+            // case elapsedRealtime() is identical for several fixes and turns
+            // a normal walking delta into an infinite-speed rejection. Use the
+            // fix timestamps when available.
+            long locationDtMs = lastLocation.getTime() > 0L
+                    ? location.getTime() - lastLocation.getTime() : 0L;
+            long effectiveDtMs = locationDtMs > 0L ? locationDtMs : dtMs;
+            float speedMs = location.hasSpeed() ? location.getSpeed()
+                    : (effectiveDtMs > 0L ? (distMeters * 1000f) / (float) effectiveDtMs : 0f);
 
             // Minimum displacement gate: ignore points < 1m from previous point to eliminate stationary GPS jitter
             // (was 3m — too aggressive for slow walking and short indoor steps; the
@@ -2466,6 +2495,9 @@ public class WalkService extends Service implements LocationListener, SensorEven
         if (!isTracking || paused) return;
 
         if (event.sensor.getType() == Sensor.TYPE_STEP_DETECTOR) {
+            // This is a fallback-only source. Ignore callbacks that slipped
+            // through while a counter listener was being reconfigured.
+            if (stepCounterSensor != null) return;
             // TYPE_STEP_DETECTOR: real-time per-step event
             lastStepEventWallMs = System.currentTimeMillis();
             currentSteps++;

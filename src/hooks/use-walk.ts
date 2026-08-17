@@ -82,7 +82,7 @@ function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise
  * Helper: Monotonic merge - updates state only if new value is greater.
  * Prevents metrics from moving backwards during native/JS handover.
  */
-function useMonotonicUpdate<T extends number>(
+function monotonicUpdate<T extends number>(
   setter: React.Dispatch<React.SetStateAction<T>>,
   newValue: T,
 ) {
@@ -145,6 +145,10 @@ export function useWalk(
   // never wipe a walk the restore is about to resurrect (native prefs + the
   // Firestore session it cancels via getAbandonedWalkSessions).
   const restorePromiseRef = useRef<Promise<void> | null>(null);
+  // A double-tap can arrive before React commits `status="active"`. Keep the
+  // create/start transaction single-flight so two sessions cannot race for
+  // one native foreground service.
+  const startInFlightRef = useRef(false);
   const userWeightKgRef = useRef(userWeightKg);
   userWeightKgRef.current = userWeightKg;
   // True once the native WalkService has reported at least one live update.
@@ -183,7 +187,10 @@ export function useWalk(
 
   // Active Timer Loop
   useEffect(() => {
-    if (status === "active") {
+    // The native service owns elapsed time after it becomes live. Keeping this
+    // interval running made the UI duration drift ahead permanently because
+    // native snapshots are deliberately merged monotonically.
+    if (status === "active" && !nativeTracking) {
       timerRef.current = window.setInterval(() => {
         setDuration((prev) => prev + 1);
       }, 1000);
@@ -193,7 +200,7 @@ export function useWalk(
     return () => {
       if (timerRef.current) clearInterval(timerRef.current);
     };
-  }, [status]);
+  }, [status, nativeTracking]);
 
   // ──────────────────────────────────────────────────────────────────────────
   // Native WalkService sync (Android foreground service)
@@ -252,10 +259,10 @@ export function useWalk(
     // never fire freezes the whole card at 0.00 while the native clock runs.
     if (data.tracking) {
       if (data.durationSec > 0) {
-        useMonotonicUpdate(setDuration, data.durationSec);
+        monotonicUpdate(setDuration, data.durationSec);
       }
       if (typeof data.calories === "number" && data.calories >= 0) {
-        useMonotonicUpdate(setCalories, Math.round(data.calories));
+        monotonicUpdate(setCalories, Math.round(data.calories));
       }
     }
 
@@ -300,12 +307,12 @@ export function useWalk(
       });
 
       if (data.steps > 0) {
-        useMonotonicUpdate(setSteps, data.steps);
+        monotonicUpdate(setSteps, data.steps);
       } else if (data.distanceKm > 0.01) {
         // Sensorless / silent-sensor devices: native GPS distance is the only
         // movement signal, so mirror the native stride estimate (0.762 m/step)
         // as a floor — the counter must never sit at 0 while distance moves.
-        useMonotonicUpdate(setSteps, Math.round((data.distanceKm * 1000) / 0.762));
+        monotonicUpdate(setSteps, Math.round((data.distanceKm * 1000) / 0.762));
       }
 
       // Feed native GPS fixes into the JS coordinate trail so the path
@@ -387,7 +394,9 @@ export function useWalk(
             distance: Math.round((nativeStatus?.distanceKm || 0) * 1000),
             calories: Math.round(nativeStatus?.calories || 0),
             steps: nativeStatus?.steps || 0,
-            started_at: new Date(Date.now() - (nativeStatus?.durationSec || 0) * 1000).toISOString(),
+            started_at: new Date(
+              Date.now() - (nativeStatus?.durationSec || 0) * 1000,
+            ).toISOString(),
             day: todayLocalDate(),
             path: [],
             created_at: new Date().toISOString(),
@@ -575,37 +584,7 @@ export function useWalk(
   // is showing, the 4s poll above keeps its body refreshed with live metrics
   // via Notifications.refreshWalkFallback().
 
-  // Auto-pause monitoring loop.
-  // Motion is credited from native reports (accepted GPS fixes OR step
-  // advances — see applyNativeStatus) and from the JS fallback sensors. When
-  // nothing moves for 12s in the foreground the walk auto-pauses.
-  // While backgrounded or when the phone screen is locked (document.hidden),
-  // JS execution is throttled/suspended so the check is bypassed to avoid false pauses.
-  useEffect(() => {
-    if (status !== "active" && status !== "paused") return;
-
-    const checkInterval = window.setInterval(() => {
-      if (statusRef.current !== "active") return;
-      if (typeof document !== "undefined" && document.hidden) return;
-
-      const timeSinceMotion = Date.now() - lastMotionTimeRef.current;
-      if (timeSinceMotion > 12000) {
-        // No movement detected for 12 seconds in foreground -> auto pause.
-        if (nativeActiveRef.current) {
-          // Freeze the native clock too through the normal pause path.
-          pauseWalkRef.current?.();
-          setIsAutoPaused(true);
-        } else {
-          setStatus("paused");
-          setIsAutoPaused(true);
-        }
-      }
-    }, 3000);
-
-    return () => clearInterval(checkInterval);
-  }, [status]);
-
-  // Step Counter Sensor / Fallback Listener
+  // Step Counter Sensor / Fallback Listener.
   useEffect(() => {
     if (status !== "active") return;
 
@@ -776,7 +755,8 @@ export function useWalk(
 
   // Start Walk Session
   const startWalk = useCallback(async () => {
-    if (!userId) return;
+    if (!userId || startInFlightRef.current) return;
+    startInFlightRef.current = true;
     setLoading(true);
     try {
       // Wait for the initial restore to settle before touching anything: a
@@ -863,6 +843,7 @@ export function useWalk(
       console.error("Failed to start walk session:", e);
     } finally {
       setLoading(false);
+      startInFlightRef.current = false;
     }
   }, [userId, userWeightKg, isNative]);
 
@@ -1104,9 +1085,13 @@ export function useWalk(
       const endLng = routeEnd?.lng ?? lastCoords?.lng ?? null;
 
       const finalEffectiveWeight = userWeightKg > 0 ? userWeightKg : 70;
-      const finalCaloriesValue = (resolvedDistance > 1 || finalSteps > 0)
-        ? Math.max(finalCalories, Math.round(finalEffectiveWeight * (resolvedDistance / 1000) * 0.755))
-        : 0;
+      const finalCaloriesValue =
+        resolvedDistance > 1 || finalSteps > 0
+          ? Math.max(
+              finalCalories,
+              Math.round(finalEffectiveWeight * (resolvedDistance / 1000) * 0.755),
+            )
+          : 0;
 
       // Create walk summary for local SQLite storage
       const now = new Date().toISOString();
@@ -1287,7 +1272,10 @@ export function useWalk(
     distance,
     calories,
     steps,
-    path: (activeSession?.path && activeSession.path.length > 0) ? activeSession.path : jsTrailRef.current,
+    path:
+      activeSession?.path && activeSession.path.length > 0
+        ? activeSession.path
+        : jsTrailRef.current,
     lastCoords,
     gpsAvailable,
     nativeTracking,
