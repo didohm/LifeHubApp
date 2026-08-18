@@ -106,6 +106,9 @@ export function useWalk(
   const [isAutoPaused, setIsAutoPaused] = useState(false);
   const [nativeTracking, setNativeTracking] = useState(false);
   const [vehicleFlagged, setVehicleFlagged] = useState(false);
+  // Live pace (min/km) computed by the native foreground service. 0 until the
+  // service has real distance to derive a pace from.
+  const [pace, setPace] = useState(0);
 
   const watchIdRef = useRef<number | null>(null);
   const timerRef = useRef<number | null>(null);
@@ -263,6 +266,9 @@ export function useWalk(
       }
       if (typeof data.calories === "number" && data.calories >= 0) {
         monotonicUpdate(setCalories, Math.round(data.calories));
+      }
+      if (typeof data.paceMinPerKm === "number" && data.paceMinPerKm > 0) {
+        setPace(data.paceMinPerKm);
       }
     }
 
@@ -808,6 +814,7 @@ export function useWalk(
       nativeActiveRef.current = false;
       setNativeTracking(false);
       setVehicleFlagged(false);
+      setPace(0);
       lastNativeUpdateCountRef.current = 0;
       lastNativeStepsRef.current = 0;
       jsTrailRef.current = [];
@@ -1184,6 +1191,7 @@ export function useWalk(
       setDistance(0);
       setCalories(0);
       setSteps(0);
+      setPace(0);
       setLastCoords(null);
       setVehicleFlagged(false);
       nativeActiveRef.current = false;
@@ -1244,6 +1252,7 @@ export function useWalk(
     setDistance(0);
     setCalories(0);
     setSteps(0);
+    setPace(0);
     setLastCoords(null);
     lastFixTimeRef.current = 0;
     setVehicleFlagged(false);
@@ -1280,6 +1289,7 @@ export function useWalk(
     gpsAvailable,
     nativeTracking,
     vehicleFlagged,
+    pace,
     loading,
     startWalk,
     pauseWalk,

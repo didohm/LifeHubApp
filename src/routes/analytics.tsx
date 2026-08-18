@@ -189,13 +189,13 @@ function AnalyticsPage() {
       safeMeds.length > 0 ? Math.round((takenMeds / safeMeds.length) * 100) : 0;
 
     const dosesTaken = safeMedLogs.filter((l) => {
-      const t = isoMs(l?.logged_at);
-      return t !== null && t >= startMs && t <= endMs && l?.taken;
+      const t = isoMs(l?.taken_at);
+      return t !== null && t >= startMs && t <= endMs && l?.status === "taken";
     }).length;
 
     const paidBills = safeBills.filter((b) => b?.status === "paid").length;
     const periodPayments = safePayments.filter((p) => {
-      const t = isoMs(p?.paid_at);
+      const t = isoMs(p?.payment_date);
       return t !== null && t >= startMs && t <= endMs;
     });
     const paymentsCount = periodPayments.length;
@@ -382,13 +382,13 @@ function AnalyticsPage() {
     });
 
     (medicationLogs || []).forEach((l) => {
-      if (!l?.taken) return;
-      const t = isoMs(l.logged_at);
+      if (l?.status !== "taken") return;
+      const t = isoMs(l.taken_at);
       if (t !== null) addEvent(t, "doses");
     });
 
     (payments || []).forEach((p) => {
-      const t = isoMs(p?.paid_at);
+      const t = isoMs(p?.payment_date);
       if (t !== null) addEvent(t, "payments");
     });
 

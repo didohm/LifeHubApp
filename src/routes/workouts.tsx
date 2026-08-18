@@ -30,9 +30,19 @@ import { useAuth } from "@/hooks/use-auth";
 import { useAuthGuard } from "@/hooks/use-auth-guard";
 import { useData } from "@/lib/data-context";
 import { completeDayWorkout, activateWorkoutProgram, DAY_LABELS } from "@/lib/api";
-import { WorkoutProgram, DayKey } from "@/lib/types";
+import { DayKey } from "@/lib/types";
 import { ListSkeleton } from "@/components/lifehub/SkeletonLoader";
-import { focusForDay, isTrainingDay, isCardioProgram } from "@/lib/workout-utils";
+import {
+  focusForDay,
+  isTrainingDay,
+  isCardioProgram,
+  localDateStr,
+  dayKeyOf,
+  getFocusTags,
+  getFocusTips,
+  formatDuration,
+  DAY_KEYS,
+} from "@/lib/workout-utils";
 import { sounds } from "@/lib/sound";
 import { cn } from "@/lib/utils";
 
@@ -48,58 +58,6 @@ export const Route = createFileRoute("/workouts")({
   }),
   component: WorkoutsPage,
 });
-
-const DAY_KEYS: DayKey[] = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
-
-function localDateStr(d: Date): string {
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return `${y}-${m}-${day}`;
-}
-
-function dayKeyOf(d: Date): DayKey {
-  return DAY_KEYS[d.getDay()];
-}
-
-function formatDuration(seconds: number): string {
-  const mins = Math.floor(seconds / 60);
-  const secs = seconds % 60;
-  return `${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
-}
-
-function getFocusTags(focus: string, workoutType?: string): string[] {
-  const f = (focus || "").toLowerCase();
-  if (f.includes("push")) return ["Chest", "Front Delts", "Triceps"];
-  if (f.includes("pull")) return ["Lats", "Rhomboids", "Biceps"];
-  if (f.includes("leg")) return ["Quads", "Hamstrings", "Glutes", "Calves"];
-  if (f.includes("upper")) return ["Chest", "Back", "Shoulders", "Arms"];
-  if (f.includes("lower")) return ["Quads", "Hamstrings", "Calves", "Core"];
-  if (f.includes("skill") || f.includes("calisthenic") || f.includes("planche") || f.includes("lever"))
-    return ["Shoulder Stability", "Straight Arm Strength", "Core"];
-  if (f.includes("cardio") || f.includes("hiit") || f.includes("sprint") || workoutType === "Cardio")
-    return ["Cardiovascular", "VO2 Max", "Aerobic Base"];
-  if (f.includes("full")) return ["Compound Chains", "Core", "Total Body"];
-  if (f.includes("rest")) return ["Active Recovery", "Joint Mobility", "Sleep"];
-  return ["Target Muscles", "Conditioning", "Mobility"];
-}
-
-function getFocusTips(focus: string): string {
-  const f = (focus || "").toLowerCase();
-  if (f.includes("push"))
-    return "Warm up shoulder rotators and wrists with resistance bands before heavy pressing sets.";
-  if (f.includes("pull"))
-    return "Focus on elbow drive and full scapular retraction to isolate the lats and rhomboids.";
-  if (f.includes("leg"))
-    return "Perform dynamic ankle and hip mobility openers before squats or compound leg movements.";
-  if (f.includes("cardio") || f.includes("hiit"))
-    return "Keep hydration high. Maintain Zone 2 pacing on endurance runs and maximum effort on sprint intervals.";
-  if (f.includes("skill"))
-    return "Rest 2–3 minutes between skill attempts to keep the nervous system fresh and explosive.";
-  if (f.includes("rest"))
-    return "Prioritize 8+ hours of sleep, 3L water intake, and light walking to facilitate tissue recovery.";
-  return "Maintain strict form, controlled tempo, and steady progressive overload.";
-}
 
 function WorkoutsPage() {
   const { user, loading: authLoading } = useAuth();
@@ -134,7 +92,7 @@ function WorkoutsPage() {
 
   // ── Stopwatch Interval ──
   useEffect(() => {
-    let timer: any = null;
+    let timer: ReturnType<typeof setInterval> | null = null;
     if (stopwatchRunning) {
       timer = setInterval(() => {
         setElapsedSeconds((prev) => prev + 1);
@@ -147,7 +105,7 @@ function WorkoutsPage() {
 
   // ── Rest Countdown Interval ──
   useEffect(() => {
-    let timer: any = null;
+    let timer: ReturnType<typeof setInterval> | null = null;
     if (restActive && restSeconds > 0) {
       timer = setInterval(() => {
         setRestSeconds((prev) => {
@@ -340,15 +298,17 @@ function WorkoutsPage() {
         <div className="relative mb-3.5">
           <div className="flex items-center justify-between bg-white border border-black/5 rounded-2xl p-2.5 shadow-2xs">
             <div className="flex items-center gap-2 min-w-0">
-              <span className="text-[10px] font-black uppercase text-muted-foreground tracking-wider">
+              <span className="text-xs font-black uppercase text-muted-foreground tracking-wider">
                 Active Split:
               </span>
-              <span className="text-xs font-black text-[#12131A] truncate">{activeProgram.name}</span>
+              <span className="text-xs font-black text-[#12131A] truncate">
+                {activeProgram.name}
+              </span>
             </div>
             <button
               type="button"
               onClick={() => setProgramDropdownOpen(!programDropdownOpen)}
-              className="tap flex items-center gap-1 text-[11px] font-black text-[#7C5CFC] bg-[#7C5CFC]/10 px-2.5 py-1 rounded-full hover:bg-[#7C5CFC]/15 transition-colors"
+              className="tap flex items-center gap-1 text-xs font-black text-[#7C5CFC] bg-[#7C5CFC]/10 px-2.5 py-1 rounded-full hover:bg-[#7C5CFC]/15 transition-colors"
             >
               Switch <ChevronDown className="size-3" />
             </button>
@@ -377,29 +337,19 @@ function WorkoutsPage() {
         </div>
       )}
 
-      {/* ══════════════════════════════════════════════════════════════
-          HERO: TODAY'S TRAINING FOCAL POINT
-          ══════════════════════════════════════════════════════════════ */}
-      <section className="card-soft relative overflow-hidden bg-gradient-to-br from-[#0F1117] via-[#161922] to-[#212636] p-5 sm:p-6 text-white shadow-lg mb-4 border border-white/10 rounded-3xl">
-        {/* Subtle background ambient glow */}
-        <div
-          className={cn(
-            "absolute -top-12 -right-12 size-44 rounded-full blur-3xl pointer-events-none opacity-20",
-            todayCompleted ? "bg-emerald-400" : todayTraining ? "bg-amber-400" : "bg-indigo-400",
-          )}
-        />
-
+      {/* HERO: TODAY'S TRAINING FOCAL POINT */}
+      <section className="card-soft relative overflow-hidden bg-white p-5 sm:p-6 shadow-lg mb-4 border border-border/60 rounded-3xl">
         <div className="relative z-10 flex items-start justify-between gap-3">
           <div>
             <div className="flex items-center gap-2 flex-wrap">
               <span
                 className={cn(
-                  "inline-flex items-center gap-1.5 rounded-full px-3 py-0.5 text-[10px] font-black uppercase tracking-wider shadow-2xs",
+                  "inline-flex items-center gap-1.5 rounded-full px-3 py-0.5 text-xs font-black uppercase tracking-wider shadow-2xs",
                   todayCompleted
                     ? "bg-emerald-500 text-white"
                     : todayTraining
                       ? "bg-amber-500 text-white"
-                      : "bg-indigo-500/80 text-white",
+                      : "bg-indigo-500 text-white",
                 )}
               >
                 {todayCompleted ? (
@@ -408,7 +358,7 @@ function WorkoutsPage() {
                   </>
                 ) : todayTraining ? (
                   <>
-                    <Flame className="size-3 text-amber-100" /> Active Session
+                    <Flame className="size-3 text-white/90" /> Active Session
                   </>
                 ) : (
                   <>
@@ -417,12 +367,12 @@ function WorkoutsPage() {
                 )}
               </span>
 
-              <span className="rounded-full bg-white/10 px-2.5 py-0.5 text-[10px] font-bold text-white/70">
+              <span className="rounded-full bg-muted px-2.5 py-0.5 text-xs font-bold text-muted-foreground">
                 {DAY_LABELS[todayKey]}
               </span>
             </div>
 
-            <h2 className="mt-3 text-2xl sm:text-3xl font-black text-white tracking-tight leading-tight">
+            <h2 className="mt-3 text-2xl sm:text-3xl font-black text-foreground tracking-tight leading-tight">
               {todayTraining ? todayFocus : "Rest Day & Recovery"}
             </h2>
 
@@ -431,7 +381,7 @@ function WorkoutsPage() {
               {todayTags.map((tag) => (
                 <span
                   key={tag}
-                  className="rounded-lg bg-white/10 px-2 py-0.5 text-[10px] font-semibold text-white/80 backdrop-blur-xs"
+                  className="rounded-lg bg-muted px-2 py-0.5 text-xs font-semibold text-muted-foreground"
                 >
                   {tag}
                 </span>
@@ -439,33 +389,34 @@ function WorkoutsPage() {
             </div>
           </div>
 
-          <div className="flex size-12 sm:size-14 items-center justify-center rounded-2xl bg-white/10 text-white shadow-2xs backdrop-blur-md shrink-0 border border-white/10">
+          <div className="flex size-12 sm:size-14 items-center justify-center rounded-2xl bg-muted text-foreground shadow-2xs shrink-0 border border-border/40">
             {todayCompleted ? (
-              <CheckCircle2 className="size-7 text-emerald-400" />
+              <CheckCircle2 className="size-7 text-emerald-600" />
             ) : cardio ? (
-              <Zap className="size-7 text-amber-300" />
+              <Zap className="size-7 text-amber-500" />
             ) : (
-              <Dumbbell className="size-7 text-amber-300" />
+              <Dumbbell className="size-7 text-amber-500" />
             )}
           </div>
         </div>
 
         {/* Status Box & Action */}
-        <div className="relative z-10 mt-5 pt-4 border-t border-white/10">
+        <div className="relative z-10 mt-5 pt-4 border-t border-border/40">
           {!todayTraining ? (
-            <div className="flex items-center gap-2.5 rounded-2xl bg-white/5 p-3.5 border border-white/5">
-              <Moon className="size-4 text-indigo-300 shrink-0" />
-              <p className="text-xs font-semibold text-white/80 leading-snug">
-                No intense lifting scheduled today. Focus on mobility, hydration, and restful recovery.
+            <div className="flex items-center gap-2.5 rounded-2xl bg-muted p-3.5 border border-border/30">
+              <Moon className="size-4 text-indigo-500 shrink-0" />
+              <p className="text-sm font-semibold text-muted-foreground leading-snug">
+                No intense lifting scheduled today. Focus on mobility, hydration, and restful
+                recovery.
               </p>
             </div>
           ) : todayCompleted ? (
-            <div className="flex items-center justify-between rounded-2xl bg-emerald-500/15 border border-emerald-400/30 p-3.5 text-emerald-300">
+            <div className="flex items-center justify-between rounded-2xl bg-emerald-50 border border-emerald-200/60 p-3.5 text-emerald-700">
               <div className="flex items-center gap-2">
-                <CheckCircle2 className="size-4 text-emerald-400" />
-                <span className="text-xs font-black">Logged & Done for the day!</span>
+                <CheckCircle2 className="size-4 text-emerald-500" />
+                <span className="text-sm font-black">Logged & Done for the day!</span>
               </div>
-              <span className="text-[11px] font-semibold text-white/60">Great job! 💪</span>
+              <span className="text-xs font-semibold text-muted-foreground">Great job! 💪</span>
             </div>
           ) : (
             <div className="space-y-3">
@@ -473,7 +424,7 @@ function WorkoutsPage() {
                 type="button"
                 onClick={handleCompleteToday}
                 disabled={completing}
-                className="tap flex w-full items-center justify-center gap-2 rounded-2xl bg-emerald-500 py-3.5 text-sm font-black text-white shadow-md hover:bg-emerald-600 active:scale-98 transition-all disabled:opacity-60"
+                className="tap flex w-full items-center justify-center gap-2 rounded-2xl bg-emerald-500 py-3.5 text-sm font-black text-white shadow-md hover:bg-emerald-600 active:scale-95 transition-all disabled:opacity-60"
               >
                 {completing ? (
                   <Loader2 className="size-4 animate-spin" />
@@ -491,124 +442,130 @@ function WorkoutsPage() {
                     sounds.playClick();
                     setShowTools(!showTools);
                   }}
-                  className="inline-flex items-center gap-1.5 text-xs font-bold text-white/70 hover:text-white transition-colors"
+                  className="inline-flex items-center gap-1.5 text-sm font-bold text-muted-foreground hover:text-foreground transition-colors"
                 >
-                  <Timer className="size-3.5 text-amber-400" />
+                  <Timer className="size-4 text-amber-500" />
                   {showTools ? "Hide Rest & Session Timers" : "Open Rest & Session Timers"}
                 </button>
-                <span className="text-[11px] text-white/50 font-medium">Program: {activeProgram.name}</span>
+                <span className="text-xs text-muted-foreground font-medium">
+                  Program: {activeProgram.name}
+                </span>
               </div>
             </div>
           )}
         </div>
-
-        {/* ══════════════════════════════════════════════════════════════
-            LIVE COMPANION & REST TIMER WIDGET (Inside Hero or Expandable)
-            ══════════════════════════════════════════════════════════════ */}
-        {showTools && todayTraining && (
-          <div className="relative z-10 mt-4 rounded-2xl bg-black/40 border border-white/10 p-4 space-y-4 animate-in slide-in-from-top-2 duration-200">
-            {/* Stopwatch */}
-            <div className="flex items-center justify-between bg-white/5 rounded-xl p-3 border border-white/5">
-              <div className="flex items-center gap-2">
-                <Clock className="size-4 text-amber-400" />
-                <div>
-                  <span className="text-[10px] font-black uppercase text-white/50 tracking-wider block">
-                    Session Duration
-                  </span>
-                  <span className="text-lg font-black text-white tracking-tight">
-                    {formatDuration(elapsedSeconds)}
-                  </span>
-                </div>
-              </div>
-              <div className="flex items-center gap-1.5">
-                <button
-                  type="button"
-                  onClick={() => {
-                    sounds.playClick();
-                    setStopwatchRunning(!stopwatchRunning);
-                  }}
-                  className={cn(
-                    "tap flex size-8 items-center justify-center rounded-full text-white shadow-xs transition-colors",
-                    stopwatchRunning ? "bg-amber-600 hover:bg-amber-700" : "bg-emerald-600 hover:bg-emerald-700",
-                  )}
-                >
-                  {stopwatchRunning ? <Pause className="size-3.5" /> : <Play className="size-3.5 ml-0.5" />}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    sounds.playClick();
-                    setStopwatchRunning(false);
-                    setElapsedSeconds(0);
-                  }}
-                  title="Reset duration"
-                  className="tap flex size-8 items-center justify-center rounded-full bg-white/10 text-white/70 hover:bg-white/20"
-                >
-                  <RotateCcw className="size-3.5" />
-                </button>
-              </div>
-            </div>
-
-            {/* Rest Interval Timer */}
-            <div>
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-[10px] font-black uppercase text-white/60 tracking-wider flex items-center gap-1">
-                  <Timer className="size-3 text-[#7C5CFC]" /> Rest Interval Timer
-                </span>
-                {restActive && (
-                  <span className="text-xs font-black text-amber-300 animate-pulse">
-                    {restSeconds}s remaining
-                  </span>
-                )}
-              </div>
-
-              {/* Quick Rest Preset Buttons */}
-              <div className="grid grid-cols-4 gap-1.5">
-                {[30, 60, 90, 120].map((secs) => (
-                  <button
-                    key={secs}
-                    type="button"
-                    onClick={() => startRestTimer(secs)}
-                    className={cn(
-                      "tap py-2 rounded-xl text-xs font-black transition-all",
-                      restActive && initialRest === secs
-                        ? "bg-[#7C5CFC] text-white shadow-md scale-98 ring-2 ring-white/30"
-                        : "bg-white/10 text-white/80 hover:bg-white/20",
-                    )}
-                  >
-                    {secs}s
-                  </button>
-                ))}
-              </div>
-
-              {restActive && (
-                <div className="mt-2.5 flex items-center justify-between bg-[#7C5CFC]/20 border border-[#7C5CFC]/30 rounded-xl p-2 px-3">
-                  <div className="flex items-center gap-2">
-                    <div className="size-2 rounded-full bg-amber-400 animate-ping" />
-                    <span className="text-xs font-bold text-white">Counting down {restSeconds}s</span>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={cancelRestTimer}
-                    className="text-[11px] font-bold text-white/70 hover:text-white underline"
-                  >
-                    Cancel
-                  </button>
-                </div>
-              )}
-            </div>
-          </div>
-        )}
       </section>
 
-      {/* ══════════════════════════════════════════════════════════════
-          WEEKLY SCHEDULE & INTERACTIVE DAY INSPECTOR
-          ══════════════════════════════════════════════════════════════ */}
+      {/* LIVE COMPANION & REST TIMER WIDGET */}
+      {showTools && todayTraining && (
+        <div className="card-soft bg-white border border-border/40 p-4 space-y-4 mb-4 rounded-3xl shadow-xs animate-in slide-in-from-top-2 duration-200">
+          {/* Stopwatch */}
+          <div className="flex items-center justify-between bg-muted rounded-xl p-3 border border-border/30">
+            <div className="flex items-center gap-2">
+              <Clock className="size-4 text-amber-500" />
+              <div>
+                <span className="text-xs font-black uppercase text-muted-foreground tracking-wider block">
+                  Session Duration
+                </span>
+                <span className="text-lg font-black text-foreground tracking-tight">
+                  {formatDuration(elapsedSeconds)}
+                </span>
+              </div>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <button
+                type="button"
+                onClick={() => {
+                  sounds.playClick();
+                  setStopwatchRunning(!stopwatchRunning);
+                }}
+                className={cn(
+                  "tap flex size-8 items-center justify-center rounded-full text-white shadow-xs transition-colors",
+                  stopwatchRunning
+                    ? "bg-amber-600 hover:bg-amber-700"
+                    : "bg-emerald-600 hover:bg-emerald-700",
+                )}
+              >
+                {stopwatchRunning ? (
+                  <Pause className="size-3.5" />
+                ) : (
+                  <Play className="size-3.5 ml-0.5" />
+                )}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  sounds.playClick();
+                  setStopwatchRunning(false);
+                  setElapsedSeconds(0);
+                }}
+                title="Reset duration"
+                className="tap flex size-8 items-center justify-center rounded-full bg-slate-200 text-slate-600 hover:bg-slate-300"
+              >
+                <RotateCcw className="size-3.5" />
+              </button>
+            </div>
+          </div>
+
+          {/* Rest Interval Timer */}
+          <div>
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-xs font-black uppercase text-muted-foreground tracking-wider flex items-center gap-1">
+                <Timer className="size-3 text-[#7C5CFC]" /> Rest Interval Timer
+              </span>
+              {restActive && (
+                <span className="text-xs font-black text-amber-600">{restSeconds}s remaining</span>
+              )}
+            </div>
+
+            {/* Quick Rest Preset Buttons */}
+            <div className="grid grid-cols-4 gap-1.5">
+              {[30, 60, 90, 120].map((secs) => (
+                <button
+                  key={secs}
+                  type="button"
+                  onClick={() => startRestTimer(secs)}
+                  className={cn(
+                    "tap py-2 rounded-xl text-xs font-black transition-all",
+                    restActive && initialRest === secs
+                      ? "bg-[#7C5CFC] text-white shadow-md ring-2 ring-[#7C5CFC]/20"
+                      : "bg-slate-100 text-slate-700 hover:bg-slate-200",
+                  )}
+                >
+                  {secs}s
+                </button>
+              ))}
+            </div>
+
+            {restActive && (
+              <div className="mt-2.5 flex items-center justify-between bg-[#7C5CFC]/10 border border-[#7C5CFC]/20 rounded-xl p-2 px-3">
+                <div className="flex items-center gap-2">
+                  <div className="size-2 rounded-full bg-amber-500 animate-pulse" />
+                  <span className="text-xs font-bold text-foreground">
+                    Counting down {restSeconds}s
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={cancelRestTimer}
+                  className="text-xs font-bold text-muted-foreground hover:text-foreground underline"
+                >
+                  Cancel
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* WEEKLY SCHEDULE & INTERACTIVE DAY INSPECTOR */}
       <div className="card-soft bg-white p-5 border border-black/5 shadow-xs mb-4 space-y-4">
         <div className="flex items-center justify-between">
           <div>
-            <h3 className="text-sm font-black text-[#12131A] tracking-tight">Weekly Training Split</h3>
-            <p className="text-[11px] font-semibold text-muted-foreground">
+            <h3 className="text-sm font-black text-foreground tracking-tight">
+              Weekly Training Split
+            </h3>
+            <p className="text-xs font-semibold text-muted-foreground">
               Tap any day to preview routine & target muscles
             </p>
           </div>
@@ -633,14 +590,14 @@ function WorkoutsPage() {
         <div className="rounded-2xl bg-slate-50 border border-slate-100 p-3.5 text-left transition-all">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
-              <span className="text-xs font-black text-[#12131A]">
+              <span className="text-xs font-black text-foreground">
                 {DAY_LABELS[inspectedKey]} Focus:
               </span>
               <span className="text-xs font-black text-[#7C5CFC]">{inspectedFocus}</span>
             </div>
             <span
               className={cn(
-                "rounded-full px-2 py-0.5 text-[10px] font-extrabold",
+                "rounded-full px-2 py-0.5 text-xs font-extrabold",
                 inspectedCompleted
                   ? "bg-emerald-500/15 text-emerald-700"
                   : inspectedTraining
@@ -662,9 +619,7 @@ function WorkoutsPage() {
         </div>
       </div>
 
-      {/* ══════════════════════════════════════════════════════════════
-          WEEKLY VOLUME & CONSISTENCY BAROMETER
-          ══════════════════════════════════════════════════════════════ */}
+      {/* WEEKLY VOLUME & CONSISTENCY BAROMETER */}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
         {/* Weekly Progress Card */}
         <div className="card-soft bg-white p-4 border border-black/5 shadow-xs flex flex-col justify-between">
@@ -674,13 +629,13 @@ function WorkoutsPage() {
                 <Trophy className="size-4" />
               </div>
               <div>
-                <p className="text-xs font-black text-[#12131A]">Weekly Consistency</p>
-                <p className="text-[10px] font-semibold text-muted-foreground">
+                <p className="text-xs font-black text-foreground">Weekly Consistency</p>
+                <p className="text-xs font-semibold text-muted-foreground">
                   {weekCompleted} of {weekTotal} sessions completed
                 </p>
               </div>
             </div>
-            <span className="text-base font-black text-[#12131A]">{weekPct}%</span>
+            <span className="text-base font-black text-foreground">{weekPct}%</span>
           </div>
 
           <div className="h-2 w-full rounded-full bg-slate-100 overflow-hidden">
@@ -697,16 +652,16 @@ function WorkoutsPage() {
             <CalendarDays className="size-5" />
           </div>
           <div className="flex-1 min-w-0">
-            <p className="text-[10px] font-black uppercase tracking-wider text-muted-foreground">
+            <p className="text-xs font-black uppercase tracking-wider text-muted-foreground">
               Tomorrow · {DAY_LABELS[tomorrowKey]}
             </p>
-            <h4 className="text-xs font-black text-[#12131A] truncate">
+            <h4 className="text-xs font-black text-foreground truncate">
               {tomorrowTraining ? tomorrowFocus : "Rest Day & Recovery"}
             </h4>
           </div>
           <span
             className={cn(
-              "rounded-full px-2.5 py-1 text-[10px] font-black shrink-0",
+              "rounded-full px-2.5 py-1 text-xs font-black shrink-0",
               tomorrowTraining ? "bg-amber-500/15 text-amber-800" : "bg-slate-100 text-slate-700",
             )}
           >

@@ -531,7 +531,7 @@ function MedicationsPage() {
               >
                 <span className="font-bold text-foreground">Dose marked taken</span>
                 <span className="text-[10px] text-muted-foreground font-semibold">
-                  {l.logged_at ? new Date(l.logged_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "Logged"}
+                  {l.taken_at ? new Date(l.taken_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "Logged"}
                 </span>
               </div>
             ))

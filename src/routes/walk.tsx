@@ -78,6 +78,18 @@ function formatPace(durationSec: number, distanceMeters: number): string {
   return `${mins}'${secs.toString().padStart(2, "0")}"`;
 }
 
+/** Formats a native min/km pace value from the walk service (9.5 → 9'30"). */
+function formatNativePace(minPerKm: number): string {
+  if (!Number.isFinite(minPerKm) || minPerKm <= 0 || minPerKm > 60) return "--";
+  let mins = Math.floor(minPerKm);
+  let secs = Math.round((minPerKm - mins) * 60);
+  if (secs === 60) {
+    mins += 1;
+    secs = 0;
+  }
+  return `${mins}'${secs.toString().padStart(2, "0")}"`;
+}
+
 /** Strava-style summary modal shown right after a walk/run finishes. */
 export function WalkSummaryModal({
   session,
@@ -106,6 +118,12 @@ function WalkPage() {
   // In-context rationale dialogs
   const [showBgLocationDialog, setShowBgLocationDialog] = useState(false);
   const [showBatteryDialog, setShowBatteryDialog] = useState(false);
+  // Prompt guards: the background-location and battery-optimization prompts
+  // are shown when the Walk Service page is OPENED from outside the Start
+  // Walk flow — at most once per page visit. Tapping Start New Walk never
+  // shows them.
+  const bgLocationPromptShownRef = useRef(false);
+  const batteryPromptShownRef = useRef(false);
 
   const userWeightKg = user?.weight && Number(user.weight) > 0 ? Number(user.weight) : 0;
   const hasValidWeight = user?.weight && Number(user.weight) > 0;
@@ -157,21 +175,50 @@ function WalkPage() {
     pauseWalk,
     resumeWalk,
     finishWalk,
+    pace: nativePace,
   } = useWalk(user?.id, userWeightKg, handleWalkComplete);
 
-  const continueStartSequence = useCallback(async () => {
+  const maybeShowBatteryPrompt = useCallback(async () => {
+    if (batteryPromptShownRef.current) return;
+    batteryPromptShownRef.current = true;
     try {
       const { exempt } = await WalkServicePlugin.isBatteryOptimizationExempt();
       if (!exempt) {
         setShowBatteryDialog(true);
-        return;
       }
     } catch {
       /* web fallback */
     }
-    sounds.playWalkStart();
-    startWalk();
-  }, [startWalk]);
+  }, []);
+
+  // Page-open prompts (outside the Start Walk flow): when the user opens the
+  // Walk Service page, offer background location (when location is already
+  // granted) and the OS "Allow background activity?" battery dialog. Start
+  // New Walk below only requests the permissions the service actually needs
+  // (location, body sensors, physical activity) — no extra dialogs.
+  useEffect(() => {
+    if (!Capacitor.isNativePlatform()) return;
+    let cancelled = false;
+    void (async () => {
+      if (!bgLocationPromptShownRef.current) {
+        bgLocationPromptShownRef.current = true;
+        try {
+          const hasLocation = await PermissionManager.check("location");
+          const hasBg = await PermissionManager.check("background");
+          if (hasLocation && !hasBg && !PermissionManager.wasDenied("background")) {
+            if (!cancelled) setShowBgLocationDialog(true);
+            return;
+          }
+        } catch {
+          /* permission bridge unavailable */
+        }
+      }
+      await maybeShowBatteryPrompt();
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [maybeShowBatteryPrompt]);
 
   const handleStartClick = useCallback(async () => {
     sounds.playActionClick();
@@ -183,22 +230,9 @@ function WalkPage() {
     await PermissionManager.ensurePermission("location");
     await PermissionManager.ensurePermission("activity");
     await PermissionManager.ensurePermission("health");
-
-    if (await PermissionManager.check("location")) {
-      const bg = await PermissionManager.check("background");
-      if (!bg) {
-        if (PermissionManager.wasDenied("background")) {
-          toast.warning(
-            "Background location is off — tracking may pause when app is minimized.",
-          );
-        } else {
-          setShowBgLocationDialog(true);
-          return;
-        }
-      }
-    }
-    await continueStartSequence();
-  }, [continueStartSequence, hasValidWeight]);
+    sounds.playWalkStart();
+    startWalk();
+  }, [hasValidWeight, startWalk]);
 
   const acceptBgLocationDialog = useCallback(async () => {
     setShowBgLocationDialog(false);
@@ -206,8 +240,8 @@ function WalkPage() {
     if (!granted) {
       toast.warning("Background location is off.");
     }
-    await continueStartSequence();
-  }, [continueStartSequence]);
+    await maybeShowBatteryPrompt();
+  }, [maybeShowBatteryPrompt]);
 
   const acceptBatteryDialog = useCallback(async () => {
     setShowBatteryDialog(false);
@@ -216,9 +250,7 @@ function WalkPage() {
     } catch (e) {
       console.warn("Failed to open battery optimization request:", e);
     }
-    sounds.playWalkStart();
-    startWalk();
-  }, [startWalk]);
+  }, []);
 
   const handlePause = () => {
     sounds.playWalkPause();
@@ -296,7 +328,12 @@ function WalkPage() {
     [walkSessions],
   );
 
-  const currentPaceStr = useMemo(() => formatPace(duration, distance), [duration, distance]);
+  // Live pace: prefer the native service's pace (published on every tick);
+  // fall back to the JS-computed average until the first native report.
+  const currentPaceStr = useMemo(() => {
+    if (nativePace > 0) return formatNativePace(nativePace);
+    return formatPace(duration, distance);
+  }, [nativePace, duration, distance]);
 
   // Daily distance target (3.0 km standard baseline)
   const dailyTargetMeters = 3000;
@@ -691,7 +728,7 @@ function WalkPage() {
             className="fixed inset-0 z-[100] flex items-end justify-center bg-black/60 p-4 sm:items-center"
             onClick={() => {
               setShowBgLocationDialog(false);
-              void continueStartSequence();
+              void maybeShowBatteryPrompt();
             }}
           >
             <div
@@ -709,7 +746,7 @@ function WalkPage() {
                 <button
                   onClick={() => {
                     setShowBgLocationDialog(false);
-                    void continueStartSequence();
+                    void maybeShowBatteryPrompt();
                   }}
                   className="flex-1 rounded-full bg-slate-100 px-4 py-2.5 text-xs font-black text-slate-700 hover:bg-slate-200"
                 >
@@ -734,7 +771,6 @@ function WalkPage() {
             className="fixed inset-0 z-[100] flex items-end justify-center bg-black/60 p-4 sm:items-center"
             onClick={() => {
               setShowBatteryDialog(false);
-              startWalk();
             }}
           >
             <div
@@ -752,7 +788,6 @@ function WalkPage() {
                 <button
                   onClick={() => {
                     setShowBatteryDialog(false);
-                    startWalk();
                   }}
                   className="flex-1 rounded-full bg-slate-100 px-4 py-2.5 text-xs font-black text-slate-700 hover:bg-slate-200"
                 >

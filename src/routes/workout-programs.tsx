@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { createFileRoute } from "@tanstack/react-router";
 import {
   Plus,
@@ -44,7 +44,8 @@ export const Route = createFileRoute("/workout-programs")({
       { title: "Workout Programs & Splits — LifeHub" },
       {
         name: "description",
-        content: "Customizable workout splits, calisthenics routines, and cardio schedules with smart templates.",
+        content:
+          "Customizable workout splits, calisthenics routines, and cardio schedules with smart templates.",
       },
     ],
   }),
@@ -79,7 +80,8 @@ const PROGRAM_PRESETS: ProgramPreset[] = [
     name: "Push / Pull / Legs Split",
     workoutType: "Gym",
     badge: "6-Day Pro Split",
-    description: "High-frequency split targeting push, pull, and leg muscle groups with balanced rest.",
+    description:
+      "High-frequency split targeting push, pull, and leg muscle groups with balanced rest.",
     plan: [
       { day: "mon", focus: "Push (Chest/Shoulders/Tris)" },
       { day: "tue", focus: "Pull (Back/Lats/Biceps)" },
@@ -111,7 +113,8 @@ const PROGRAM_PRESETS: ProgramPreset[] = [
     name: "Calisthenics Skills & Core",
     workoutType: "Calisthenics",
     badge: "5-Day Bodyweight",
-    description: "Skill mastery, planche & lever progressions, handstands, and explosive endurance.",
+    description:
+      "Skill mastery, planche & lever progressions, handstands, and explosive endurance.",
     plan: [
       { day: "mon", focus: "Push & Planche Progressions" },
       { day: "tue", focus: "Pull & Front Lever Work" },
@@ -175,6 +178,9 @@ function WorkoutProgramsPage() {
   const [notes, setNotes] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
+  // Preset application guard state
+  const [pendingPreset, setPendingPreset] = useState<ProgramPreset | null>(null);
+
   const { deleteWithGuard } = useDeleteWithGuard();
 
   const resetForm = () => {
@@ -183,17 +189,8 @@ function WorkoutProgramsPage() {
     setWeeklyPlan(DEFAULT_WEEKLY_PLAN);
     setCardioDays([]);
     setNotes("");
+    setPendingPreset(null);
   };
-
-  // Auto-activate the first program for users with legacy data (no active flag)
-  useEffect(() => {
-    if (!user || workoutPrograms.length === 0) return;
-    if (!workoutPrograms.some((p) => p.is_active)) {
-      activateWorkoutProgram(workoutPrograms[0].id, user.id)
-        .then(() => refreshFitness())
-        .catch(() => {});
-    }
-  }, [user, workoutPrograms, refreshFitness]);
 
   const openAddModal = () => {
     sounds.playActionClick();
@@ -202,7 +199,9 @@ function WorkoutProgramsPage() {
     setModalOpen(true);
   };
 
-  const applyPreset = (preset: ProgramPreset) => {
+  const confirmApplyPreset = () => {
+    if (!pendingPreset) return;
+    const preset = pendingPreset;
     sounds.playClick();
     setName(preset.name);
     setWorkoutType(preset.workoutType);
@@ -214,7 +213,21 @@ function WorkoutProgramsPage() {
       setWeeklyPlan(preset.plan);
     }
     setNotes(preset.description);
+    setPendingPreset(null);
     toast.success(`Applied ${preset.name} template!`);
+  };
+
+  const applyPreset = (preset: ProgramPreset) => {
+    // Guard: if form already has custom data, ask for confirmation
+    const hasCustomData =
+      name.trim() !== "" ||
+      notes.trim() !== "" ||
+      weeklyPlan.some((p) => p.focus !== DEFAULT_WEEKLY_PLAN.find((d) => d.day === p.day)?.focus);
+    if (hasCustomData) {
+      setPendingPreset(preset);
+    } else {
+      confirmApplyPreset();
+    }
   };
 
   const openEditModal = (p: WorkoutProgram) => {
@@ -263,13 +276,14 @@ function WorkoutProgramsPage() {
         ),
       );
     } else {
-      // Convert structured cardio days back into display labels
-      setWeeklyPlan(
-        DAY_KEY_ORDER.map((dk) => ({
+      // Convert structured cardio days back into display labels (preserve any custom labels)
+      setWeeklyPlan((prev) => {
+        if (prev.length > 0) return prev;
+        return DAY_KEY_ORDER.map((dk) => ({
           day: dk,
           focus: cardioDays.includes(dk) ? "Cardio" : "Rest",
-        })),
-      );
+        }));
+      });
     }
   };
 
@@ -381,7 +395,8 @@ function WorkoutProgramsPage() {
             </div>
             <p className="mt-2 text-base font-black text-[#12131A]">No workout programs yet</p>
             <p className="text-xs text-[#6B7280] mt-1 max-w-sm mx-auto">
-              Choose a proven training split like Push / Pull / Legs, Calisthenics Skills, or create your own custom routine.
+              Choose a proven training split like Push / Pull / Legs, Calisthenics Skills, or create
+              your own custom routine.
             </p>
             <button
               onClick={openAddModal}
@@ -410,7 +425,7 @@ function WorkoutProgramsPage() {
                 <div className="flex items-start justify-between gap-3">
                   <div>
                     <div className="flex items-center gap-1.5 flex-wrap">
-                      <span className="inline-flex items-center gap-1 rounded-full bg-[#7C5CFC]/10 px-2.5 py-0.5 text-[10px] font-black text-[#7C5CFC] uppercase tracking-wider">
+                      <span className="inline-flex items-center gap-1 rounded-full bg-[#7C5CFC]/10 px-2.5 py-0.5 text-xs font-black text-[#7C5CFC] uppercase tracking-wider">
                         {program.workout_type === "Cardio" ? (
                           <Zap className="size-3" />
                         ) : (
@@ -419,11 +434,11 @@ function WorkoutProgramsPage() {
                         {program.workout_type || "Program"}
                       </span>
                       {program.is_active && (
-                        <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/15 px-2.5 py-0.5 text-[10px] font-black text-emerald-700">
+                        <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/15 px-2.5 py-0.5 text-xs font-black text-emerald-700">
                           <Check className="size-3 stroke-[3]" /> Active Program
                         </span>
                       )}
-                      <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-bold text-muted-foreground">
+                      <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-bold text-muted-foreground">
                         {trainingCount}d train · {restCount}d rest
                       </span>
                     </div>
@@ -436,7 +451,7 @@ function WorkoutProgramsPage() {
                     {!program.is_active && (
                       <button
                         onClick={() => handleSetActive(program.id)}
-                        className="tap rounded-full border border-emerald-600/30 bg-emerald-50/60 px-3 py-1 text-[11px] font-black text-emerald-700 hover:bg-emerald-100/80 transition-colors"
+                        className="tap rounded-full border border-emerald-600/30 bg-emerald-50/60 px-3 py-1 text-xs font-black text-emerald-700 hover:bg-emerald-100/80 transition-colors"
                       >
                         Set Active
                       </button>
@@ -460,7 +475,7 @@ function WorkoutProgramsPage() {
 
                 {/* Weekly Plan Grid */}
                 <div className="rounded-2xl bg-[#F9F9FD] p-3 border border-black/5">
-                  <span className="text-[10px] font-extrabold uppercase text-[#6B7280] tracking-wider block mb-2">
+                  <span className="text-xs font-extrabold uppercase text-[#6B7280] tracking-wider block mb-2">
                     Weekly Split
                   </span>
                   <WeeklySplitGrid
@@ -494,7 +509,7 @@ function WorkoutProgramsPage() {
               <h3 className="text-base font-black text-[#12131A]">
                 {editingProgram ? "Edit Program" : "Create Workout Program"}
               </h3>
-              <p className="text-[11px] font-semibold text-muted-foreground">
+              <p className="text-xs font-semibold text-muted-foreground">
                 Define your training split and weekly focus
               </p>
             </div>
@@ -511,10 +526,10 @@ function WorkoutProgramsPage() {
         {!editingProgram && (
           <div className="mt-3.5 rounded-2xl bg-slate-50 p-3 border border-slate-100">
             <div className="flex items-center justify-between mb-2">
-              <span className="text-[10px] font-black uppercase text-muted-foreground tracking-wider flex items-center gap-1">
+              <span className="text-xs font-black uppercase text-muted-foreground tracking-wider flex items-center gap-1">
                 <Flame className="size-3 text-amber-500" /> Instant Split Presets
               </span>
-              <span className="text-[10px] text-muted-foreground font-medium">1-tap setup</span>
+              <span className="text-xs text-muted-foreground font-medium">1-tap setup</span>
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 max-h-36 overflow-y-auto pr-1">
               {PROGRAM_PRESETS.map((preset) => (
@@ -528,15 +543,39 @@ function WorkoutProgramsPage() {
                     <span className="text-xs font-black text-[#12131A] group-hover:text-[#7C5CFC] transition-colors">
                       {preset.name}
                     </span>
-                    <span className="text-[9px] font-black text-[#7C5CFC] bg-[#7C5CFC]/10 px-1.5 py-0.5 rounded-md">
+                    <span className="text-xs font-black text-[#7C5CFC] bg-[#7C5CFC]/10 px-1.5 py-0.5 rounded-md">
                       {preset.badge}
                     </span>
                   </div>
-                  <span className="text-[10px] text-muted-foreground line-clamp-1 mt-0.5">
+                  <span className="text-xs text-muted-foreground line-clamp-1 mt-0.5">
                     {preset.description}
                   </span>
                 </button>
               ))}
+            </div>
+          </div>
+        )}
+
+        {pendingPreset && (
+          <div className="mt-3.5 rounded-2xl border border-amber-300/60 bg-amber-50 p-3.5">
+            <p className="text-xs font-bold text-amber-900">
+              Apply "{pendingPreset.name}"? This will replace your current form data.
+            </p>
+            <div className="mt-2 flex gap-2">
+              <button
+                type="button"
+                onClick={confirmApplyPreset}
+                className="tap rounded-full bg-amber-600 px-3.5 py-1.5 text-xs font-black text-white hover:bg-amber-700 transition-colors"
+              >
+                Apply Template
+              </button>
+              <button
+                type="button"
+                onClick={() => setPendingPreset(null)}
+                className="rounded-full border border-amber-300 px-3.5 py-1.5 text-xs font-black text-amber-900 hover:bg-amber-100 transition-colors"
+              >
+                Keep My Data
+              </button>
             </div>
           </div>
         )}
@@ -575,15 +614,16 @@ function WorkoutProgramsPage() {
               <label className="text-xs font-bold text-[#12131A] block mb-0.5">
                 Cardio Training Days
               </label>
-              <p className="text-[11px] text-[#6B7280] font-medium mb-2">
+              <p className="text-xs text-[#6B7280] font-medium mb-2">
                 Check the days you do cardio. Unchecked days are marked as recovery days.
               </p>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
                 {DAY_KEY_ORDER.map((dayKey) => {
                   const checked = cardioDays.includes(dayKey);
                   return (
-                    <label
+                    <div
                       key={dayKey}
+                      onClick={() => handleCardioDayToggle(dayKey, !checked)}
                       className={cn(
                         "flex items-center justify-between rounded-xl border p-2.5 cursor-pointer transition-colors tap",
                         checked
@@ -594,21 +634,22 @@ function WorkoutProgramsPage() {
                       <span className="text-xs font-bold text-[#12131A]">{DAY_LABELS[dayKey]}</span>
                       <span className="flex items-center gap-2">
                         {checked ? (
-                          <span className="rounded-full bg-[#7C5CFC]/15 px-2 py-0.5 text-[10px] font-black text-[#7C5CFC]">
+                          <span className="rounded-full bg-[#7C5CFC]/15 px-2 py-0.5 text-xs font-black text-[#7C5CFC]">
                             Cardio
                           </span>
                         ) : (
-                          <span className="rounded-full bg-black/5 px-2 py-0.5 text-[10px] font-black text-[#6B7280]">
+                          <span className="rounded-full bg-black/5 px-2 py-0.5 text-xs font-black text-[#6B7280]">
                             Rest
                           </span>
                         )}
                         <Checkbox
                           checked={checked}
                           onCheckedChange={(v) => handleCardioDayToggle(dayKey, !!v)}
+                          aria-label={`${DAY_LABELS[dayKey]} cardio day`}
                           className="size-4 rounded-[6px] border-black/20 data-[state=checked]:border-[#7C5CFC] data-[state=checked]:bg-[#7C5CFC] data-[state=checked]:text-white"
                         />
                       </span>
-                    </label>
+                    </div>
                   );
                 })}
               </div>
@@ -618,7 +659,7 @@ function WorkoutProgramsPage() {
               <label className="text-xs font-bold text-[#12131A] block mb-1">
                 Weekly Schedule (7 Days)
               </label>
-              <div className="space-y-1.5 max-h-56 overflow-y-auto pr-1">
+              <div className="space-y-1.5">
                 {DAY_KEY_ORDER.map((dayKey) => {
                   const currentItem = weeklyPlan.find((p) => p.day === dayKey);
                   return (
@@ -642,7 +683,9 @@ function WorkoutProgramsPage() {
           )}
 
           <div>
-            <label className="text-xs font-bold text-[#12131A]">Program Notes & Guidelines (optional)</label>
+            <label className="text-xs font-bold text-[#12131A]">
+              Program Notes & Guidelines (optional)
+            </label>
             <textarea
               rows={2}
               placeholder="Progression targets, warmup cues, or target weights..."

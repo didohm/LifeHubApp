@@ -221,7 +221,7 @@ function Index() {
     if (workouts.length > 0 || walkSessions.length > 0) {
       components++;
       const todayDone =
-        workouts.filter((w) => w.completed).length + (walkSessions.length > 0 ? 1 : 0);
+        workouts.filter((w) => w.status === "completed").length + (walkSessions.length > 0 ? 1 : 0);
       scoreSum += Math.min(100, todayDone > 0 ? 100 : 0);
     }
 

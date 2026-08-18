@@ -162,7 +162,7 @@ const servicesData: ServiceItem[] = [
     to: "/ai",
     label: "AI Health Assistant",
     description: "24/7 intelligent health advisor & summaries",
-    gradient: "from-[#7C5CFC] to-[#906FFA] text-white border-[#7C5CFC]/30",
+    gradient: "from-[#7C5CFC] to-[#906FFA] border-[#7C5CFC]/30",
     iconColor: "text-white bg-white/20",
     badgeColor: "bg-white/20 text-white",
     Icon: Bot,
@@ -185,11 +185,7 @@ function Services() {
 
   return (
     <Screen>
-      <ScreenHeader
-        title="Services"
-        subtitle="All daily routines, health & tools"
-        showBack
-      />
+      <ScreenHeader title="Services" subtitle="All daily routines, health & tools" showBack />
 
       {/* ════════════════════════════════════════════════════════════
           SERVICES GRID
@@ -229,7 +225,7 @@ function Services() {
                     {count && (
                       <span
                         className={cn(
-                          "rounded-full px-2 py-0.5 text-[9.5px] font-black uppercase tracking-wide shadow-2xs truncate max-w-[80px]",
+                          "rounded-full px-2 py-0.5 text-[11px] font-black uppercase tracking-wide shadow-2xs truncate max-w-[80px]",
                           service.badgeColor,
                         )}
                       >
@@ -241,7 +237,7 @@ function Services() {
                   <h3
                     className={cn(
                       "mt-3 text-sm font-extrabold leading-snug line-clamp-1 group-hover:translate-x-0.5 transition-transform",
-                      isAi ? "text-white" : "text-[#12131A]",
+                      isAi ? "text-white" : "text-foreground",
                     )}
                   >
                     {service.label}
@@ -249,27 +245,12 @@ function Services() {
 
                   <p
                     className={cn(
-                      "mt-1 text-[11px] leading-snug line-clamp-2",
+                      "mt-1 text-xs leading-snug line-clamp-2",
                       isAi ? "text-white/80" : "text-muted-foreground",
                     )}
                   >
                     {service.description}
                   </p>
-                </div>
-
-                <div
-                  className={cn(
-                    "mt-3 flex items-center justify-between border-t pt-2 text-[10.5px] font-bold",
-                    isAi ? "border-white/20 text-white/90" : "border-black/5 text-muted-foreground",
-                  )}
-                >
-                  <span>Open Tool</span>
-                  <ChevronRight
-                    className={cn(
-                      "size-3.5 group-hover:translate-x-1 transition-transform",
-                      isAi ? "text-white" : "text-[#7C5CFC]",
-                    )}
-                  />
                 </div>
               </Link>
             </motion.div>

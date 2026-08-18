@@ -588,13 +588,15 @@ function BillsPage() {
                 className="flex items-center justify-between rounded-xl bg-slate-50 p-3 text-xs border border-border/60"
               >
                 <div>
-                  <span className="font-bold text-foreground block">{p.title || "Bill Payment"}</span>
+                  <span className="font-bold text-foreground block">
+                    {bills.find((b) => b.id === p.bill_id)?.title || "Bill Payment"}
+                  </span>
                   <span className="text-[10px] text-muted-foreground">Via {p.payment_method || "Payment"}</span>
                 </div>
                 <div className="text-right">
                   <span className="font-black text-emerald-600 block">{Number(p.amount).toLocaleString()} DZD</span>
                   <span className="text-[10px] text-muted-foreground">
-                    {p.paid_at ? new Date(p.paid_at).toLocaleDateString() : "Settled"}
+                    {p.payment_date ? new Date(p.payment_date).toLocaleDateString() : "Settled"}
                   </span>
                 </div>
               </div>

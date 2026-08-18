@@ -43,8 +43,13 @@ import com.google.android.gms.location.Priority;
 
 import android.app.AlarmManager;
 import android.os.Handler;
+import android.os.HandlerThread;
 import android.os.Looper;
 import android.app.ActivityManager;
+
+import java.lang.ref.WeakReference;
+import java.util.concurrent.Executor;
+import java.util.concurrent.Executors;
 
 /**
  * Foreground Service for active walking tracking in LifeHub.
@@ -151,6 +156,17 @@ public class WalkService extends Service implements LocationListener, SensorEven
             ? PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
             : PendingIntent.FLAG_UPDATE_CURRENT;
 
+    private final Object metricLock = new Object();
+    private final Executor snapshotExecutor = Executors.newSingleThreadExecutor();
+
+    // Cached permission results to avoid repeated IPC calls
+    private long lastPermissionCheckMs = 0L;
+    private static final long PERMISSION_CACHE_TTL_MS = 30_000L;
+    private Boolean cachedHasFineLocation = null;
+    private Boolean cachedHasCoarseLocation = null;
+    private Boolean cachedHasActivity = null;
+    private Boolean cachedHasBodySensors = null;
+
     // SystemClock.elapsedRealtime() of the last accepted fix — feeds the GPS
     // speed gate that rejects jittery (implausibly fast) fix-to-fix jumps.
     private long lastFixElapsedRealtime = 0L;
@@ -229,6 +245,10 @@ public class WalkService extends Service implements LocationListener, SensorEven
     // of progress even if SharedPreferences is lost.
     private long lastSnapshotMs = 0L;
     private static final long SNAPSHOT_INTERVAL_MS = 5_000L;
+
+    // SharedPreferences batched persistence to reduce I/O thrashing
+    private long lastPersistStateMs = 0L;
+    private static final long PERSIST_STATE_INTERVAL_MS = 5_000L;
 
     // Connectivity monitoring
     private ConnectivityMonitor connectivityMonitor;
@@ -374,15 +394,25 @@ public class WalkService extends Service implements LocationListener, SensorEven
     }
 
     private int currentBootCount() {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) return -1;
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) {
+            // Use a wall-clock based fingerprint on older devices
+            long now = System.currentTimeMillis();
+            return (int) (now / (24L * 60 * 60 * 1000L));
+        }
         try {
             return Settings.Global.getInt(getContentResolver(), Settings.Global.BOOT_COUNT, -1);
         } catch (Exception ignored) {
-            return -1;
+            long now = System.currentTimeMillis();
+            return (int) (now / (24L * 60 * 60 * 1000L));
         }
     }
 
     private void persistState() {
+        long now = System.currentTimeMillis();
+        if (now - lastPersistStateMs < PERSIST_STATE_INTERVAL_MS) {
+            return;
+        }
+        lastPersistStateMs = now;
         prefs()
             .edit()
             .putBoolean(KEY_TRACKING, isTracking)
@@ -534,9 +564,6 @@ public class WalkService extends Service implements LocationListener, SensorEven
                     break;
                 }
                 case ACTION_UPDATE: {
-                    // Monotonic merge: the native counters are authoritative,
-                    // and any stale JS snapshot must never move them backwards
-                    // (negative → absent → leave the value untouched).
                     double km = intent.getDoubleExtra(EXTRA_DISTANCE_KM, -1.0);
                     int steps = intent.getIntExtra(EXTRA_STEPS, -1);
                     long dur = intent.getLongExtra(EXTRA_DURATION_SEC, -1L);
@@ -546,16 +573,9 @@ public class WalkService extends Service implements LocationListener, SensorEven
                     if (weight > 0.0) userWeightKg = weight;
                     if (km >= 0.0) currentDistanceKm = Math.max(currentDistanceKm, km);
                     if (steps >= 0) currentSteps = Math.max(currentSteps, steps);
-                    if (dur >= 0L) {
-                        // A larger JS-pushed duration (e.g. the app's paused
-                        // baseline) must also re-base the wall clock — mirroring
-                        // ACTION_RESUME — or the ticker's next recompute
-                        // (duration = elapsedRealtime − startedAtMs) clobbers
-                        // the merged value back to the old baseline.
-                        if (dur > durationSec) {
-                            durationSec = dur;
-                            startedAtMs = SystemClock.elapsedRealtime() - dur * 1000L;
-                        }
+                    if (dur >= 0L && dur > durationSec) {
+                        durationSec = dur;
+                        startedAtMs = SystemClock.elapsedRealtime() - dur * 1000L;
                     }
                     if (cal >= 0.0) currentCalories = Math.max(currentCalories, cal);
                     if (pace >= 0.0) currentPace = Math.max(currentPace, pace);
@@ -566,47 +586,11 @@ public class WalkService extends Service implements LocationListener, SensorEven
                     break;
                 }
                 case ACTION_PAUSE: {
-                    paused = true;
-                    // Freeze the tickers: the Doze-exempt AlarmManager ticker
-                    // must NOT keep firing 1 Hz exact alarms while paused (each
-                    // one wakes the device in Doze to do nothing but re-schedule
-                    // — a walk paused for an hour burned ~3,600 wakeups). The
-                    // Handler fallback ticker is suspended too; ACTION_RESUME
-                    // restarts whichever ticker is active.
-                    stopAllTickers();
-                    resumeTrackingEnginesIfNeeded();
-                    updateNotification();
-                    publishUpdate();
-                    persistState();
-                    persistSessionSnapshot();
+                    doPause(null);
                     break;
                 }
                 case ACTION_RESUME: {
-                    // Monotonic merge — same protection as ACTION_UPDATE.
-                    double km = intent.getDoubleExtra(EXTRA_DISTANCE_KM, -1.0);
-                    int steps = intent.getIntExtra(EXTRA_STEPS, -1);
-                    long dur = intent.getLongExtra(EXTRA_DURATION_SEC, -1L);
-                    double cal = intent.getDoubleExtra(EXTRA_CALORIES, -1.0);
-                    double pace = intent.getDoubleExtra(EXTRA_PACE, -1.0);
-                    double weight = intent.getDoubleExtra(EXTRA_WEIGHT_KG, 0.0);
-                    if (weight > 0.0) userWeightKg = weight;
-                    if (km >= 0.0) currentDistanceKm = Math.max(currentDistanceKm, km);
-                    if (steps >= 0) currentSteps = Math.max(currentSteps, steps);
-                    if (dur >= 0L) durationSec = Math.max(durationSec, dur);
-                    if (cal >= 0.0) currentCalories = Math.max(currentCalories, cal);
-                    if (pace >= 0.0) currentPace = Math.max(currentPace, pace);
-                    paused = false;
-                    // Re-base the wall clock so the resumed duration continues
-                    // from the (merged) baseline instead of counting the pause.
-                    startedAtMs = SystemClock.elapsedRealtime() - durationSec * 1000L;
-                    // Restart the ticker that ACTION_PAUSE stopped — the frozen
-                    // notification/clock must resume ticking again.
-                    startTicker();
-                    resumeTrackingEnginesIfNeeded();
-                    updateNotification();
-                    publishUpdate();
-                    persistState();
-                    persistSessionSnapshot();
+                    doResume(intent, null);
                     break;
                 }
                 case ACTION_STOP: {
@@ -621,23 +605,10 @@ public class WalkService extends Service implements LocationListener, SensorEven
                     publishUpdate("finish");
                     break;
                 case ACTION_PAUSE_TAP:
-                    paused = true;
-                    stopAllTickers();
-                    resumeTrackingEnginesIfNeeded();
-                    updateNotification();
-                    publishUpdate("pause");
-                    persistState();
-                    persistSessionSnapshot();
+                    doPause("pause");
                     break;
                 case ACTION_RESUME_TAP:
-                    paused = false;
-                    startedAtMs = SystemClock.elapsedRealtime() - durationSec * 1000L;
-                    startTicker();
-                    resumeTrackingEnginesIfNeeded();
-                    updateNotification();
-                    publishUpdate("resume");
-                    persistState();
-                    persistSessionSnapshot();
+                    doResume(null, "resume");
                     break;
                 case ACTION_TICKER_UPDATE:
                     // Heartbeat watchdog update from AlarmManager
@@ -676,6 +647,47 @@ public class WalkService extends Service implements LocationListener, SensorEven
             resumeTrackingEnginesIfNeeded();
         }
         return START_STICKY;
+    }
+
+    /** Core pause logic shared between ACTION_PAUSE and ACTION_PAUSE_TAP. */
+    private void doPause(String action) {
+        paused = true;
+        stopAllTickers();
+        resumeTrackingEnginesIfNeeded();
+        updateNotification();
+        publishUpdate(action);
+        persistState();
+        persistSessionSnapshot();
+    }
+
+    /**
+     * Core resume logic shared between ACTION_RESUME and ACTION_RESUME_TAP.
+     * When intent is non-null, metrics are monotonically merged from it.
+     * ACTION_RESUME passes an intent; ACTION_RESUME_TAP passes null.
+     */
+    private void doResume(Intent intent, String action) {
+        if (intent != null) {
+            double km = intent.getDoubleExtra(EXTRA_DISTANCE_KM, -1.0);
+            int steps = intent.getIntExtra(EXTRA_STEPS, -1);
+            long dur = intent.getLongExtra(EXTRA_DURATION_SEC, -1L);
+            double cal = intent.getDoubleExtra(EXTRA_CALORIES, -1.0);
+            double pace = intent.getDoubleExtra(EXTRA_PACE, -1.0);
+            double weight = intent.getDoubleExtra(EXTRA_WEIGHT_KG, 0.0);
+            if (weight > 0.0) userWeightKg = weight;
+            if (km >= 0.0) currentDistanceKm = Math.max(currentDistanceKm, km);
+            if (steps >= 0) currentSteps = Math.max(currentSteps, steps);
+            if (dur >= 0L) durationSec = Math.max(durationSec, dur);
+            if (cal >= 0.0) currentCalories = Math.max(currentCalories, cal);
+            if (pace >= 0.0) currentPace = Math.max(currentPace, pace);
+        }
+        paused = false;
+        startedAtMs = SystemClock.elapsedRealtime() - durationSec * 1000L;
+        startTicker();
+        resumeTrackingEnginesIfNeeded();
+        updateNotification();
+        publishUpdate(action);
+        persistState();
+        persistSessionSnapshot();
     }
 
     /**
@@ -729,36 +741,21 @@ public class WalkService extends Service implements LocationListener, SensorEven
      */
     private boolean validateServiceState() {
         if (!isTracking) return true;
-        
-        // Check for corrupted state: tracking but no duration
         if (durationSec == 0 && startedAtMs == 0) {
             Log.e(TAG, "Corrupted state: tracking=true but no duration/startTime");
             return false;
         }
-        
-        // Check if resources are in a sane state
-        boolean hasValidState = true;
-        
         if (alarmManager == null) {
             Log.w(TAG, "AlarmManager is null during restart");
-            hasValidState = false;
         }
-        
         if (sensorManager == null) {
             Log.w(TAG, "SensorManager is null during restart");
-            hasValidState = false;
         }
-        
         if (locationManager == null && fusedLocationClient == null) {
             Log.w(TAG, "No location providers available during restart");
-            hasValidState = false;
+            return false;
         }
-        
-        if (!hasValidState) {
-            Log.e(TAG, "Service resources unavailable, cannot resume tracking");
-        }
-        
-        return hasValidState;
+        return true;
     }
 
     private void createNotificationChannel() {
@@ -864,16 +861,26 @@ public class WalkService extends Service implements LocationListener, SensorEven
                 .setContentText(content);
     }
 
+    private static void appendTwoDigits(StringBuilder sb, long value) {
+        if (value < 10) sb.append('0');
+        sb.append(value);
+    }
+
     private String formatNotificationDuration(long totalSeconds) {
         long hours = totalSeconds / 3600;
         long minutes = (totalSeconds % 3600) / 60;
         long seconds = totalSeconds % 60;
-        return String.format(java.util.Locale.US, "%02d:%02d:%02d", hours, minutes, seconds);
+        StringBuilder sb = new StringBuilder(8);
+        appendTwoDigits(sb, hours);
+        sb.append(':');
+        appendTwoDigits(sb, minutes);
+        sb.append(':');
+        appendTwoDigits(sb, seconds);
+        return sb.toString();
     }
 
-    /** "2.43 km · 00:14:32 · 3,421 steps · 146 kcal" — compact one-line live summary. */
     private String formatNotificationMetrics() {
-        StringBuilder sb = new StringBuilder();
+        StringBuilder sb = new StringBuilder(64);
         sb.append(String.format(java.util.Locale.US, "%.2f km", currentDistanceKm));
         sb.append(" · ").append(formatNotificationDuration(durationSec));
         sb.append(" · ").append(String.format(java.util.Locale.US, "%,d", currentSteps)).append(" steps");
@@ -976,16 +983,8 @@ public class WalkService extends Service implements LocationListener, SensorEven
         boolean hasFineLocation = hasFineLocationPermission();
         boolean hasCoarseLocation = hasCoarseLocationPermission();
         boolean hasLocation = hasLocationPermission();
-        boolean hasActivity = ContextCompat.checkSelfPermission(this, Manifest.permission.ACTIVITY_RECOGNITION)
-                        == PackageManager.PERMISSION_GRANTED;
-        // FOREGROUND_SERVICE_TYPE_HEALTH requires the BODY_SENSORS runtime
-        // permission on Android 14+ (a dangerous permission since API 29) —
-        // without it startForeground() throws SecurityException. Only combine
-        // the HEALTH bit when the permission is actually held; otherwise fall
-        // back to the LOCATION-only type.
-        boolean hasBodySensors = Build.VERSION.SDK_INT < Build.VERSION_CODES.Q
-                || ContextCompat.checkSelfPermission(this, Manifest.permission.BODY_SENSORS)
-                        == PackageManager.PERMISSION_GRANTED;
+        boolean hasActivity = hasActivityPermission();
+        boolean hasBodySensors = hasBodySensorsPermission();
 
         int fgsType = 0;
         if (hasLocation) {
@@ -1020,19 +1019,63 @@ public class WalkService extends Service implements LocationListener, SensorEven
             double pace,
             boolean startPaused
     ) {
-        // Merge with any state persisted by a previous process instance (walk
-        // recovered after process death / app force-close): the persisted
-        // counters were written on every tick/fix, so they are the freshest
-        // snapshot available — never overwrite them with the app's older
-        // Firestore baseline. For a genuine new walk the prefs were cleared on
-        // stop, so the merge degrades to the intent values.
-        SharedPreferences p = prefs();
-        currentDistanceKm = Math.max(p.getFloat(KEY_DISTANCE, 0f), (float) Math.max(0, distanceKm));
-        currentSteps = Math.max(p.getInt(KEY_STEPS, 0), Math.max(0, steps));
-        this.durationSec = Math.max(p.getLong(KEY_DURATION, 0L), Math.max(0L, durationSec));
-        currentCalories = Math.max(p.getFloat(KEY_CALORIES, 0f), (float) Math.max(0, calories));
-        currentPace = Math.max(p.getFloat(KEY_PACE, 0f), (float) Math.max(0, pace));
-        gpsDistanceKm = Math.max(p.getFloat(KEY_GPS_KM, 0f), (float) gpsDistanceKm);
+        // Detect an unambiguous new-walk intent from JS: distance=0, steps=0,
+        // duration=0.  If the previous session was system-killed its prefs were
+        // preserved by onDestroy() for crash-recovery, but a brand-new walk
+        // must NEVER inherit stale counters (otherwise steps jump from 0 to the
+        // old total and distance jumps via steps*stride).  For a genuine new
+        // request we clear the stale persisted counter state and reset the
+        // hardware step-counter baseline so both sources start at zero.
+        boolean explicitNewWalk = distanceKm == 0.0 && steps == 0 && durationSec == 0L;
+        if (explicitNewWalk) {
+            SharedPreferences p = prefs();
+            // Only clear when the previous state really is stale (has old steps
+            // or distance).  This avoids unnecessary writes while staying safe.
+            if (p.getInt(KEY_STEPS, 0) > 0 || p.getFloat(KEY_DISTANCE, 0f) > 0f
+                    || p.getLong(KEY_DURATION, 0L) > 0L) {
+                p.edit()
+                    .remove(KEY_DISTANCE)
+                    .remove(KEY_STEPS)
+                    .remove(KEY_DURATION)
+                    .remove(KEY_CALORIES)
+                    .remove(KEY_PACE)
+                    .remove(KEY_GPS_KM)
+                    .remove(KEY_STEP_INITIAL)
+                    .remove(KEY_STEP_TOTAL)
+                    .remove(KEY_UPDATES)
+                    .remove(KEY_VEHICLE_FLAGGED)
+                    .remove(KEY_SENSORS_REGISTERED)
+                    .remove(KEY_LOCATION_REGISTERED)
+                    .remove(KEY_LOCATION_PROVIDER_TYPE)
+                    .apply();
+                Log.d(TAG, "Cleared stale walk prefs for explicit new walk");
+            }
+            initialStepCounterValue = -1;
+            lastCounterTotal = -1L;
+            currentSteps = 0;
+            currentDistanceKm = 0.0;
+            this.durationSec = 0L;
+            currentCalories = 0.0;
+            currentPace = 0.0;
+            gpsDistanceKm = 0.0;
+            updateCount = 0;
+            isVehicleFlagged = false;
+        } else {
+            // Merge with any state persisted by a previous process instance (walk
+            // recovered after process death / app force-close): the persisted
+            // counters were written on every tick/fix, so they are the freshest
+            // snapshot available — never overwrite them with the app's older
+            // Firestore baseline. For a genuine new walk the prefs were cleared on
+            // stop, so the merge degrades to the intent values.
+            SharedPreferences p = prefs();
+            currentDistanceKm = Math.max(p.getFloat(KEY_DISTANCE, 0f), (float) Math.max(0, distanceKm));
+            currentSteps = Math.max(p.getInt(KEY_STEPS, 0), Math.max(0, steps));
+            this.durationSec = Math.max(p.getLong(KEY_DURATION, 0L), Math.max(0L, durationSec));
+            currentCalories = Math.max(p.getFloat(KEY_CALORIES, 0f), (float) Math.max(0, calories));
+            currentPace = Math.max(p.getFloat(KEY_PACE, 0f), (float) Math.max(0, pace));
+            gpsDistanceKm = Math.max(p.getFloat(KEY_GPS_KM, 0f), (float) gpsDistanceKm);
+        }
+
         isTracking = true;
         // A recovered walk is re-armed frozen (paused): the clock stays stopped
         // at the recovered metrics until the user taps Resume in the app or on
@@ -1041,17 +1084,8 @@ public class WalkService extends Service implements LocationListener, SensorEven
         startedAtMs = SystemClock.elapsedRealtime() - this.durationSec * 1000L;
         lastLocation = null; // first fix after (re)start only sets the baseline
         lastProcessedLocationTimeMs = 0L;
-        updateCount = 0;
-        isVehicleFlagged = false;
         lastVehicleCheckWallMs = 0L;
         stepsAtLastVehicleCheck = 0;
-        // Fresh walk: drop previous session's step-counter baseline only when starting a new walk.
-        // For recovered/resumed sessions, preserve the restored accumulator baseline.
-        boolean isFreshWalk = (distanceKm == 0.0 && steps == 0 && durationSec == 0L && !p.getBoolean(KEY_TRACKING, false));
-        if (isFreshWalk) {
-            initialStepCounterValue = -1;
-            lastCounterTotal = -1L;
-        }
 
         acquireWakeLock();
         registerScreenOnReceiver();
@@ -1336,19 +1370,32 @@ public class WalkService extends Service implements LocationListener, SensorEven
     /** Writes the live session snapshot (steps/distance/duration/calories) to SQLite. */
     private void persistSessionSnapshot() {
         if (dbHelper == null || activeSessionId == null || activeSessionId.isEmpty()) return;
-        try {
-            dbHelper.upsertSessionSnapshot(
-                    activeSessionId,
-                    currentSteps,
-                    currentDistanceKm,
-                    durationSec,
-                    currentCalories
-            );
-        } catch (Exception e) {
-            Log.w(TAG, "Failed to persist session snapshot to SQLite", e);
-        }
+        final String sessionId = activeSessionId;
+        final int steps = currentSteps;
+        final double distance = currentDistanceKm;
+        final long duration = durationSec;
+        final double calories = currentCalories;
+        snapshotExecutor.execute(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    dbHelper.upsertSessionSnapshot(sessionId, steps, distance, duration, calories);
+                } catch (Exception e) {
+                    Log.w(TAG, "Failed to persist session snapshot to SQLite", e);
+                }
+            }
+        });
     }
     
+    private String fgsTypeName(int fgsType) {
+        boolean hasLoc = (fgsType & android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION) != 0;
+        boolean hasHealth = (fgsType & android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_HEALTH) != 0;
+        if (hasLoc && hasHealth) return "location|health";
+        if (hasLoc) return "location";
+        if (hasHealth) return "health";
+        return "none";
+    }
+
     /**
      * P4.2: Publishes detailed health status to JS app for monitoring.
      * Called every 10 seconds from ticker. Allows JS to show warnings
@@ -1358,68 +1405,56 @@ public class WalkService extends Service implements LocationListener, SensorEven
         long now = System.currentTimeMillis();
         if (now - lastHealthReportMs < HEALTH_REPORT_INTERVAL_MS) return;
         lastHealthReportMs = now;
-        
+
+        boolean wakeLockHeld = wakeLock != null && wakeLock.isHeld();
+        boolean sensorsActive = sensorsRegistered && (stepDetectorSensor != null || stepCounterSensor != null);
+        long gpsStaleSec = lastGpsFixWallMs > 0L ? (now - lastGpsFixWallMs) / 1000L : -1L;
+        long stepStaleSec = lastStepEventWallMs > 0L ? (now - lastStepEventWallMs) / 1000L : -1L;
+        boolean stepStreamDead = sensorsActive && lastStepEventWallMs == 0L && durationSec > 120L;
+        boolean batteryExempt = isBatteryOptimizationExempt(this);
+        int fgsType = computeFgsType();
+
+        String healthStatus = "healthy";
+        String healthMessage = null;
+
+        if (!wakeLockHeld) {
+            healthStatus = "warning";
+            healthMessage = "Wake lock not held - sensors may stop";
+        } else if (!sensorsActive && isTracking) {
+            healthStatus = "error";
+            healthMessage = "Step sensors not registered";
+        } else if (gpsStaleSec > 120L) {
+            healthStatus = "warning";
+            healthMessage = "GPS signal lost (no fix for " + gpsStaleSec + "s)";
+        } else if (stepStaleSec > 60L || stepStreamDead) {
+            healthStatus = "warning";
+            healthMessage = stepStreamDead
+                    ? "Step sensor never responded (no events since start)"
+                    : "Step sensor not responding (" + stepStaleSec + "s)";
+        } else if (!batteryExempt) {
+            healthStatus = "warning";
+            healthMessage = "Battery optimization not disabled";
+        } else if (fgsType == 0) {
+            healthStatus = "error";
+            healthMessage = "No valid foreground service type";
+        }
+        if (healthMessage == null) healthMessage = "All systems operational";
+
         try {
-            // Collect health metrics
-            boolean wakeLockHeld = wakeLock != null && wakeLock.isHeld();
-            boolean sensorsActive = sensorsRegistered && (stepDetectorSensor != null || stepCounterSensor != null);
-            String locationProvider = activeLocationProvider;
-            long gpsStaleSec = lastGpsFixWallMs > 0L ? (now - lastGpsFixWallMs) / 1000L : -1L;
-            long stepStaleSec = lastStepEventWallMs > 0L ? (now - lastStepEventWallMs) / 1000L : -1L;
-            // A registered sensor that never produced a single event is a
-            // stalled stream too — report it once the walk is well underway
-            // (the first minutes of every walk have no step events yet).
-            boolean stepStreamDead = sensorsActive && lastStepEventWallMs == 0L && durationSec > 120L;
-            boolean batteryExempt = isBatteryOptimizationExempt(this);
-            int fgsType = computeFgsType();
-            
-            // Determine overall health status
-            String healthStatus = "healthy";
-            String healthMessage = null;
-            
-            if (!wakeLockHeld) {
-                healthStatus = "warning";
-                healthMessage = "Wake lock not held - sensors may stop";
-            } else if (!sensorsActive && isTracking) {
-                healthStatus = "error";
-                healthMessage = "Step sensors not registered";
-            } else if (gpsStaleSec > 120L) {
-                healthStatus = "warning";
-                healthMessage = "GPS signal lost (no fix for " + gpsStaleSec + "s)";
-            } else if (stepStaleSec > 60L || stepStreamDead) {
-                healthStatus = "warning";
-                healthMessage = stepStreamDead
-                        ? "Step sensor never responded (no events since start)"
-                        : "Step sensor not responding (" + stepStaleSec + "s)";
-            } else if (!batteryExempt) {
-                healthStatus = "warning";
-                healthMessage = "Battery optimization not disabled";
-            } else if (fgsType == 0) {
-                healthStatus = "error";
-                healthMessage = "No valid foreground service type";
-            }
-            
-            // Build health status object
-            org.json.JSONObject healthObj = new org.json.JSONObject();
-            healthObj.put("status", healthStatus);
-            healthObj.put("message", healthMessage != null ? healthMessage : "All systems operational");
-            healthObj.put("wakeLockHeld", wakeLockHeld);
-            healthObj.put("sensorsRegistered", sensorsActive);
-            healthObj.put("locationProvider", locationProvider);
-            healthObj.put("gpsStaleSeconds", gpsStaleSec);
-            healthObj.put("stepStaleSeconds", stepStaleSec);
-            healthObj.put("batteryOptimizationExempt", batteryExempt);
-            healthObj.put("foregroundServiceType",
-                    (fgsType & android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION) != 0
-                            ? ((fgsType & android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_HEALTH) != 0
-                                    ? "location|health" : "location")
-                            : fgsType != 0 ? "health" : "none");
-            healthObj.put("timestamp", now);
-            
-            // Publish via WalkServicePlugin
-            WalkServicePlugin.publishHealth(healthObj.toString());
-            
-            // Log to diagnostics
+            org.json.JSONObject health = new org.json.JSONObject();
+            health.put("status", healthStatus);
+            health.put("message", healthMessage);
+            health.put("wakeLockHeld", wakeLockHeld);
+            health.put("sensorsRegistered", sensorsActive);
+            health.put("locationProvider", activeLocationProvider);
+            health.put("gpsStaleSeconds", gpsStaleSec);
+            health.put("stepStaleSeconds", stepStaleSec);
+            health.put("batteryOptimizationExempt", batteryExempt);
+            health.put("foregroundServiceType", fgsTypeName(fgsType));
+            health.put("timestamp", now);
+
+            WalkServicePlugin.publishHealth(health.toString());
+
             if (diagnostics != null && !healthStatus.equals("healthy")) {
                 diagnostics.warn(WalkDiagnostics.CAT_LIFECYCLE, "Health: " + healthStatus + " - " + healthMessage);
             }
@@ -1438,23 +1473,59 @@ public class WalkService extends Service implements LocationListener, SensorEven
         }
     }
     
-    /** Helper: Check if FINE location permission is granted. */
+    private void invalidatePermissionCache() {
+        cachedHasFineLocation = null;
+        cachedHasCoarseLocation = null;
+        cachedHasActivity = null;
+        cachedHasBodySensors = null;
+        lastPermissionCheckMs = 0L;
+    }
+
     private boolean hasFineLocationPermission() {
-        return ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION)
-                == PackageManager.PERMISSION_GRANTED;
+        long now = System.currentTimeMillis();
+        if (cachedHasFineLocation == null || (now - lastPermissionCheckMs) > PERMISSION_CACHE_TTL_MS) {
+            cachedHasFineLocation = ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION)
+                    == PackageManager.PERMISSION_GRANTED;
+            lastPermissionCheckMs = now;
+        }
+        return cachedHasFineLocation;
     }
     
-    /** Helper: Check if COARSE location permission is granted. */
     private boolean hasCoarseLocationPermission() {
-        return ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION)
-                == PackageManager.PERMISSION_GRANTED;
+        long now = System.currentTimeMillis();
+        if (cachedHasCoarseLocation == null || (now - lastPermissionCheckMs) > PERMISSION_CACHE_TTL_MS) {
+            cachedHasCoarseLocation = ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION)
+                    == PackageManager.PERMISSION_GRANTED;
+            lastPermissionCheckMs = now;
+        }
+        return cachedHasCoarseLocation;
     }
     
-    /** Helper: Check if any location permission (FINE or COARSE) is granted. */
     private boolean hasLocationPermission() {
         return hasFineLocationPermission() || hasCoarseLocationPermission();
     }
-
+    
+    private boolean hasActivityPermission() {
+        long now = System.currentTimeMillis();
+        if (cachedHasActivity == null || (now - lastPermissionCheckMs) > PERMISSION_CACHE_TTL_MS) {
+            cachedHasActivity = ContextCompat.checkSelfPermission(this, Manifest.permission.ACTIVITY_RECOGNITION)
+                    == PackageManager.PERMISSION_GRANTED;
+            lastPermissionCheckMs = now;
+        }
+        return cachedHasActivity;
+    }
+    
+    private boolean hasBodySensorsPermission() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return true;
+        long now = System.currentTimeMillis();
+        if (cachedHasBodySensors == null || (now - lastPermissionCheckMs) > PERMISSION_CACHE_TTL_MS) {
+            cachedHasBodySensors = ContextCompat.checkSelfPermission(this, Manifest.permission.BODY_SENSORS)
+                    == PackageManager.PERMISSION_GRANTED;
+            lastPermissionCheckMs = now;
+        }
+        return cachedHasBodySensors;
+    }
+    
     private void registerLocationUpdates() {
         // CRITICAL: Prevent duplicate registration during recovery
         if (isLocationRecoveryInProgress) {
@@ -2258,164 +2329,129 @@ public class WalkService extends Service implements LocationListener, SensorEven
                 + " calories=" + String.format(java.util.Locale.US, "%.1f", currentCalories));
     }
 
+    /** Estimates steps from GPS distance when hardware step sensors are silent. */
+    private void maybeImputeStepsFromGps(long nowWall) {
+        if (isVehicleFlagged || nowWall - lastStepEventWallMs < 15_000L) return;
+        int impliedSteps = (int) Math.round((gpsDistanceKm * 1000.0) / STRIDE_METERS);
+        if (impliedSteps > currentSteps) {
+            currentSteps = impliedSteps;
+        }
+    }
+
+    /** Detects sustained vehicle-speed motion with insufficient step activity. */
+    private void checkVehicleMotion(float speedMs, long nowWall) {
+        if (speedMs <= 4.16f) {
+            lastVehicleCheckWallMs = 0L;
+            return;
+        }
+        if (lastVehicleCheckWallMs == 0L) {
+            lastVehicleCheckWallMs = nowWall;
+            stepsAtLastVehicleCheck = currentSteps;
+            return;
+        }
+        if (nowWall - lastVehicleCheckWallMs <= 20000L) return;
+
+        int stepsSinceLastCheck = currentSteps - stepsAtLastVehicleCheck;
+        if (stepsSinceLastCheck < 5) {
+            isVehicleFlagged = true;
+            if (dbHelper != null) {
+                dbHelper.setVehicleFlagged(activeSessionId, true, speedMs);
+            }
+            Log.w(TAG, "Vehicle motion detected: speed=" + speedMs + " m/s, steps=" + stepsSinceLastCheck + " in 20s");
+        }
+        lastVehicleCheckWallMs = nowWall;
+        stepsAtLastVehicleCheck = currentSteps;
+    }
+
+    /** Saves a location point to the SQLite route store. */
+    private void persistLocationPoint(Location location, float speedMs) {
+        if (dbHelper == null) return;
+        dbHelper.insertPoint(
+                activeSessionId,
+                location.getLatitude(),
+                location.getLongitude(),
+                location.hasAltitude() ? location.getAltitude() : 0.0,
+                location.getAccuracy(),
+                speedMs,
+                location.getTime()
+        );
+    }
+
     // LocationListener callbacks
     @Override
     public void onLocationChanged(Location location) {
         if (location == null || !isTracking || paused) return;
+
+        ensureWakeLockHeld();
+
         long nowWall = System.currentTimeMillis();
-        if (Math.abs(nowWall - location.getTime()) > 10_000) return; // stale fix
-        // Accuracy threshold: reject only severely degraded fixes (> 30m). Real
-        // devices routinely report 16-30m accuracy indoors/urban canyon — a
-        // stricter 15m gate rejected almost every fix and froze walks at 0.00 km.
+        if (Math.abs(nowWall - location.getTime()) > 10_000) return;
         if (location.getAccuracy() > 30.0f) return;
-        
-        // CRITICAL: Prevent GPS/Fused double-counting - both providers can report the same fix
-        // If timestamp matches last processed location (within 100ms), it's a duplicate
+
         if (Math.abs(location.getTime() - lastProcessedLocationTimeMs) < 100) {
-            Log.d(TAG, "Duplicate location with same timestamp, skipping (prevents GPS/Fused double-count)");
+            Log.d(TAG, "Duplicate location with same timestamp, skipping");
             return;
         }
         lastProcessedLocationTimeMs = location.getTime();
 
-        if (lastLocation != null) {
-            float distMeters = lastLocation.distanceTo(location);
-            long nowElapsed = SystemClock.elapsedRealtime();
-            long dtMs = lastFixElapsedRealtime > 0L ? nowElapsed - lastFixElapsedRealtime : 0L;
-            // Fused batches can be delivered in one main-thread turn. In that
-            // case elapsedRealtime() is identical for several fixes and turns
-            // a normal walking delta into an infinite-speed rejection. Use the
-            // fix timestamps when available.
-            long locationDtMs = lastLocation.getTime() > 0L
-                    ? location.getTime() - lastLocation.getTime() : 0L;
-            long effectiveDtMs = locationDtMs > 0L ? locationDtMs : dtMs;
-            float speedMs = location.hasSpeed() ? location.getSpeed()
-                    : (effectiveDtMs > 0L ? (distMeters * 1000f) / (float) effectiveDtMs : 0f);
+        synchronized (metricLock) {
+            if (lastLocation != null) {
+                float distMeters = lastLocation.distanceTo(location);
+                long nowElapsed = SystemClock.elapsedRealtime();
+                long dtMs = lastFixElapsedRealtime > 0L ? nowElapsed - lastFixElapsedRealtime : 0L;
+                long locationDtMs = lastLocation.getTime() > 0L
+                        ? location.getTime() - lastLocation.getTime() : 0L;
+                long effectiveDtMs = locationDtMs > 0L ? locationDtMs : dtMs;
+                float speedMs = location.hasSpeed() ? location.getSpeed()
+                        : (effectiveDtMs > 0L ? (distMeters * 1000f) / (float) effectiveDtMs : 0f);
 
-            // Minimum displacement gate: ignore points < 1m from previous point to eliminate stationary GPS jitter
-            // (was 3m — too aggressive for slow walking and short indoor steps; the
-            // JS fallback uses 1.0m, so keep both engines aligned).
-            boolean distancePlausible = distMeters >= 1.0f && distMeters <= 50.0f;
-            // Max speed gate: human walking/running max ~25.2 km/h (7.0 m/s). Rejects GPS teleport/jump spikes.
-            boolean speedPlausible = speedMs <= 7.0f;
+                boolean distancePlausible = distMeters >= 1.0f && distMeters <= 50.0f;
+                boolean speedPlausible = speedMs <= 7.0f;
+                boolean stepsFresh = nowWall - lastStepEventWallMs < 15_000L;
+                boolean providerSpeedMoving = location.hasSpeed() && location.getSpeed() >= 0.5f;
+                boolean computedSpeedMoving = speedMs >= 0.5f;
+                boolean motionPlausible = stepsFresh || providerSpeedMoving || computedSpeedMoving;
 
-            // Motion evidence gate: a GPS delta only counts as real movement
-            // when the step sensors confirm an active walking cadence (a step
-            // event within the last 15s) OR the fix implies walking speed.
-            // `speedMs` already falls back to a displacement/time estimate when
-            // the provider omits speed (common with the fused provider), so a
-            // real walk still counts on devices whose step-sensor stream never
-            // registers (no sensor / denied / HAL quirk) — previously such
-            // walks stayed frozen at 0.00 km. Stationary GPS wobble stays
-            // rejected by the 3m minimum displacement + <=7 m/s caps below.
-            boolean stepsFresh = nowWall - lastStepEventWallMs < 15_000L;
-            boolean providerSpeedMoving = location.hasSpeed() && location.getSpeed() >= 0.5f;
-            boolean computedSpeedMoving = speedMs >= 0.5f;
-            boolean motionPlausible = stepsFresh || providerSpeedMoving || computedSpeedMoving;
+                checkVehicleMotion(speedMs, nowWall);
 
-            // Vehicle detection flag: sustained speed > 15 km/h (4.16 m/s) with minimal step activity
-            // Only flag if: speed exceeds threshold AND less than 5 steps in 20 seconds
-            // This reduces false positives from brief GPS jumps or standing still at traffic lights
-            if (speedMs > 4.16f) {
-                if (lastVehicleCheckWallMs == 0L) {
-                    // Initialize the 20s observation window on first high-speed fix
-                    lastVehicleCheckWallMs = nowWall;
-                    stepsAtLastVehicleCheck = currentSteps;
-                } else if (nowWall - lastVehicleCheckWallMs > 20000L) {
-                    int stepsSinceLastCheck = currentSteps - stepsAtLastVehicleCheck;
-                    // Require sustained low step activity (< 5 steps in 20s = < 15 steps/min)
-                    // Normal walking is ~100-120 steps/min, so this clearly indicates vehicle use
-                    if (stepsSinceLastCheck < 5) {
-                        isVehicleFlagged = true;
-                        if (dbHelper != null) {
-                            dbHelper.setVehicleFlagged(activeSessionId, true, speedMs);
-                        }
-                        Log.w(TAG, "Vehicle motion detected: speed=" + speedMs + " m/s, steps=" + stepsSinceLastCheck + " in 20s");
-                    }
-                    lastVehicleCheckWallMs = nowWall;
-                    stepsAtLastVehicleCheck = currentSteps;
+                boolean accepted = distancePlausible && speedPlausible && motionPlausible;
+                if (accepted) {
+                    gpsDistanceKm += (distMeters / 1000.0);
+                    lastLocation = location;
+                    updateCount++;
+                    lastGpsFixWallMs = nowWall;
+                    lastFixElapsedRealtime = nowElapsed;
+
+                    maybeImputeStepsFromGps(nowWall);
+                    persistLocationPoint(location, speedMs);
                 }
+
+                Log.d(TAG, "fix: lat=" + location.getLatitude()
+                        + " lng=" + location.getLongitude()
+                        + " acc=" + location.getAccuracy()
+                        + " distMeters=" + distMeters
+                        + " speedMs=" + speedMs
+                        + " accepted=" + accepted
+                        + " gpsKm=" + String.format(java.util.Locale.US, "%.4f", gpsDistanceKm));
             } else {
-                // Reset window if speed drops back below vehicle threshold
-                lastVehicleCheckWallMs = 0L;
-            }
-
-            boolean accepted = distancePlausible && speedPlausible && motionPlausible;
-            if (accepted) {
-                gpsDistanceKm += (distMeters / 1000.0);
                 lastLocation = location;
-                // updateCount only grows on ACCEPTED fixes (plus the baseline
-                // first fix) — rejected stationary-jitter fixes must not look
-                // like motion, or JS would never auto-pause a stopped walk.
-                updateCount++;
+                lastFixElapsedRealtime = SystemClock.elapsedRealtime();
                 lastGpsFixWallMs = nowWall;
-                lastFixElapsedRealtime = nowElapsed;
+                updateCount++;
+                persistLocationPoint(location, location.hasSpeed() ? location.getSpeed() : 0f);
 
-                // GPS-derived step fallback: estimate steps from the accepted
-                // GPS distance whenever NO step source (hardware detector/
-                // counter or accelerometer) has delivered an event recently.
-                // While any step stream is live it stays authoritative — the
-                // estimate only fills in for sensorless devices or streams the
-                // HAL never delivers, so the counter never freezes at 0 while
-                // GPS distance is advancing. Monotonic (never reduces), so it
-                // cannot double-count or corrupt a working hardware baseline.
-                if (!isVehicleFlagged && nowWall - lastStepEventWallMs >= 15_000L) {
-                    int impliedSteps = (int) Math.round((gpsDistanceKm * 1000.0) / STRIDE_METERS);
-                    if (impliedSteps > currentSteps) {
-                        currentSteps = impliedSteps;
-                    }
-                }
-
-                // Save accepted point to SQLite DB for persistent route rendering
-                if (dbHelper != null) {
-                    dbHelper.insertPoint(
-                            activeSessionId,
-                            location.getLatitude(),
-                            location.getLongitude(),
-                            location.hasAltitude() ? location.getAltitude() : 0.0,
-                            location.getAccuracy(),
-                            speedMs,
-                            location.getTime()
-                    );
-                }
-            }
-
-            Log.d(TAG, "fix: lat=" + location.getLatitude()
-                    + " lng=" + location.getLongitude()
-                    + " acc=" + location.getAccuracy()
-                    + " distMeters=" + distMeters
-                    + " speedMs=" + speedMs
-                    + " accepted=" + accepted
-                    + " gpsKm=" + String.format(java.util.Locale.US, "%.4f", gpsDistanceKm));
-        } else {
-            // First fix after start: save starting point and establish baseline
-            lastLocation = location;
-            lastFixElapsedRealtime = SystemClock.elapsedRealtime();
-            lastGpsFixWallMs = nowWall;
-            updateCount++;
-
-            if (dbHelper != null) {
-                dbHelper.insertPoint(
-                        activeSessionId,
-                        location.getLatitude(),
-                        location.getLongitude(),
-                        location.hasAltitude() ? location.getAltitude() : 0.0,
-                        location.getAccuracy(),
-                        location.hasSpeed() ? location.getSpeed() : 0f,
-                        location.getTime()
-                );
+                recomputeDerived();
+                updateNotification();
+                publishUpdate();
+                persistState();
+                return;
             }
 
             recomputeDerived();
             updateNotification();
             publishUpdate();
             persistState();
-            return;
         }
-        
-        recomputeDerived();
-        updateNotification();
-        publishUpdate();
-        persistState();
     }
 
     @Override
@@ -2494,82 +2530,73 @@ public class WalkService extends Service implements LocationListener, SensorEven
     public void onSensorChanged(SensorEvent event) {
         if (!isTracking || paused) return;
 
-        if (event.sensor.getType() == Sensor.TYPE_STEP_DETECTOR) {
-            // This is a fallback-only source. Ignore callbacks that slipped
-            // through while a counter listener was being reconfigured.
+        int type = event.sensor.getType();
+        if (type == Sensor.TYPE_STEP_DETECTOR) {
             if (stepCounterSensor != null) return;
-            // TYPE_STEP_DETECTOR: real-time per-step event
-            lastStepEventWallMs = System.currentTimeMillis();
-            currentSteps++;
-            Log.d(TAG, "step: detector total=" + currentSteps);
-            recomputeDerived();
-            updateNotification();
-            publishUpdate();
-            persistState();
-        } else if (event.sensor.getType() == Sensor.TYPE_STEP_COUNTER) {
-            // TYPE_STEP_COUNTER: hardware accumulator since boot
-            long total = (long) event.values[0];
-            lastStepEventWallMs = System.currentTimeMillis();
-            Log.d(TAG, "step: counter raw=" + total
-                    + " baseline=" + initialStepCounterValue
-                    + " lastTotal=" + lastCounterTotal
-                    + " currentSteps=" + currentSteps);
-
-            boolean changed = false;
-            boolean rebased = false;
-
-            if (initialStepCounterValue < 0 || total < initialStepCounterValue) {
-                initialStepCounterValue = (int) (total - currentSteps);
-                lastCounterTotal = total;
-                rebased = true;
-                Log.d(TAG, "step: counter REBASED baseline=" + initialStepCounterValue + " at total=" + total + " (preserving currentSteps=" + currentSteps + ")");
-            } else {
-                int calculatedSteps = (int) (total - initialStepCounterValue);
-                if (calculatedSteps > currentSteps) {
-                    currentSteps = calculatedSteps;
-                    lastCounterTotal = total;
-                    changed = true;
-                    Log.d(TAG, "step: counter sync to " + currentSteps);
-                } else if (calculatedSteps < currentSteps) {
-                    initialStepCounterValue = (int) (total - currentSteps);
-                    lastCounterTotal = total;
-                    rebased = true;
-                    Log.d(TAG, "step: counter re-aligned baseline to " + initialStepCounterValue + " for currentSteps=" + currentSteps);
-                }
-            }
-
-            if (changed) {
-                Log.d(TAG, "step: counter newTotal=" + currentSteps);
+            synchronized (metricLock) {
+                lastStepEventWallMs = System.currentTimeMillis();
+                currentSteps++;
+                Log.d(TAG, "step: detector total=" + currentSteps);
                 recomputeDerived();
                 updateNotification();
                 publishUpdate();
                 persistState();
-            } else if (rebased) {
-                persistState();
             }
-        } else if (event.sensor.getType() == Sensor.TYPE_ACCELEROMETER) {
-            // Accelerometer peak detector — secondary step source that only
-            // takes over when the hardware step stream (detector/counter) has
-            // gone silent (sensors absent, suspended non-wake-up sensors, HAL
-            // quirks). Hardware events are authoritative whenever they flow;
-            // the 15s staleness gate keeps both sources from counting the same
-            // steps simultaneously.
+        } else if (type == Sensor.TYPE_STEP_COUNTER) {
+            synchronized (metricLock) {
+                long total = (long) event.values[0];
+                lastStepEventWallMs = System.currentTimeMillis();
+                Log.d(TAG, "step: counter raw=" + total
+                        + " baseline=" + initialStepCounterValue
+                        + " lastTotal=" + lastCounterTotal
+                        + " currentSteps=" + currentSteps);
+
+                boolean changed = false;
+                boolean rebased = false;
+
+                if (initialStepCounterValue < 0 || total < initialStepCounterValue) {
+                    initialStepCounterValue = (int) (total - currentSteps);
+                    lastCounterTotal = total;
+                    rebased = true;
+                } else {
+                    int calculatedSteps = (int) (total - initialStepCounterValue);
+                    if (calculatedSteps > currentSteps) {
+                        currentSteps = calculatedSteps;
+                        lastCounterTotal = total;
+                        changed = true;
+                    } else if (calculatedSteps < currentSteps) {
+                        initialStepCounterValue = (int) (total - currentSteps);
+                        lastCounterTotal = total;
+                        rebased = true;
+                    }
+                }
+
+                if (changed) {
+                    recomputeDerived();
+                    updateNotification();
+                    publishUpdate();
+                    persistState();
+                } else if (rebased) {
+                    persistState();
+                }
+            }
+        } else if (type == Sensor.TYPE_ACCELEROMETER) {
             long now = System.currentTimeMillis();
             if (now - lastStepEventWallMs < 15_000L) return;
             float x = event.values[0];
             float y = event.values[1];
             float z = event.values[2];
             double mag = Math.sqrt(x * x + y * y + z * z);
-            // Step peak detection: magnitude spike > 11.0 m/s^2 with min 320ms
-            // interval (11.5 was too strict for loose pockets / damped bags).
             if (mag > 11.0 && (now - lastAccStepMs > 320)) {
-                lastAccStepMs = now;
-                lastStepEventWallMs = now;
-                currentSteps++;
-                recomputeDerived();
-                updateNotification();
-                publishUpdate();
-                persistState();
+                synchronized (metricLock) {
+                    lastAccStepMs = now;
+                    lastStepEventWallMs = now;
+                    currentSteps++;
+                    recomputeDerived();
+                    updateNotification();
+                    publishUpdate();
+                    persistState();
+                }
             }
         }
     }

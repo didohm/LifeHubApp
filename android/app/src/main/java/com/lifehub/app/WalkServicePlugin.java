@@ -143,6 +143,26 @@ public class WalkServicePlugin extends Plugin {
         return ret;
     }
 
+    private static class WalkMetrics {
+        final double distanceKm, calories, pace, weightKg;
+        final int steps;
+        final long duration;
+        WalkMetrics(PluginCall call) {
+            Double d = call.getDouble("distanceKm", 0.0);
+            this.distanceKm = d != null ? d : 0.0;
+            Integer s = call.getInt("steps", 0);
+            this.steps = s != null ? s : 0;
+            Long du = call.getLong("durationSec", 0L);
+            this.duration = du != null ? du : 0L;
+            Double c = call.getDouble("calories", 0.0);
+            this.calories = c != null ? c : 0.0;
+            Double p = call.getDouble("paceMinPerKm", 0.0);
+            this.pace = p != null ? p : 0.0;
+            Double w = call.getDouble("weightKg", 0.0);
+            this.weightKg = w != null ? w : 0.0;
+        }
+    }
+
     @PluginMethod
     public void startService(PluginCall call) {
         JSObject ret = new JSObject();
@@ -158,36 +178,20 @@ public class WalkServicePlugin extends Plugin {
 
         String sessionId = call.getString("sessionId", "current_session");
         boolean startPaused = call.getBoolean("paused", false);
-        Double distanceKmObj = call.getDouble("distanceKm", 0.0);
-        Integer stepsObj = call.getInt("steps", 0);
-        Long durationObj = call.getLong("durationSec", 0L);
-        Double caloriesObj = call.getDouble("calories", 0.0);
-        Double paceObj = call.getDouble("paceMinPerKm", 0.0);
-        Double weightKgObj = call.getDouble("weightKg", 0.0);
-        double distanceKm = distanceKmObj != null ? distanceKmObj : 0.0;
-        int steps = stepsObj != null ? stepsObj : 0;
-        long duration = durationObj != null ? durationObj : 0L;
-        double calories = caloriesObj != null ? caloriesObj : 0.0;
-        double pace = paceObj != null ? paceObj : 0.0;
-        double weightKg = weightKgObj != null ? weightKgObj : 0.0;
+        WalkMetrics m = new WalkMetrics(call);
 
         try {
             Intent intent = new Intent(getContext(), WalkService.class);
             intent.setAction(WalkService.ACTION_START);
             intent.putExtra(WalkService.EXTRA_SESSION_ID, sessionId);
             intent.putExtra(WalkService.EXTRA_PAUSED, startPaused);
-            intent.putExtra(WalkService.EXTRA_DISTANCE_KM, distanceKm);
-            intent.putExtra(WalkService.EXTRA_STEPS, steps);
-            intent.putExtra(WalkService.EXTRA_DURATION_SEC, duration);
-            intent.putExtra(WalkService.EXTRA_CALORIES, calories);
-            intent.putExtra(WalkService.EXTRA_PACE, pace);
-            intent.putExtra(WalkService.EXTRA_WEIGHT_KG, weightKg);
+            intent.putExtra(WalkService.EXTRA_DISTANCE_KM, m.distanceKm);
+            intent.putExtra(WalkService.EXTRA_STEPS, m.steps);
+            intent.putExtra(WalkService.EXTRA_DURATION_SEC, m.duration);
+            intent.putExtra(WalkService.EXTRA_CALORIES, m.calories);
+            intent.putExtra(WalkService.EXTRA_PACE, m.pace);
+            intent.putExtra(WalkService.EXTRA_WEIGHT_KG, m.weightKg);
             boolean ok = startServiceSafe(intent);
-            // Honest result: previously this ALWAYS resolved `started: true`
-            // even when the FGS could not start (Android 12+ background-launch
-            // restriction, missing permissions), so JS believed the native
-            // service was tracking and never activated its fallback path —
-            // walks froze at 0.00 km with no warning.
             ret.put("started", ok);
             if (!ok) {
                 ret.put("error", "foreground_service_restricted");
@@ -202,28 +206,17 @@ public class WalkServicePlugin extends Plugin {
 
     @PluginMethod
     public void updateService(PluginCall call) {
-        Double distanceKmObj = call.getDouble("distanceKm", 0.0);
-        Integer stepsObj = call.getInt("steps", 0);
-        Long durationObj = call.getLong("durationSec", 0L);
-        Double caloriesObj = call.getDouble("calories", 0.0);
-        Double paceObj = call.getDouble("paceMinPerKm", 0.0);
-        Double weightKgObj = call.getDouble("weightKg", 0.0);
-        double distanceKm = distanceKmObj != null ? distanceKmObj : 0.0;
-        int steps = stepsObj != null ? stepsObj : 0;
-        long duration = durationObj != null ? durationObj : 0L;
-        double calories = caloriesObj != null ? caloriesObj : 0.0;
-        double pace = paceObj != null ? paceObj : 0.0;
-        double weightKg = weightKgObj != null ? weightKgObj : 0.0;
+        WalkMetrics m = new WalkMetrics(call);
 
         try {
             Intent intent = new Intent(getContext(), WalkService.class);
             intent.setAction(WalkService.ACTION_UPDATE);
-            intent.putExtra(WalkService.EXTRA_DISTANCE_KM, distanceKm);
-            intent.putExtra(WalkService.EXTRA_STEPS, steps);
-            intent.putExtra(WalkService.EXTRA_DURATION_SEC, duration);
-            intent.putExtra(WalkService.EXTRA_CALORIES, calories);
-            intent.putExtra(WalkService.EXTRA_PACE, pace);
-            intent.putExtra(WalkService.EXTRA_WEIGHT_KG, weightKg);
+            intent.putExtra(WalkService.EXTRA_DISTANCE_KM, m.distanceKm);
+            intent.putExtra(WalkService.EXTRA_STEPS, m.steps);
+            intent.putExtra(WalkService.EXTRA_DURATION_SEC, m.duration);
+            intent.putExtra(WalkService.EXTRA_CALORIES, m.calories);
+            intent.putExtra(WalkService.EXTRA_PACE, m.pace);
+            intent.putExtra(WalkService.EXTRA_WEIGHT_KG, m.weightKg);
             getContext().startService(intent);
         } catch (Exception e) {
             android.util.Log.w("WalkServicePlugin", "Failed to update service", e);
@@ -250,28 +243,17 @@ public class WalkServicePlugin extends Plugin {
 
     @PluginMethod
     public void resumeService(PluginCall call) {
-        Double distanceKmObj = call.getDouble("distanceKm", 0.0);
-        Integer stepsObj = call.getInt("steps", 0);
-        Long durationObj = call.getLong("durationSec", 0L);
-        Double caloriesObj = call.getDouble("calories", 0.0);
-        Double paceObj = call.getDouble("paceMinPerKm", 0.0);
-        Double weightKgObj = call.getDouble("weightKg", 0.0);
-        double distanceKm = distanceKmObj != null ? distanceKmObj : 0.0;
-        int steps = stepsObj != null ? stepsObj : 0;
-        long duration = durationObj != null ? durationObj : 0L;
-        double calories = caloriesObj != null ? caloriesObj : 0.0;
-        double pace = paceObj != null ? paceObj : 0.0;
-        double weightKg = weightKgObj != null ? weightKgObj : 0.0;
+        WalkMetrics m = new WalkMetrics(call);
 
         try {
             Intent intent = new Intent(getContext(), WalkService.class);
             intent.setAction(WalkService.ACTION_RESUME);
-            intent.putExtra(WalkService.EXTRA_DISTANCE_KM, distanceKm);
-            intent.putExtra(WalkService.EXTRA_STEPS, steps);
-            intent.putExtra(WalkService.EXTRA_DURATION_SEC, duration);
-            intent.putExtra(WalkService.EXTRA_CALORIES, calories);
-            intent.putExtra(WalkService.EXTRA_PACE, pace);
-            intent.putExtra(WalkService.EXTRA_WEIGHT_KG, weightKg);
+            intent.putExtra(WalkService.EXTRA_DISTANCE_KM, m.distanceKm);
+            intent.putExtra(WalkService.EXTRA_STEPS, m.steps);
+            intent.putExtra(WalkService.EXTRA_DURATION_SEC, m.duration);
+            intent.putExtra(WalkService.EXTRA_CALORIES, m.calories);
+            intent.putExtra(WalkService.EXTRA_PACE, m.pace);
+            intent.putExtra(WalkService.EXTRA_WEIGHT_KG, m.weightKg);
             getContext().startService(intent);
         } catch (Exception e) {
             android.util.Log.w("WalkServicePlugin", "Failed to resume service", e);

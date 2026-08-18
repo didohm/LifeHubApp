@@ -25,13 +25,12 @@ export function todayDayKey(): DayKey {
 }
 
 /**
- * Weekly split strip.
+ * Weekly split grid.
  *
- * Layout is structural, not fluid: on narrow screens the 7 days scroll
- * horizontally at full size (snap-to-day), and from `sm` upward the same
- * cells become a 7-column grid. Hierarchy stacks three dimensions — color,
- * weight and elevation — so the active day, training days and rest days
- * never look alike.
+ * Always a responsive grid — 4 columns on narrow screens, 7 from `sm` up —
+ * so the full week is visible with no horizontal scrolling. Cells encode
+ * three levels of hierarchy: today (solid brand accent), training day
+ * (amber tint), rest day (quiet gray).
  */
 export function WeeklySplitGrid({
   days,
@@ -43,7 +42,7 @@ export function WeeklySplitGrid({
   onSelectDay?: (key: DayKey) => void;
 }) {
   return (
-    <div className="flex snap-x snap-proximity gap-1.5 overflow-x-auto pb-1 pt-2.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden sm:grid sm:grid-cols-7 sm:gap-2 sm:overflow-visible sm:pb-0 sm:pt-2.5">
+    <div className="grid grid-cols-4 gap-1.5 sm:grid-cols-7 sm:gap-2">
       {days.map((d) => {
         const isRest = d.focus.toLowerCase() === "rest";
         const isSelected = selectedKey === d.key;
@@ -59,46 +58,45 @@ export function WeeklySplitGrid({
               }
             }}
             className={cn(
-              "relative flex min-w-[68px] snap-start flex-col items-center justify-center gap-1 rounded-xl px-1.5 py-2.5 text-center transition-all sm:min-w-0 tap",
+              "relative flex flex-col items-center justify-center gap-1.5 rounded-xl px-1 py-2.5 text-center transition-all tap",
               onSelectDay && "cursor-pointer active:scale-95",
               !onSelectDay && "cursor-default",
-              d.isToday &&
-                "bg-gradient-to-b from-[#C49A6C] to-[#B8956B] text-white shadow-lg shadow-[#C49A6C]/30 ring-2 ring-white/40",
-              !d.isToday &&
-                isRest &&
-                "border border-dashed border-black/10 bg-black/[0.035] text-[#9CA3AF] hover:bg-black/[0.06]",
-              !d.isToday &&
-                !isRest &&
-                "bg-slate-900 text-white shadow-xs hover:bg-slate-800",
-              isSelected &&
-                !d.isToday &&
-                "ring-2 ring-[#7C5CFC] shadow-md",
+              d.isToday
+                ? "bg-gradient-to-b from-[#7C5CFC] to-[#6B4DE8] text-white shadow-md shadow-[#7C5CFC]/30 ring-2 ring-white/50"
+                : isRest
+                  ? "border border-dashed border-slate-200 bg-slate-50 hover:bg-slate-100"
+                  : "border border-amber-500/25 bg-amber-500/10 hover:bg-amber-500/15",
+              isSelected && !d.isToday && "ring-2 ring-[#7C5CFC] shadow-md",
             )}
           >
-            {d.isToday && (
-              <span className="absolute -top-2.5 left-1/2 -translate-x-1/2 rounded-full bg-[#C49A6C] px-2 py-0.5 text-[7px] font-black uppercase tracking-[0.14em] text-white shadow-xs ring-2 ring-white">
-                Today
-              </span>
-            )}
-            <div className="flex items-center justify-center gap-1">
+            <span className="flex items-center justify-center gap-1">
               <span
                 className={cn(
-                  "text-[9px] font-extrabold uppercase tracking-wider",
-                  d.isToday ? "text-white/90" : isRest ? "text-[#94A3B8]" : "text-white/70",
+                  "rounded-full px-2 py-0.5 text-[10px] font-black uppercase tracking-wider",
+                  d.isToday
+                    ? "bg-white/20 text-white"
+                    : isRest
+                      ? "bg-slate-100 text-slate-400"
+                      : "bg-amber-500/15 text-amber-800",
                 )}
               >
                 {DAY_SHORT[d.key]}
               </span>
               {d.completed && (
-                <span className="grid size-3.5 place-items-center rounded-full bg-emerald-500 ring-1 ring-white/70">
+                <span
+                  className={cn(
+                    "grid size-4 place-items-center rounded-full bg-emerald-500",
+                    d.isToday ? "ring-2 ring-white/70" : "ring-1 ring-white",
+                  )}
+                >
                   <Check className="size-2.5 text-white stroke-[3]" />
                 </span>
               )}
-            </div>
+            </span>
             <span
               className={cn(
-                "text-[10px] font-black leading-tight break-words line-clamp-2",
-                d.isToday && "text-white",
+                "text-[11px] font-bold leading-tight break-words line-clamp-2",
+                d.isToday ? "text-white" : isRest ? "text-slate-400" : "text-[#12131A]",
               )}
             >
               {isRest ? "Rest" : d.focus}
