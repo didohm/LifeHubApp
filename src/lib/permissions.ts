@@ -9,8 +9,10 @@ import { NotificationService } from "./notifications";
  * files and audio — outside the WebView — and returns the real grant state.
  */
 interface NativePermissionsPlugin {
-  check(alias: PermissionAlias): Promise<{ granted: boolean }>;
-  request(alias: PermissionAlias): Promise<{ granted: boolean; permanentlyDenied: boolean }>;
+  check(options: { alias: PermissionAlias }): Promise<{ granted: boolean }>;
+  request(options: {
+    alias: PermissionAlias;
+  }): Promise<{ granted: boolean; permanentlyDenied: boolean }>;
   openAppSettings(): Promise<void>;
   /** Payload of the OS notification that cold-started the app (if any). */
   getLaunchNotification(): Promise<{ extra: Record<string, any> | null }>;
@@ -131,7 +133,7 @@ export class PermissionManager {
   private static startupRequested = false;
 
   /**
-   * Requests the startup permissions (notification and media).
+   * Requests notification and media permissions at startup.
    * Fire-and-forget (non-blocking).
    *
    * Each is asked only when it has never been answered before. Any later
@@ -149,7 +151,7 @@ export class PermissionManager {
     this.startupRequested = true;
     if (!isNative()) return;
 
-    // Sequential, spaced-out requests so Android permission dialogs never stack.
+    // Keep dialogs separate so Android never stacks permission prompts.
     void (async () => {
       await this.requestUnknown("notification");
       await sleep(500);
@@ -200,7 +202,7 @@ export class PermissionManager {
           await NotificationService.ensureExactAlarmPermission();
         }
       } else {
-        const result = await NativePermissions.request(name as PermissionAlias);
+        const result = await NativePermissions.request({ alias: name as PermissionAlias });
         granted = result.granted;
         if (!granted && result.permanentlyDenied) {
           markPermanentDenied(name);
@@ -323,7 +325,7 @@ export class PermissionManager {
         const status = await LocalNotifications.checkPermissions();
         return status.display === "granted";
       }
-      const result = await NativePermissions.check(name as PermissionAlias);
+      const result = await NativePermissions.check({ alias: name as PermissionAlias });
       if (result.granted) clearPermanentDenied(name);
       return result.granted;
     } catch {

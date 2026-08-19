@@ -624,7 +624,10 @@ export function useWalk(
           lastStepTimeRef.current = now;
           lastMotionTimeRef.current = now;
           jsStepsRef.current += 1;
-          setSteps(jsStepsRef.current);
+          // A queued browser motion event can arrive just after the native
+          // foreground service becomes authoritative. Never let that older
+          // fallback total replace the higher native total in the UI.
+          monotonicUpdate(setSteps, jsStepsRef.current);
           if (!nativeActiveRef.current) {
             setDistance((prev) => Math.max(prev, Math.round(jsStepsRef.current * 0.762)));
           }

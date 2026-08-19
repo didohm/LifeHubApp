@@ -14,10 +14,29 @@ const items = [
   { to: "/profile", label: "Profile", Icon: User },
 ] as const;
 
+// Service pages are reached from the Services hub, but have their own routes.
+// Keep that hub visibly selected while the user is in one of its features.
+const serviceRoutePrefixes = [
+  "/services",
+  "/adhkar",
+  "/appointments",
+  "/bills",
+  "/birthdays",
+  "/documents",
+  "/medications",
+  "/tasks",
+  "/walk",
+  "/workouts",
+  "/workout-programs",
+] as const;
+
 export function BottomNav() {
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const [overlaysOpen, setOverlaysOpen] = useState(false);
   const { isKeyboardOpen } = useKeyboard();
+  const isOnServiceRoute = serviceRoutePrefixes.some(
+    (route) => pathname === route || pathname.startsWith(`${route}/`),
+  );
 
   // Hide whenever any modal / dialog / bottom sheet is open — the nav bar
   // must never appear above or behind a modal, app-wide.
@@ -39,12 +58,16 @@ export function BottomNav() {
         >
           <div className="pointer-events-auto flex items-center gap-2 rounded-full bg-slate-900/85 px-4 py-3 shadow-2xl border border-white/10 backdrop-blur-md">
             {items.map(({ to, label, Icon }) => {
-              const active = pathname === to;
+              const active =
+                to === "/services"
+                  ? isOnServiceRoute
+                  : pathname === to || pathname.startsWith(`${to}/`);
               return (
                 <Link
                   key={to}
                   to={to}
                   aria-label={label}
+                  aria-current={active ? "page" : undefined}
                   title={label}
                   onClick={() => sounds.playNavClick()}
                   className="relative flex size-12 items-center justify-center rounded-full transition-all duration-200"

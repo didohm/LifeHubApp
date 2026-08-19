@@ -98,8 +98,12 @@ export default function EnhancedWalkSummary({
   const elevationGain = summary?.elevation_gain;
 
   useEffect(() => {
-    registerOverlay();
+    // Keep the bottom navigation hidden only while this summary is mounted.
+    // Returning the cleanup is essential: otherwise the global overlay count
+    // stays positive after the summary closes and the nav never comes back.
+    const unregisterOverlay = registerOverlay();
     loadSplits();
+    return unregisterOverlay;
   }, [summary?.id, session?.id]);
 
   async function loadSplits() {
