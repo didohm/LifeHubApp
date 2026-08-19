@@ -130,7 +130,22 @@ function isNative() {
 export class PermissionManager {
   private static startupRequested = false;
 
-  /** Requests all not-yet-answered permissions. Fire-and-forget (non-blocking). */
+  /**
+   * Requests the startup permissions (notification, media, audio).
+   * Fire-and-forget (non-blocking).
+   *
+   * Notification is asked only when never answered before. Media and audio
+   * use a direct request every launch: the OS decides whether to show the
+   * dialog (it will, unless the permission is permanently denied), so the
+   * dialogs always actually appear instead of being silently skipped by the
+   * local answer cache.
+   *
+   * Walk permissions (location, physical activity, body sensors) are
+   * intentionally NOT requested here — they are requested by the Walk
+   * Service only when the user taps Start New Walk, so a startup denial can
+   * never count toward Android's two-denial permanent-denial limit before
+   * the flow is even used.
+   */
   static requestAllPermissions(): void {
     if (this.startupRequested) return;
     this.startupRequested = true;
@@ -140,13 +155,9 @@ export class PermissionManager {
     void (async () => {
       await this.requestUnknown("notification");
       await sleep(500);
-      await this.requestUnknown("location");
+      await this.request("media");
       await sleep(500);
-      await this.requestUnknown("activity");
-      await sleep(500);
-      await this.requestUnknown("media");
-      await sleep(500);
-      await this.requestUnknown("audio");
+      await this.request("audio");
     })();
   }
 
