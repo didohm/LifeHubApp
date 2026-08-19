@@ -101,6 +101,18 @@ function wasPermanentlyDenied(name: PermissionName): boolean {
   return loadPermanentDenied().includes(name);
 }
 
+function clearPermanentDenied(name: PermissionName) {
+  if (typeof window === "undefined") return;
+  try {
+    const next = loadPermanentDenied().filter((n) => n !== name);
+    if (next.length !== loadPermanentDenied().length) {
+      localStorage.setItem(PERMANENT_DENIED_KEY, JSON.stringify(next));
+    }
+  } catch {
+    /* storage unavailable — ignore */
+  }
+}
+
 function isNative() {
   return Capacitor.isNativePlatform();
 }
@@ -191,10 +203,15 @@ export class PermissionManager {
       // (single-flight removed the race that produced false denials).
       const previous = getState(name);
       saveState(name, granted ? "granted" : "denied");
-      // A denied → granted transition means reminders can be armed now — let
-      // the data context know so it re-runs the full resync immediately.
-      if (granted && previous !== "granted" && name === "notification") {
-        this.dispatchPermissionsChanged();
+      if (granted) {
+        // A grant from Settings (or a re-request) clears any earlier
+        // permanent-denial mark — the dialog must not reappear for it.
+        clearPermanentDenied(name);
+        // A denied → granted transition means dependent features can run now
+        // — let the data context know so it re-runs the full resync.
+        if (previous !== "granted") {
+          this.dispatchPermissionsChanged();
+        }
       }
       return granted;
     } catch (err) {
@@ -256,6 +273,31 @@ export class PermissionManager {
     return results;
   }
 
+  /**
+   * Checks all walk permissions (location, physical activity, body sensors)
+   * without showing any OS dialog. Used to re-validate after the user returns
+   * from the system Settings screen.
+   */
+  static async checkWalkPermissions(): Promise<WalkPermissionResults> {
+    const order: PermissionName[] = ["location", "activity", "health"];
+    const results: WalkPermissionResults = {
+      location: false,
+      activity: false,
+      health: false,
+      missing: [],
+      permanentlyDenied: [],
+    };
+    for (const name of order) {
+      const granted = await this.check(name);
+      results[name as "location" | "activity" | "health"] = granted;
+      if (!granted) {
+        results.missing.push(name);
+        if (wasPermanentlyDenied(name)) results.permanentlyDenied.push(name);
+      }
+    }
+    return results;
+  }
+
   /** Opens the system app-settings screen (for permanently denied permissions). */
   static async openAppSettings(): Promise<void> {
     if (!isNative()) return;
@@ -275,6 +317,7 @@ export class PermissionManager {
         return status.display === "granted";
       }
       const result = await NativePermissions.check(name as PermissionAlias);
+      if (result.granted) clearPermanentDenied(name);
       return result.granted;
     } catch {
       return false;

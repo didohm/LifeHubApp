@@ -131,6 +131,10 @@ function WalkPage() {
   // shows them.
   const bgLocationPromptShownRef = useRef(false);
   const batteryPromptShownRef = useRef(false);
+  // True while the user is in the system Settings screen after tapping
+  // "Open Settings" in the permissions dialog — on return the app re-checks
+  // the walk permissions and starts the walk once everything is granted.
+  const pendingWalkStartRef = useRef(false);
 
   const userWeightKg = user?.weight && Number(user.weight) > 0 ? Number(user.weight) : 0;
   const hasValidWeight = user?.weight && Number(user.weight) > 0;
@@ -235,13 +239,48 @@ function WalkPage() {
       );
     }
     const results = await PermissionManager.requestWalkPermissions();
-    if (results.missing.length > 0) {
-      setPermissionDialog(results);
+    if (results.missing.length === 0) {
+      sounds.playWalkStart();
+      startWalk();
       return;
     }
-    sounds.playWalkStart();
-    startWalk();
+    // A plain (non-permanent) denial: the OS dialog can be shown again on the
+    // next Start New Walk tap — no custom dialog for these.
+    if (results.permanentlyDenied.length === 0) {
+      toast.warning(
+        "Walk permissions are needed — tap Start New Walk again and allow them when prompted.",
+      );
+      return;
+    }
+    // Permanently denied: only the system Settings screen can fix this.
+    pendingWalkStartRef.current = false;
+    setPermissionDialog(results);
   }, [hasValidWeight, startWalk]);
+
+  // Return-from-Settings: after the user taps "Open Settings" in the
+  // permissions dialog, re-check every walk permission when the app comes
+  // back to the foreground. If everything is granted now, close the dialog
+  // and start the walk immediately — never show the dialog again.
+  useEffect(() => {
+    if (!Capacitor.isNativePlatform()) return;
+    const onVisibility = async () => {
+      if (document.visibilityState !== "visible") return;
+      if (!pendingWalkStartRef.current) return;
+      try {
+        const results = await PermissionManager.checkWalkPermissions();
+        if (results.missing.length === 0) {
+          pendingWalkStartRef.current = false;
+          setPermissionDialog(null);
+          sounds.playWalkStart();
+          startWalk();
+        }
+      } catch (e) {
+        console.warn("Failed to re-check walk permissions:", e);
+      }
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => document.removeEventListener("visibilitychange", onVisibility);
+  }, [startWalk]);
 
   const acceptBgLocationDialog = useCallback(async () => {
     setShowBgLocationDialog(false);
@@ -819,12 +858,16 @@ function WalkPage() {
           </div>,
           document.body,
         )}
-      {/* Missing permissions prompt (Start New Walk) */}
+      {/* Missing permissions prompt (Start New Walk) — only for permanently
+          denied permissions; a plain denial just re-prompts on the next tap. */}
       {permissionDialog &&
         createPortal(
           <div
             className="fixed inset-0 z-[100] flex items-end justify-center bg-black/60 p-4 sm:items-center"
-            onClick={() => setPermissionDialog(null)}
+            onClick={() => {
+              pendingWalkStartRef.current = false;
+              setPermissionDialog(null);
+            }}
           >
             <div
               className="w-full max-w-sm rounded-3xl bg-white p-5 shadow-2xl"
@@ -833,23 +876,26 @@ function WalkPage() {
               <h3 className="text-base font-black text-[#12131A]">Permissions needed to start</h3>
               <p className="mt-2 text-xs font-semibold leading-relaxed text-muted-foreground">
                 Start Walk needs{" "}
-                {permissionDialog.missing
+                {permissionDialog.permanentlyDenied
                   .map((p) => PERMISSION_LABELS[p as "location" | "activity" | "health"])
                   .join(", ")}
-                .{" "}
-                {permissionDialog.permanentlyDenied.length > 0
-                  ? "Grant it in Settings to enable walk tracking."
-                  : "Allow it on the next prompt to enable walk tracking."}
+                . Grant it in Settings to enable walk tracking.
               </p>
               <div className="mt-4 flex gap-2">
                 <button
-                  onClick={() => setPermissionDialog(null)}
+                  onClick={() => {
+                    pendingWalkStartRef.current = false;
+                    setPermissionDialog(null);
+                  }}
                   className="flex-1 rounded-full bg-slate-100 px-4 py-2.5 text-xs font-black text-slate-700 hover:bg-slate-200"
                 >
                   Not now
                 </button>
                 <button
-                  onClick={() => void PermissionManager.openAppSettings()}
+                  onClick={() => {
+                    pendingWalkStartRef.current = true;
+                    void PermissionManager.openAppSettings();
+                  }}
                   className="flex-1 rounded-full bg-emerald-500 px-4 py-2.5 text-xs font-black text-white hover:bg-emerald-600"
                 >
                   Open Settings
