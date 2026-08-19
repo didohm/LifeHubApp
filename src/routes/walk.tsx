@@ -244,17 +244,26 @@ function WalkPage() {
       startWalk();
       return;
     }
-    // A plain (non-permanent) denial: the OS dialog can be shown again on the
-    // next Start New Walk tap — no custom dialog for these.
-    if (results.permanentlyDenied.length === 0) {
-      toast.warning(
-        "Walk permissions are needed — tap Start New Walk again and allow them when prompted.",
-      );
+    // A plain (non-permanent) denial: Android re-shows the OS dialog on the
+    // next request, so retry the missing permissions automatically in the
+    // same tap — no "tap Start New Walk again" round trip. This mirrors the
+    // notification permission flow: tap once, allow, the walk starts.
+    const final =
+      results.permanentlyDenied.length === 0
+        ? await (async () => {
+            await new Promise((resolve) => setTimeout(resolve, 600));
+            return PermissionManager.requestWalkPermissions();
+          })()
+        : results;
+    if (final.missing.length === 0) {
+      sounds.playWalkStart();
+      startWalk();
       return;
     }
-    // Permanently denied: only the system Settings screen can fix this.
+    // Still denied after the retry (or permanently denied): only the system
+    // Settings screen can fix it.
     pendingWalkStartRef.current = false;
-    setPermissionDialog(results);
+    setPermissionDialog(final);
   }, [hasValidWeight, startWalk]);
 
   // Return-from-Settings: after the user taps "Open Settings" in the
