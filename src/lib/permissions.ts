@@ -131,14 +131,12 @@ export class PermissionManager {
   private static startupRequested = false;
 
   /**
-   * Requests the startup permissions (notification, media, audio).
+   * Requests the startup permissions (notification and media).
    * Fire-and-forget (non-blocking).
    *
-   * Notification is asked only when never answered before. Media and audio
-   * use a direct request every launch: the OS decides whether to show the
-   * dialog (it will, unless the permission is permanently denied), so the
-   * dialogs always actually appear instead of being silently skipped by the
-   * local answer cache.
+   * Each is asked only when it has never been answered before. Any later
+   * request belongs to the feature that needs that permission, not app
+   * startup.
    *
    * Walk permissions (location, physical activity, body sensors) are
    * intentionally NOT requested here — they are requested by the Walk
@@ -155,9 +153,7 @@ export class PermissionManager {
     void (async () => {
       await this.requestUnknown("notification");
       await sleep(500);
-      await this.request("media");
-      await sleep(500);
-      await this.request("audio");
+      await this.requestUnknown("media");
     })();
   }
 

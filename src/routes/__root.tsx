@@ -262,7 +262,7 @@ function NotificationTapListener() {
 }
 
 function RootComponent() {
-  // Ask for the OS startup permissions (notifications, media, audio) once
+  // Ask for the OS startup permissions (notifications and media) once
   // per install — fire-and-forget and spaced out so dialogs never stack.
   // Walk permissions (location, physical activity, body sensors) are NOT
   // requested here: they are requested only when the user taps Start New
