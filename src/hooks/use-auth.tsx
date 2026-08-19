@@ -29,6 +29,10 @@ import {
 
 const USER_PROFILE_CACHE_KEY = "lifehub_user_profile";
 
+// Hoisted: resolvedOptions() is relatively expensive — computed once per app
+// load instead of on every mapFirebaseUser() call (runs on each login/sync).
+const DEVICE_TIMEZONE = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+
 interface AuthContextType {
   user: User | null;
   firebaseUser: FirebaseUser | null;
@@ -103,7 +107,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       weight: cached?.weight ?? null,
       theme: cached?.theme || "light",
       language: cached?.language || "en",
-      timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
+      timezone: DEVICE_TIMEZONE,
       email_verified: fbUser.emailVerified,
       accent_color: cached?.accent_color || "primary",
       compact_mode: cached?.compact_mode ?? false,

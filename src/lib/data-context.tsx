@@ -104,6 +104,20 @@ function commitSnapshot<T extends { id: string }>(
   setter((prev) => (sameSnapshot(next, prev) ? prev : next));
 }
 
+/**
+ * True when two snapshots are the same array REFERENCES in the same order.
+ * commitSnapshot() guarantees an array only ever gets a new reference when
+ * its content actually changed, so reference identity is an exact (and O(1))
+ * change signal for the notification resync — no per-item stringify.
+ */
+function sameSignature(next: unknown[], prev: unknown[] | null): boolean {
+  if (!prev || next.length !== prev.length) return false;
+  for (let i = 0; i < next.length; i++) {
+    if (next[i] !== prev[i]) return false;
+  }
+  return true;
+}
+
 export interface DataContextValue {
   // Medications
   medications: Medication[];
@@ -555,16 +569,20 @@ export function DataProvider({ userId, children }: { userId: string | null; chil
   // Foreground / permission-grant events bypass the guard (`force = true`,
   // still debounced below): a full re-arm on resume is deliberate — the OS
   // may have dropped reminders while the app was away (e.g. device reboot).
-  const lastResyncedSignatureRef = useRef<string>("");
+  const lastResyncedSignatureRef = useRef<unknown[] | null>(null);
   // A fresh user must not be skipped because the previous user happened to
   // share the same data signature (e.g. two empty accounts).
   useEffect(() => {
-    lastResyncedSignatureRef.current = "";
+    lastResyncedSignatureRef.current = null;
   }, [userId]);
 
   const resyncNotifications = useCallback(
     (force = false) => {
       if (!userId) return;
+      // Reference identity is the change signal: commitSnapshot only assigns
+      // a new array reference when the snapshot content changed, and every
+      // local mutation builds a fresh array, so equal references here mean
+      // equal content — no per-item serialization needed.
       const signature = [
         medications,
         appointments,
@@ -573,10 +591,8 @@ export function DataProvider({ userId, children }: { userId: string | null; chil
         workouts,
         todos,
         workoutPrograms,
-      ]
-        .map((items) => items.map((item) => JSON.stringify(item)).join("|"))
-        .join("~");
-      if (!force && lastResyncedSignatureRef.current === signature) return;
+      ];
+      if (!force && sameSignature(signature, lastResyncedSignatureRef.current)) return;
       lastResyncedSignatureRef.current = signature;
 
       const hasData =

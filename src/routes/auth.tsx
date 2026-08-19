@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useAuth } from "../hooks/use-auth";
 import { Screen } from "@/components/lifehub/Screen";
-import hero3d from "@/assets/hero-3d.png";
+import hero3d from "@/assets/hero-3d.webp";
 import { Loader2, Star, CalendarDays } from "lucide-react";
 import { FcGoogle } from "react-icons/fc";
 import { motion, useReducedMotion } from "framer-motion";

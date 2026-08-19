@@ -30,7 +30,7 @@ import { useData } from "@/lib/data-context";
 import { useWalk } from "@/hooks/use-walk";
 import { todayLocalDate } from "@/lib/api";
 import { sounds } from "@/lib/sound";
-import { PermissionManager } from "@/lib/permissions";
+import { PermissionManager, WalkPermissionResults } from "@/lib/permissions";
 import { WalkServicePlugin, WalkRoutePoint } from "@/lib/notifications-integration";
 import { WalkSession, WalkSummary } from "@/lib/types";
 import { getWalkSummary } from "@/lib/walk-storage";
@@ -90,6 +90,12 @@ function formatNativePace(minPerKm: number): string {
   return `${mins}'${secs.toString().padStart(2, "0")}"`;
 }
 
+const PERMISSION_LABELS: Record<"location" | "activity" | "health", string> = {
+  location: "Location",
+  activity: "Physical Activity",
+  health: "Body Sensors",
+};
+
 /** Strava-style summary modal shown right after a walk/run finishes. */
 export function WalkSummaryModal({
   session,
@@ -118,6 +124,7 @@ function WalkPage() {
   // In-context rationale dialogs
   const [showBgLocationDialog, setShowBgLocationDialog] = useState(false);
   const [showBatteryDialog, setShowBatteryDialog] = useState(false);
+  const [permissionDialog, setPermissionDialog] = useState<WalkPermissionResults | null>(null);
   // Prompt guards: the background-location and battery-optimization prompts
   // are shown when the Walk Service page is OPENED from outside the Start
   // Walk flow — at most once per page visit. Tapping Start New Walk never
@@ -227,9 +234,11 @@ function WalkPage() {
         "Weight not set — walk calories won't be estimated until you complete profile weight.",
       );
     }
-    await PermissionManager.ensurePermission("location");
-    await PermissionManager.ensurePermission("activity");
-    await PermissionManager.ensurePermission("health");
+    const results = await PermissionManager.requestWalkPermissions();
+    if (results.missing.length > 0) {
+      setPermissionDialog(results);
+      return;
+    }
     sounds.playWalkStart();
     startWalk();
   }, [hasValidWeight, startWalk]);
@@ -364,7 +373,11 @@ function WalkPage() {
         <div
           className={cn(
             "absolute -top-10 -right-10 size-48 rounded-full blur-3xl pointer-events-none opacity-25",
-            status === "active" ? "bg-emerald-500" : status === "paused" ? "bg-amber-500" : "bg-indigo-500",
+            status === "active"
+              ? "bg-emerald-500"
+              : status === "paused"
+                ? "bg-amber-500"
+                : "bg-indigo-500",
           )}
         />
 
@@ -380,10 +393,7 @@ function WalkPage() {
             )}
           >
             <Navigation
-              className={cn(
-                "size-3.5",
-                status === "active" && "animate-pulse text-emerald-300",
-              )}
+              className={cn("size-3.5", status === "active" && "animate-pulse text-emerald-300")}
             />
             {status === "active"
               ? "Walk in Progress"
@@ -441,7 +451,9 @@ function WalkPage() {
             <div className="flex items-center justify-center gap-1 text-white/70 text-[10px] font-black uppercase tracking-wider mb-0.5">
               <Clock className="size-3 text-[#7C5CFC]" /> Time
             </div>
-            <span className="text-xs sm:text-sm font-black text-white">{formatDuration(duration)}</span>
+            <span className="text-xs sm:text-sm font-black text-white">
+              {formatDuration(duration)}
+            </span>
           </div>
 
           <div className="border-l border-white/10">
@@ -455,7 +467,9 @@ function WalkPage() {
             <div className="flex items-center justify-center gap-1 text-white/70 text-[10px] font-black uppercase tracking-wider mb-0.5">
               <Footprints className="size-3 text-emerald-400" /> Steps
             </div>
-            <span className="text-xs sm:text-sm font-black text-white">{steps.toLocaleString()}</span>
+            <span className="text-xs sm:text-sm font-black text-white">
+              {steps.toLocaleString()}
+            </span>
           </div>
         </div>
 
@@ -559,7 +573,9 @@ function WalkPage() {
               }}
               className={cn(
                 "px-3 py-1 rounded-full capitalize transition-all",
-                statsPeriod === period ? "bg-white text-[#12131A] shadow-xs" : "text-muted-foreground",
+                statsPeriod === period
+                  ? "bg-white text-[#12131A] shadow-xs"
+                  : "text-muted-foreground",
               )}
             >
               {period}
@@ -676,7 +692,8 @@ function WalkPage() {
                         month: "short",
                         day: "numeric",
                       })}{" "}
-                      · {formatDuration(s.duration)} · {s.calories} kcal · {s.steps.toLocaleString()} steps
+                      · {formatDuration(s.duration)} · {s.calories} kcal ·{" "}
+                      {s.steps.toLocaleString()} steps
                       {s.vehicle && " · 🚗 Vehicle flagged"}
                     </p>
                   </div>
@@ -735,9 +752,7 @@ function WalkPage() {
               className="w-full max-w-sm rounded-3xl bg-white p-5 shadow-2xl"
               onClick={(e) => e.stopPropagation()}
             >
-              <h3 className="text-base font-black text-[#12131A]">
-                Keep tracking in background?
-              </h3>
+              <h3 className="text-base font-black text-[#12131A]">Keep tracking in background?</h3>
               <p className="mt-2 text-xs font-semibold leading-relaxed text-muted-foreground">
                 Allow background location so your walk continues recording accurate distance and
                 route trail while the phone is in your pocket or screen is locked.
@@ -798,6 +813,46 @@ function WalkPage() {
                   className="flex-1 rounded-full bg-emerald-500 px-4 py-2.5 text-xs font-black text-white hover:bg-emerald-600"
                 >
                   Allow background
+                </button>
+              </div>
+            </div>
+          </div>,
+          document.body,
+        )}
+      {/* Missing permissions prompt (Start New Walk) */}
+      {permissionDialog &&
+        createPortal(
+          <div
+            className="fixed inset-0 z-[100] flex items-end justify-center bg-black/60 p-4 sm:items-center"
+            onClick={() => setPermissionDialog(null)}
+          >
+            <div
+              className="w-full max-w-sm rounded-3xl bg-white p-5 shadow-2xl"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <h3 className="text-base font-black text-[#12131A]">Permissions needed to start</h3>
+              <p className="mt-2 text-xs font-semibold leading-relaxed text-muted-foreground">
+                Start Walk needs{" "}
+                {permissionDialog.missing
+                  .map((p) => PERMISSION_LABELS[p as "location" | "activity" | "health"])
+                  .join(", ")}
+                .{" "}
+                {permissionDialog.permanentlyDenied.length > 0
+                  ? "Grant it in Settings to enable walk tracking."
+                  : "Allow it on the next prompt to enable walk tracking."}
+              </p>
+              <div className="mt-4 flex gap-2">
+                <button
+                  onClick={() => setPermissionDialog(null)}
+                  className="flex-1 rounded-full bg-slate-100 px-4 py-2.5 text-xs font-black text-slate-700 hover:bg-slate-200"
+                >
+                  Not now
+                </button>
+                <button
+                  onClick={() => void PermissionManager.openAppSettings()}
+                  className="flex-1 rounded-full bg-emerald-500 px-4 py-2.5 text-xs font-black text-white hover:bg-emerald-600"
+                >
+                  Open Settings
                 </button>
               </div>
             </div>

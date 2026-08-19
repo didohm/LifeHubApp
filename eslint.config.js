@@ -6,7 +6,26 @@ import reactRefresh from "eslint-plugin-react-refresh";
 import tseslint from "typescript-eslint";
 
 export default tseslint.config(
-  { ignores: ["dist", "dist-capacitor", "android", ".output", ".vinxi"] },
+  {
+    ignores: [
+      "dist",
+      "dist-capacitor",
+      "android",
+      "android/**",
+      ".output",
+      ".vinxi",
+      ".vercel",
+      ".vercel/**",
+      ".kilo",
+      ".kilo/**",
+      ".tanstack",
+      ".tanstack/**",
+      ".nitro",
+      ".nitro/**",
+      "node_modules",
+      "node_modules/**",
+    ],
+  },
   {
     extends: [js.configs.recommended, ...tseslint.configs.recommended],
     files: ["**/*.{ts,tsx}"],

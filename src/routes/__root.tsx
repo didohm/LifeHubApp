@@ -1,4 +1,3 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
   Outlet,
   Link,
@@ -98,7 +97,7 @@ function ErrorComponent({ error, reset }: { error: Error; reset: () => void }) {
   );
 }
 
-export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()({
+export const Route = createRootRouteWithContext()({
   head: () => ({
     meta: [
       { charSet: "utf-8" },
@@ -263,8 +262,6 @@ function NotificationTapListener() {
 }
 
 function RootComponent() {
-  const { queryClient } = Route.useRouteContext();
-
   // Ask for the OS permissions (notifications, location, activity, media,
   // audio) once per install — fire-and-forget and spaced out so dialogs
   // never stack. Denied ones are re-asked when the feature is actually used.
@@ -273,12 +270,10 @@ function RootComponent() {
   }, []);
 
   return (
-    <QueryClientProvider client={queryClient}>
-      <AuthProvider>
-        <MainContentGate />
-        <NotificationTapListener />
-        <Toaster position="top-right" richColors closeButton />
-      </AuthProvider>
-    </QueryClientProvider>
+    <AuthProvider>
+      <MainContentGate />
+      <NotificationTapListener />
+      <Toaster position="top-right" richColors closeButton />
+    </AuthProvider>
   );
 }

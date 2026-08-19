@@ -108,6 +108,8 @@ public class WalkService extends Service implements LocationListener, SensorEven
     public static final String ACTION_WAKELOCK_MAINTAIN = "com.lifehub.app.walk.WAKELOCK_MAINTAIN";
     /** Explicit request (from the app, after showing its own rationale) to open the OS battery-optimization exemption dialog. */
     public static final String ACTION_BATTERY_EXEMPTION_REQUEST = "com.lifehub.app.walk.BATTERY_EXEMPTION_REQUEST";
+    /** Re-enters the foreground when the app resumes after a deferred foreground start. */
+    public static final String ACTION_FOREGROUND_REARM = "com.lifehub.app.walk.FOREGROUND_REARM";
 
     private static final String PREFS = "lifehub_walk_state";
     private static final String KEY_TRACKING = "tracking";
@@ -207,7 +209,7 @@ public class WalkService extends Service implements LocationListener, SensorEven
     private long lastNotificationUpdateMs = 0L;
     private PowerManager.WakeLock wakeLock;
     private NotificationCompat.Builder notificationBuilder;
-    private boolean isInForeground = false;
+    private static volatile boolean isInForeground = false;
     private boolean lastNotifiedPauseState = false;
     private WalkDatabaseHelper dbHelper;
     private int stepsAtLastVehicleCheck = 0;
@@ -627,6 +629,11 @@ public class WalkService extends Service implements LocationListener, SensorEven
                     // only now open the OS "Allow background activity?" dialog.
                     requestBatteryOptimizationExemptionFromSystem();
                     break;
+                case ACTION_FOREGROUND_REARM:
+                    if (isTracking) {
+                        resumeTrackingEnginesIfNeeded();
+                    }
+                    break;
                 default:
                     break;
             }
@@ -888,7 +895,34 @@ public class WalkService extends Service implements LocationListener, SensorEven
         return sb.toString();
     }
 
+    private boolean isAppInForeground() {
+        try {
+            ActivityManager am = (ActivityManager) getSystemService(Context.ACTIVITY_SERVICE);
+            if (am == null) return false;
+            ActivityManager.RunningAppProcessInfo info = new ActivityManager.RunningAppProcessInfo();
+            ActivityManager.getMyMemoryState(info);
+            return info.importance == ActivityManager.RunningAppProcessInfo.IMPORTANCE_FOREGROUND
+                    || info.importance == ActivityManager.RunningAppProcessInfo.IMPORTANCE_VISIBLE;
+        } catch (Exception e) {
+            return true;
+        }
+    }
+
+    public static boolean isForegroundActive() {
+        return isInForeground;
+    }
+
     private void enterForeground() {
+        // Defer the foreground start when the app is backgrounded (e.g. the OS
+        // restarted the service while the user was on the battery settings
+        // page): startForeground() from the background on Android 12+ would
+        // throw and kill a live walk. The plugin re-arms on app resume.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && !isInForeground && !isAppInForeground()) {
+            Log.w(TAG, "App not in foreground - deferring foreground start until the app resumes");
+            publishUpdate("waiting_for_foreground");
+            return;
+        }
+
         // P3.2: Android 13+ requires POST_NOTIFICATIONS permission to show notifications
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             if (ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) 
@@ -944,14 +978,25 @@ public class WalkService extends Service implements LocationListener, SensorEven
             isInForeground = true;
             Log.d(TAG, "Successfully entered foreground with FGS type: " + fgsType);
         } catch (SecurityException e) {
-            // CRITICAL: SecurityException means wrong FGS type for granted permissions
-            // This should never happen if computeFgsType() is correct, but catch it explicitly
             Log.e(TAG, "FATAL: SecurityException starting foreground service - permission/type mismatch", e);
-            publishUpdate("foreground_service_security_error");
-            
-            // Stop the service - cannot recover from permission mismatch
-            stopForegroundTracking();
-            stopSelf();
+            boolean recovered = false;
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q
+                    && (fgsType & android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION) != 0) {
+                try {
+                    startForeground(NOTIFICATION_ID, notification,
+                            android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION);
+                    isInForeground = true;
+                    recovered = true;
+                    Log.d(TAG, "Recovered with location-only FGS type");
+                } catch (Exception e2) {
+                    Log.e(TAG, "Location-only foreground start also failed", e2);
+                }
+            }
+            if (!recovered) {
+                publishUpdate("foreground_service_security_error");
+                stopForegroundTracking();
+                stopSelf();
+            }
         } catch (Exception e) {
             // P3.1: Android 12+ can throw ForegroundServiceStartNotAllowedException
             Log.e(TAG, "FATAL: Failed to start foreground service", e);
@@ -990,7 +1035,7 @@ public class WalkService extends Service implements LocationListener, SensorEven
         if (hasLocation) {
             fgsType |= android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION;
         }
-        if (hasActivity && hasBodySensors && Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+        if (hasActivity && hasBodySensors && Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
             fgsType |= android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_HEALTH;
         }
 

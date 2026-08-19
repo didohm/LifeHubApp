@@ -223,7 +223,11 @@ export const Route = createFileRoute("/api/assistant")({
             "Content-Type": "application/json",
             Authorization: `Bearer ${apiKey}`,
           },
-          body: JSON.stringify({ model, messages, stream: false }),
+          // Propagate the client's abort signal so stopping generation also
+          // cancels the upstream model request instead of paying for tokens
+          // the user will never see.
+          signal: request.signal,
+          body: JSON.stringify({ model, messages, stream: true }),
         });
         if (!upstream.ok) {
           // Log the status code only — the upstream error body can contain
@@ -231,15 +235,22 @@ export const Route = createFileRoute("/api/assistant")({
           console.error(`${UPSTREAM_LOG_PREFIX} ${upstream.status}`);
           return json({ error: "Assistant model request failed." }, { status: 502 });
         }
-        const data = (await upstream.json()) as {
-          choices?: { message?: { content?: string } }[];
-          content?: string;
-        };
-        const reply = data.choices?.[0]?.message?.content ?? data.content ?? "";
-        if (!reply.trim()) {
-          return json({ error: "Assistant returned an empty reply." }, { status: 502 });
-        }
-        return json({ content: reply });
+
+        // Pipe the upstream SSE stream straight through to the client. The
+        // model's tokens are relayed as they are produced, so the chat UI can
+        // render the reply incrementally instead of waiting for the full
+        // completion. No buffering, no parsing here — the client decodes the
+        // `data:` frames.
+        return new Response(upstream.body, {
+          status: 200,
+          headers: {
+            "Content-Type": "text/event-stream; charset=utf-8",
+            "Cache-Control": "no-cache, no-transform",
+            Connection: "keep-alive",
+            "X-Accel-Buffering": "no",
+            ...CORS_HEADERS,
+          },
+        });
       },
     },
   },

@@ -34,8 +34,7 @@ export default defineConfig({
       "react-dom",
       "react/jsx-runtime",
       "react/jsx-dev-runtime",
-      "@tanstack/react-query",
-      "@tanstack/query-core",
+      "@tanstack/router-core",
     ],
   },
   optimizeDeps: {
@@ -51,22 +50,10 @@ export default defineConfig({
   build: {
     rollupOptions: {
       output: {
-        manualChunks(id) {
-          if (!id.includes("node_modules")) return;
-
-          if (id.includes("recharts") || id.includes("d3-")) return "vendor-charts";
-          if (id.includes("firebase")) return "vendor-firebase";
-          if (id.includes("framer-motion")) return "vendor-motion";
-          if (id.includes("@tanstack")) return "vendor-tanstack";
-          if (id.includes("@radix-ui")) return "vendor-radix";
-          if (id.includes("lucide-react") || id.includes("react-icons")) return "vendor-icons";
-          if (id.includes("date-fns")) return "vendor-date";
-          if (id.includes("react-hook-form")) return "vendor-forms";
-          if (id.includes("zod")) return "vendor-utils";
-          if (id.includes("embla-carousel") || id.includes("vaul") || id.includes("cmdk"))
-            return "vendor-ui-components";
-          return "vendor";
-        },
+        // No manualChunks: Rolldown's automatic splitting already isolates
+        // route-lazy dependencies (leaflet → RouteMap) and shared vendors
+        // (react, recharts, firebase) into their own chunks without pulling
+        // them into the always-loaded bundle or duplicating shared modules.
       },
     },
   },

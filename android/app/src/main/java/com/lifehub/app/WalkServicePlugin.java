@@ -42,6 +42,15 @@ public class WalkServicePlugin extends Plugin {
     protected void handleOnResume() {
         super.handleOnResume();
         if (WalkService.isTracking) {
+            if (!WalkService.isForegroundActive()) {
+                try {
+                    Intent intent = new Intent(getContext(), WalkService.class);
+                    intent.setAction(WalkService.ACTION_FOREGROUND_REARM);
+                    getContext().startService(intent);
+                } catch (Exception e) {
+                    android.util.Log.w("WalkServicePlugin", "Failed to re-arm walk service foreground", e);
+                }
+            }
             WalkServicePlugin.publish(
                     WalkService.currentDistanceKm,
                     WalkService.currentSteps,
@@ -583,35 +592,17 @@ public class WalkServicePlugin extends Plugin {
                 }
             }
             
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                getContext().startForegroundService(intent);
-            } else {
-                getContext().startService(intent);
-            }
+            getContext().startService(intent);
             return true;
         } catch (Exception e) {
-            android.util.Log.w("WalkServicePlugin", "Failed to start foreground service: " + e.getClass().getSimpleName(), e);
-            
-            // On Android 12+, this might be ForegroundServiceStartNotAllowedException
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                android.util.Log.e("WalkServicePlugin", "Foreground service launch restricted on Android 12+, app must be in foreground");
-                if (instance != null) {
-                    JSObject result = new JSObject();
-                    result.put("started", false);
-                    result.put("error", "foreground_service_restricted");
-                    instance.notifyListeners("walkUpdate", result);
-                }
-                return false;
+            android.util.Log.w("WalkServicePlugin", "Failed to start service: " + e.getClass().getSimpleName(), e);
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && instance != null) {
+                JSObject result = new JSObject();
+                result.put("started", false);
+                result.put("error", "foreground_service_restricted");
+                instance.notifyListeners("walkUpdate", result);
             }
-            
-            // Pre-Android 12: try regular service as fallback
-            try {
-                getContext().startService(intent);
-                return true;
-            } catch (Exception e2) {
-                android.util.Log.e("WalkServicePlugin", "Failed to start service completely", e2);
-                return false;
-            }
+            return false;
         }
     }
     

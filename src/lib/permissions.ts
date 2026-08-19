@@ -11,6 +11,7 @@ import { NotificationService } from "./notifications";
 interface NativePermissionsPlugin {
   check(alias: PermissionAlias): Promise<{ granted: boolean }>;
   request(alias: PermissionAlias): Promise<{ granted: boolean; permanentlyDenied: boolean }>;
+  openAppSettings(): Promise<void>;
   /** Payload of the OS notification that cold-started the app (if any). */
   getLaunchNotification(): Promise<{ extra: Record<string, any> | null }>;
 }
@@ -23,6 +24,14 @@ export { NativePermissions };
 export type PermissionName =
   "notification" | "location" | "background" | "activity" | "health" | "media" | "audio";
 type PermissionState = "granted" | "denied" | "unknown";
+
+export interface WalkPermissionResults {
+  location: boolean;
+  activity: boolean;
+  health: boolean;
+  missing: PermissionName[];
+  permanentlyDenied: PermissionName[];
+}
 
 /** Fired on `window` whenever a native permission transitions into granted. */
 export const PERMISSIONS_CHANGED_EVENT = "lifehub:permissions-changed";
@@ -61,6 +70,35 @@ function saveState(name: PermissionName, state: PermissionState) {
 
 function getState(name: PermissionName): PermissionState {
   return loadStates()[name] || "unknown";
+}
+
+const PERMANENT_DENIED_KEY = "lifehub_permanent_denied";
+
+function loadPermanentDenied(): PermissionName[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = localStorage.getItem(PERMANENT_DENIED_KEY);
+    return raw ? (JSON.parse(raw) as PermissionName[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+function markPermanentDenied(name: PermissionName) {
+  if (typeof window === "undefined") return;
+  try {
+    const list = loadPermanentDenied();
+    if (!list.includes(name)) {
+      list.push(name);
+      localStorage.setItem(PERMANENT_DENIED_KEY, JSON.stringify(list));
+    }
+  } catch {
+    /* storage unavailable — ignore */
+  }
+}
+
+function wasPermanentlyDenied(name: PermissionName): boolean {
+  return loadPermanentDenied().includes(name);
 }
 
 function isNative() {
@@ -145,6 +183,9 @@ export class PermissionManager {
       } else {
         const result = await NativePermissions.request(name as PermissionAlias);
         granted = result.granted;
+        if (!granted && result.permanentlyDenied) {
+          markPermanentDenied(name);
+        }
       }
       // Only the OS result writes a state, so a "denied" here is a real denial
       // (single-flight removed the race that produced false denials).
@@ -169,6 +210,60 @@ export class PermissionManager {
   static async ensurePermission(name: PermissionName): Promise<boolean> {
     if (await this.check(name)) return true;
     return this.request(name);
+  }
+
+  private static async requestWithDetail(
+    name: PermissionName,
+  ): Promise<{ granted: boolean; permanentlyDenied: boolean }> {
+    if (!isNative()) return { granted: true, permanentlyDenied: false };
+    const pending = inFlight.get(name);
+    if (pending) {
+      return { granted: await pending, permanentlyDenied: wasPermanentlyDenied(name) };
+    }
+    const task = this.performRequest(name);
+    inFlight.set(name, task);
+    try {
+      const granted = await task;
+      return { granted, permanentlyDenied: !granted && wasPermanentlyDenied(name) };
+    } finally {
+      inFlight.delete(name);
+    }
+  }
+
+  /**
+   * Requests the walk permissions (location, physical activity, body sensors)
+   * in sequence with spacing so Android never drops a dialog that follows
+   * another dialog's dismissal. Returns the grant state for each.
+   */
+  static async requestWalkPermissions(): Promise<WalkPermissionResults> {
+    const order: PermissionName[] = ["location", "activity", "health"];
+    const results: WalkPermissionResults = {
+      location: false,
+      activity: false,
+      health: false,
+      missing: [],
+      permanentlyDenied: [],
+    };
+    for (let i = 0; i < order.length; i++) {
+      if (i > 0) await sleep(400);
+      const res = await this.requestWithDetail(order[i]);
+      results[order[i] as "location" | "activity" | "health"] = res.granted;
+      if (!res.granted) {
+        results.missing.push(order[i]);
+        if (res.permanentlyDenied) results.permanentlyDenied.push(order[i]);
+      }
+    }
+    return results;
+  }
+
+  /** Opens the system app-settings screen (for permanently denied permissions). */
+  static async openAppSettings(): Promise<void> {
+    if (!isNative()) return;
+    try {
+      await NativePermissions.openAppSettings();
+    } catch (e) {
+      console.warn("Failed to open app settings:", e);
+    }
   }
 
   /** Cheap OS-level check without showing any dialog. */

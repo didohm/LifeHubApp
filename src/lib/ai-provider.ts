@@ -59,6 +59,12 @@ export interface AssistantOptions {
   signal?: AbortSignal;
   /** Firebase ID token — authenticates the server-side model proxy. */
   idToken?: string;
+  /**
+   * Called with the reply text as it grows. For the streaming external model
+   * this fires on every decoded token; for the built-in engine it fires once
+   * with the full answer. Lets the UI render incrementally.
+   */
+  onChunk?: (partial: string) => void;
 }
 
 export const MEDICAL_DISCLAIMER =
@@ -244,12 +250,66 @@ function serializeFetchedData(data: FetchedData): string {
   return data.results.map((r) => formatDataForPrompt(r)).join("\n\n");
 }
 
+/**
+ * Consumes an SSE stream of model tokens and emits the growing reply via
+ * `onChunk`. Falls back to a plain JSON body for non-streaming responses
+ * (e.g. older deploy). Returns the complete reply text.
+ */
+async function streamExternalReply(
+  res: Response,
+  onChunk?: (partial: string) => void,
+): Promise<string> {
+  if (!res.body) {
+    const data = (await res.json()) as { content?: string };
+    const reply = data?.content || "";
+    onChunk?.(reply);
+    return reply;
+  }
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let full = "";
+
+  const handleFrame = (frame: string) => {
+    const dataLine = frame.split("\n").find((line) => line.startsWith("data:"));
+    if (!dataLine) return;
+    const payload = dataLine.slice(5).trim();
+    if (payload === "[DONE]" || payload === "") return;
+    try {
+      const parsed = JSON.parse(payload) as {
+        choices?: { delta?: { content?: string } }[];
+      };
+      const delta = parsed.choices?.[0]?.delta?.content;
+      if (typeof delta === "string" && delta) {
+        full += delta;
+        onChunk?.(full);
+      }
+    } catch {
+      // Skip malformed / keep-alive frames — the token stream keeps flowing.
+    }
+  };
+
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const frames = buffer.split("\n\n");
+    buffer = frames.pop() ?? "";
+    for (const frame of frames) handleFrame(frame);
+  }
+  // Trailing data without a closing blank line.
+  if (buffer.trim()) handleFrame(buffer);
+
+  return full;
+}
+
 // ─────────────────────────────────────────────────────────────────────────
 //  generateAssistantReply() — detect → retrieve live → generate
 //  Always returns a helpful string, never throws.
 // ─────────────────────────────────────────────────────────────────────────
 export async function generateAssistantReply(options: AssistantOptions): Promise<string> {
-  const { prompt, userId, conversationHistory, signal } = options;
+  const { prompt, userId, conversationHistory, signal, onChunk } = options;
 
   // 1) Orchestrate: decide which tools this question needs
   const plan = detectIntent(prompt);
@@ -307,8 +367,7 @@ export async function generateAssistantReply(options: AssistantOptions): Promise
       });
 
       if (res.ok) {
-        const resData = (await res.json()) as { content?: string };
-        const reply = resData?.content;
+        const reply = await streamExternalReply(res, onChunk);
         if (typeof reply === "string" && reply.trim()) return reply.trim();
       }
     } catch (err) {
@@ -318,7 +377,9 @@ export async function generateAssistantReply(options: AssistantOptions): Promise
   }
 
   // 4) Built-in engine: answers built ONLY from the freshly retrieved data
-  return buildBuiltInReply(prompt, data);
+  const reply = buildBuiltInReply(prompt, data);
+  onChunk?.(reply);
+  return reply;
 }
 
 // ─────────────────────────────────────────────────────────────────────────

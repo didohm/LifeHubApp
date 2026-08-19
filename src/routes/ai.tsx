@@ -60,7 +60,8 @@ const quickActions = [
     icon: Pill,
     title: "Medication Plan",
     desc: "Dosage & schedule",
-    prompt: "Walk me through my current medication schedule — what I should take and when, plus any safety precautions.",
+    prompt:
+      "Walk me through my current medication schedule — what I should take and when, plus any safety precautions.",
     bgGradient: "bg-gradient-to-br from-sky-50 to-blue-50/70 border-sky-200/80 text-sky-900",
     iconBg: "bg-sky-500/15 text-sky-600",
     accentHover: "hover:border-sky-400 hover:shadow-sky-100",
@@ -69,8 +70,10 @@ const quickActions = [
     icon: Calendar,
     title: "Doctor Visit",
     desc: "Prep & questions",
-    prompt: "I have an upcoming doctor appointment. Help me prepare important questions to ask and notes to review.",
-    bgGradient: "bg-gradient-to-br from-amber-50 to-orange-50/70 border-amber-200/80 text-amber-900",
+    prompt:
+      "I have an upcoming doctor appointment. Help me prepare important questions to ask and notes to review.",
+    bgGradient:
+      "bg-gradient-to-br from-amber-50 to-orange-50/70 border-amber-200/80 text-amber-900",
     iconBg: "bg-amber-500/15 text-amber-600",
     accentHover: "hover:border-amber-400 hover:shadow-amber-100",
   },
@@ -79,7 +82,8 @@ const quickActions = [
     title: "Health Summary",
     desc: "Records & vitals",
     prompt: "Summarize all my health data — medications, appointments, and recent activities.",
-    bgGradient: "bg-gradient-to-br from-purple-50 to-indigo-50/70 border-purple-200/80 text-purple-900",
+    bgGradient:
+      "bg-gradient-to-br from-purple-50 to-indigo-50/70 border-purple-200/80 text-purple-900",
     iconBg: "bg-purple-500/15 text-purple-600",
     accentHover: "hover:border-purple-400 hover:shadow-purple-100",
   },
@@ -87,8 +91,10 @@ const quickActions = [
     icon: Leaf,
     title: "Daily Wellness",
     desc: "Habits & routines",
-    prompt: "Give me personalized wellness, hydration, and recovery tips based on my recent routines.",
-    bgGradient: "bg-gradient-to-br from-emerald-50 to-teal-50/70 border-emerald-200/80 text-emerald-900",
+    prompt:
+      "Give me personalized wellness, hydration, and recovery tips based on my recent routines.",
+    bgGradient:
+      "bg-gradient-to-br from-emerald-50 to-teal-50/70 border-emerald-200/80 text-emerald-900",
     iconBg: "bg-emerald-500/15 text-emerald-600",
     accentHover: "hover:border-emerald-400 hover:shadow-emerald-100",
   },
@@ -216,14 +222,24 @@ function MarkdownContent({ content }: { content: string }) {
             .split("|")
             .filter(Boolean)
             .map((c, ci) => (
-              <td key={ci} className="px-3 py-1.5 text-xs text-foreground/90 border-t border-border/40">
+              <td
+                key={ci}
+                className="px-3 py-1.5 text-xs text-foreground/90 border-t border-border/40"
+              >
                 {renderInline(c.trim())}
               </td>
             ));
-          rows.push(<tr key={`tr-${i}`} className="hover:bg-muted/30">{rowCells}</tr>);
+          rows.push(
+            <tr key={`tr-${i}`} className="hover:bg-muted/30">
+              {rowCells}
+            </tr>,
+          );
         }
         elements.push(
-          <div key={`tbl-${i}`} className="my-2.5 overflow-x-auto rounded-xl border border-border/60 bg-card/60 shadow-xs">
+          <div
+            key={`tbl-${i}`}
+            className="my-2.5 overflow-x-auto rounded-xl border border-border/60 bg-card/60 shadow-xs"
+          >
             <table className="w-full border-collapse text-left text-xs">
               <thead className="bg-muted/60">{headerCells}</thead>
               <tbody>{rows}</tbody>
@@ -267,7 +283,9 @@ function MarkdownContent({ content }: { content: string }) {
       elements.push(
         <div key={i} className="flex gap-2 pl-2" style={{ paddingLeft: `${indent + 8}px` }}>
           <span className="mt-1.5 size-1.5 shrink-0 rounded-full bg-[#7C5CFC]" />
-          <span className="text-[13.5px] leading-relaxed text-foreground/90">{renderInline(text)}</span>
+          <span className="text-[13.5px] leading-relaxed text-foreground/90">
+            {renderInline(text)}
+          </span>
         </div>,
       );
       continue;
@@ -280,7 +298,9 @@ function MarkdownContent({ content }: { content: string }) {
       elements.push(
         <div key={i} className="flex gap-2 pl-2">
           <span className="mt-0.5 shrink-0 text-xs font-bold text-[#7C5CFC]">{match?.[1]}</span>
-          <span className="text-[13.5px] leading-relaxed text-foreground/90">{renderInline(text)}</span>
+          <span className="text-[13.5px] leading-relaxed text-foreground/90">
+            {renderInline(text)}
+          </span>
         </div>,
       );
       continue;
@@ -318,12 +338,20 @@ function renderInline(text: string): React.ReactNode {
   const parts = text.split(/(\*\*[^*]+\*\*)/g);
   return parts.map((part, i) => {
     if (part.startsWith("**") && part.endsWith("**")) {
-      return <strong key={i} className="font-bold text-foreground">{part.slice(2, -2)}</strong>;
+      return (
+        <strong key={i} className="font-bold text-foreground">
+          {part.slice(2, -2)}
+        </strong>
+      );
     }
     const italicParts = part.split(/(_[^_]+_)/g);
     return italicParts.map((ip, j) => {
       if (ip.startsWith("_") && ip.endsWith("_")) {
-        return <em key={`${i}-${j}`} className="italic">{ip.slice(1, -1)}</em>;
+        return (
+          <em key={`${i}-${j}`} className="italic">
+            {ip.slice(1, -1)}
+          </em>
+        );
       }
       return ip;
     });
@@ -357,7 +385,9 @@ function TypingIndicator({ onStop }: { onStop?: () => void }) {
             style={{ animationDelay: "300ms" }}
           />
         </div>
-        <span className="text-xs font-semibold text-muted-foreground">Analyzing your health data...</span>
+        <span className="text-xs font-semibold text-muted-foreground">
+          Analyzing your health data...
+        </span>
         {onStop && (
           <button
             onClick={onStop}
@@ -496,6 +526,25 @@ function AiPage() {
       const userMsg = await addAiMessage(activeConvId, "user", promptToSend, user.id);
       setMessages((prev) => [...prev, userMsg]);
 
+      // History snapshot taken BEFORE the pending bubble is added, so the
+      // assistant never sees its own in-progress reply.
+      const history = [...messages, userMsg].map((m) => ({
+        role: m.role as "user" | "assistant" | "system",
+        content: m.content,
+      }));
+
+      // Pending assistant bubble — tokens stream into it as they arrive.
+      const pendingId = `pending-${Date.now()}`;
+      const pendingMsg: AiMessage = {
+        id: pendingId,
+        conversation_id: activeConvId,
+        role: "assistant",
+        content: "",
+        created_at: new Date().toISOString(),
+      };
+      setMessages((prev) => [...prev, pendingMsg]);
+      scrollToBottom(false);
+
       // Firebase ID token authenticates the server-side model proxy
       const idToken = firebaseUser
         ? await firebaseUser.getIdToken().catch(() => undefined)
@@ -506,16 +555,22 @@ function AiPage() {
         userId: user.id,
         idToken,
         signal: controller.signal,
-        conversationHistory: [...messages, userMsg].map((m) => ({
-          role: m.role as "user" | "assistant" | "system",
-          content: m.content,
-        })),
+        conversationHistory: history,
+        onChunk: (partial) => {
+          setMessages((prev) =>
+            prev.map((m) => (m.id === pendingId ? { ...m, content: partial } : m)),
+          );
+          scrollToBottom(false);
+        },
       });
 
+      // Persist the finished reply and swap it in for the pending bubble.
       const aiMsg = await addAiMessage(activeConvId, "assistant", replyText, user.id);
-      setMessages((prev) => [...prev, aiMsg]);
+      setMessages((prev) => prev.map((m) => (m.id === pendingId ? aiMsg : m)));
       sounds.playActionClick();
     } catch (err: unknown) {
+      // Drop the pending bubble on failure/abort — nothing partial is saved.
+      setMessages((prev) => prev.filter((m) => !m.id.startsWith("pending-")));
       if (err instanceof Error && err.name === "AbortError") {
         toast.info("Generation stopped");
       } else {
@@ -807,7 +862,9 @@ function AiPage() {
                   <div
                     className={cn(
                       "flex size-7 sm:size-8 shrink-0 items-center justify-center rounded-full text-xs font-bold shadow-xs",
-                      m.role === "user" ? "bg-slate-900 text-white" : "bg-[#7C5CFC]/15 text-[#7C5CFC]",
+                      m.role === "user"
+                        ? "bg-slate-900 text-white"
+                        : "bg-[#7C5CFC]/15 text-[#7C5CFC]",
                     )}
                   >
                     {m.role === "user" ? (
@@ -829,6 +886,9 @@ function AiPage() {
                     {m.role === "assistant" ? (
                       <div>
                         <MarkdownContent content={m.content} />
+                        {loading && m.id.startsWith("pending-") && m.content.length > 0 && (
+                          <span className="ml-0.5 inline-block h-3.5 w-[2px] animate-pulse rounded-full bg-[#7C5CFC] align-middle" />
+                        )}
 
                         {/* Copy & Status Bar */}
                         <div className="mt-2.5 pt-2 flex items-center justify-between border-t border-border/40 text-[10.5px] text-muted-foreground">
@@ -861,32 +921,32 @@ function AiPage() {
             </AnimatePresence>
 
             {/* Typing indicator */}
-            <AnimatePresence>
-              {loading && <TypingIndicator onStop={handleStop} />}
-            </AnimatePresence>
+            <AnimatePresence>{loading && <TypingIndicator onStop={handleStop} />}</AnimatePresence>
 
             {/* Follow-up Suggestion Chips (after last assistant reply when not loading) */}
-            {!loading && messages.length > 0 && messages[messages.length - 1].role === "assistant" && (
-              <motion.div
-                initial={{ opacity: 0, y: 6 }}
-                animate={{ opacity: 1, y: 0 }}
-                className="pt-1.5 pl-8 sm:pl-10 flex flex-wrap gap-1.5"
-              >
-                {defaultFollowUps.map((prompt) => (
-                  <button
-                    key={prompt}
-                    onClick={() => {
-                      sounds.playClick();
-                      handleSend(prompt);
-                    }}
-                    className="tap inline-flex items-center gap-1 rounded-full border border-[#7C5CFC]/25 bg-white/90 px-2.5 py-1 text-[11px] font-medium text-[#7C5CFC] hover:bg-[#7C5CFC]/10 active:scale-95 transition-all shadow-2xs"
-                  >
-                    <Zap className="size-3" />
-                    <span>{prompt}</span>
-                  </button>
-                ))}
-              </motion.div>
-            )}
+            {!loading &&
+              messages.length > 0 &&
+              messages[messages.length - 1].role === "assistant" && (
+                <motion.div
+                  initial={{ opacity: 0, y: 6 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  className="pt-1.5 pl-8 sm:pl-10 flex flex-wrap gap-1.5"
+                >
+                  {defaultFollowUps.map((prompt) => (
+                    <button
+                      key={prompt}
+                      onClick={() => {
+                        sounds.playClick();
+                        handleSend(prompt);
+                      }}
+                      className="tap inline-flex items-center gap-1 rounded-full border border-[#7C5CFC]/25 bg-white/90 px-2.5 py-1 text-[11px] font-medium text-[#7C5CFC] hover:bg-[#7C5CFC]/10 active:scale-95 transition-all shadow-2xs"
+                    >
+                      <Zap className="size-3" />
+                      <span>{prompt}</span>
+                    </button>
+                  ))}
+                </motion.div>
+              )}
 
             <div ref={chatEndRef} />
           </div>
@@ -1071,9 +1131,7 @@ function AiPage() {
                     )}
                   />
                   <div className="min-w-0 flex-1">
-                    <p className="text-xs font-bold truncate">
-                      {conv.title || "Health Chat"}
-                    </p>
+                    <p className="text-xs font-bold truncate">{conv.title || "Health Chat"}</p>
                     <p className="text-[10.5px] text-muted-foreground">
                       {conv.created_at
                         ? new Date(conv.created_at).toLocaleDateString("en-US", {

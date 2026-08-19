@@ -24,6 +24,7 @@ import {
   computeWalkStats,
   encodePolyline,
   type GPSPoint,
+  type WalkStats,
 } from "@/lib/walk-gps-utils";
 import { saveWalkSummary, markLocalWalkSummariesDirty } from "@/lib/walk-storage";
 
@@ -926,28 +927,41 @@ export function useWalk(
   // Finish Walk Session
   const finishWalk = useCallback(async () => {
     let sessionObj = activeSession;
-    if (!sessionObj && userId && isNative) {
-      try {
-        const data = await WalkServicePlugin.getStatus();
-        if (data && data.tracking) {
-          sessionObj = {
-            id: data.sessionId || "current_session",
-            user_id: userId,
-            status: "active",
-            duration: data.durationSec || 0,
-            distance: Math.round((data.distanceKm || 0) * 1000),
-            calories: Math.round(data.calories || 0),
-            steps: data.steps || 0,
-            started_at: new Date(Date.now() - (data.durationSec || 0) * 1000).toISOString(),
-            day: todayLocalDate(),
-            path: [],
-            created_at: new Date().toISOString(),
-            updated_at: new Date().toISOString(),
-          };
-          setActiveSession(sessionObj);
+    if (!sessionObj && userId) {
+      if (isNative) {
+        try {
+          const data = await WalkServicePlugin.getStatus();
+          if (data && data.tracking) {
+            sessionObj = {
+              id: data.sessionId || "current_session",
+              user_id: userId,
+              status: "active",
+              duration: data.durationSec || 0,
+              distance: Math.round((data.distanceKm || 0) * 1000),
+              calories: Math.round(data.calories || 0),
+              steps: data.steps || 0,
+              started_at: new Date(Date.now() - (data.durationSec || 0) * 1000).toISOString(),
+              day: todayLocalDate(),
+              path: [],
+              created_at: new Date().toISOString(),
+              updated_at: new Date().toISOString(),
+            };
+            setActiveSession(sessionObj);
+          }
+        } catch (e) {
+          console.warn("Failed to recover active session from native status:", e);
         }
-      } catch (e) {
-        console.warn("Failed to recover active session from native status:", e);
+      }
+      if (!sessionObj) {
+        try {
+          const abandoned = await getAbandonedWalkSessions(userId);
+          if (abandoned.length > 0) {
+            sessionObj = abandoned[0];
+            setActiveSession(sessionObj);
+          }
+        } catch (e) {
+          console.warn("Failed to recover abandoned walk session:", e);
+        }
       }
     }
     if (!sessionObj || !userId) return null;
@@ -1049,9 +1063,23 @@ export function useWalk(
       }));
 
       // Filter GPS noise and compute comprehensive stats
-      const filteredPoints = filterGPSPoints(gpsPoints);
-      const pointsForStats = filteredPoints.length > 0 ? filteredPoints : gpsPoints;
-      const stats = computeWalkStats(pointsForStats, finalDuration);
+      let stats: WalkStats;
+      let pointsForStats: GPSPoint[] = gpsPoints;
+      try {
+        const filteredPoints = filterGPSPoints(gpsPoints);
+        pointsForStats = filteredPoints.length > 0 ? filteredPoints : gpsPoints;
+        stats = computeWalkStats(pointsForStats, finalDuration);
+      } catch (e) {
+        stats = {
+          totalDistance: 0,
+          duration: 0,
+          avgPace: null,
+          avgSpeed: null,
+          elevationGain: null,
+          elevationLoss: null,
+          splits: [],
+        };
+      }
 
       const resolvedDistance = Math.max(stats.totalDistance || 0, finalDistance || 0);
 
