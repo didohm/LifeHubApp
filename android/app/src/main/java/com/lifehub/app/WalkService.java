@@ -148,9 +148,16 @@ public class WalkService extends Service implements LocationListener, SensorEven
     // never stall at 0.00 km while the step counter is counting, and can never
     // drift out of sync with the step counter by being accumulated separately.
     private static final double STRIDE_METERS = 0.762;
-    // MET value for moderate walking pace (kcal per kg per hour). Drives the
-    // calorie formula: MET × weight × duration_hours.
-    private static final double MET_WALKING = 3.5;
+    // A single walking fix must not be allowed to advance the route by an
+    // implausible amount. Provider-reported speed can occasionally lag behind
+    // a bad coordinate, so the inferred speed is validated too (see
+    // onLocationChanged).
+    private static final float MAX_WALKING_SPEED_MPS = 3.0f; // 10.8 km/h
+    private static final float MAX_GPS_DELTA_METERS = 25.0f;
+    private static final double MIN_PACE_SAMPLE_KM = 0.015; // 15 m
+    private static final long MIN_PACE_SAMPLE_MS = 8_000L;
+    private static final double MIN_WALK_PACE_MIN_PER_KM = 3.0;
+    private static final double MAX_WALK_PACE_MIN_PER_KM = 20.0;
     private static final String TAG = "LifeHubWalk";
     
     // PendingIntent flags for Android M+ immutability requirement
@@ -182,6 +189,14 @@ public class WalkService extends Service implements LocationListener, SensorEven
     // CRITICAL: Timestamp of last processed location to prevent GPS/Fused double-counting
     // Both providers can report the same fix with identical timestamp - only process once
     private long lastProcessedLocationTimeMs = 0L;
+    // Pace is an exponentially smoothed, movement-only value. Keeping a
+    // separate anchor means the 1 Hz clock cannot turn a brief early sample
+    // or a stationary pause into a wild pace reading.
+    private double paceAnchorDistanceKm = 0.0;
+    private long paceAnchorElapsedMs = 0L;
+    // GPS-only step estimation is incremental. The old cumulative conversion
+    // could convert an entire GPS history into steps in one callback.
+    private double gpsStepRemainderMeters = 0.0;
 
     private final IBinder binder = new LocalBinder();
     private NotificationManager notificationManager;
@@ -561,7 +576,10 @@ public class WalkService extends Service implements LocationListener, SensorEven
                     double cal = intent.getDoubleExtra(EXTRA_CALORIES, 0.0);
                     double pace = intent.getDoubleExtra(EXTRA_PACE, 0.0);
                     double weight = intent.getDoubleExtra(EXTRA_WEIGHT_KG, 0.0);
-                    if (weight > 0.0) userWeightKg = weight;
+                    // A new session must not inherit the previous user's
+                    // weight. A missing profile weight deliberately disables
+                    // calorie estimation instead of inventing a default.
+                    userWeightKg = Math.max(0.0, weight);
                     startForegroundTracking(km, steps, dur, cal, pace, startPaused);
                     break;
                 }
@@ -569,8 +587,6 @@ public class WalkService extends Service implements LocationListener, SensorEven
                     double km = intent.getDoubleExtra(EXTRA_DISTANCE_KM, -1.0);
                     int steps = intent.getIntExtra(EXTRA_STEPS, -1);
                     long dur = intent.getLongExtra(EXTRA_DURATION_SEC, -1L);
-                    double cal = intent.getDoubleExtra(EXTRA_CALORIES, -1.0);
-                    double pace = intent.getDoubleExtra(EXTRA_PACE, -1.0);
                     double weight = intent.getDoubleExtra(EXTRA_WEIGHT_KG, 0.0);
                     if (weight > 0.0) userWeightKg = weight;
                     if (km >= 0.0) currentDistanceKm = Math.max(currentDistanceKm, km);
@@ -579,8 +595,12 @@ public class WalkService extends Service implements LocationListener, SensorEven
                         durationSec = dur;
                         startedAtMs = SystemClock.elapsedRealtime() - dur * 1000L;
                     }
-                    if (cal >= 0.0) currentCalories = Math.max(currentCalories, cal);
-                    if (pace >= 0.0) currentPace = Math.max(currentPace, pace);
+                    // Distance, steps and duration are the only imported
+                    // recovery values. Pace and calories are derived here so
+                    // a delayed JS snapshot can never inject a spike.
+                    paceAnchorDistanceKm = currentDistanceKm;
+                    paceAnchorElapsedMs = SystemClock.elapsedRealtime();
+                    recomputeDerived();
                     resumeTrackingEnginesIfNeeded();
                     updateNotification();
                     publishUpdate();
@@ -677,18 +697,20 @@ public class WalkService extends Service implements LocationListener, SensorEven
             double km = intent.getDoubleExtra(EXTRA_DISTANCE_KM, -1.0);
             int steps = intent.getIntExtra(EXTRA_STEPS, -1);
             long dur = intent.getLongExtra(EXTRA_DURATION_SEC, -1L);
-            double cal = intent.getDoubleExtra(EXTRA_CALORIES, -1.0);
-            double pace = intent.getDoubleExtra(EXTRA_PACE, -1.0);
             double weight = intent.getDoubleExtra(EXTRA_WEIGHT_KG, 0.0);
             if (weight > 0.0) userWeightKg = weight;
             if (km >= 0.0) currentDistanceKm = Math.max(currentDistanceKm, km);
             if (steps >= 0) currentSteps = Math.max(currentSteps, steps);
             if (dur >= 0L) durationSec = Math.max(durationSec, dur);
-            if (cal >= 0.0) currentCalories = Math.max(currentCalories, cal);
-            if (pace >= 0.0) currentPace = Math.max(currentPace, pace);
         }
         paused = false;
         startedAtMs = SystemClock.elapsedRealtime() - durationSec * 1000L;
+        // A pause must not become part of the next movement-pace sample.
+        paceAnchorDistanceKm = currentDistanceKm;
+        paceAnchorElapsedMs = SystemClock.elapsedRealtime();
+        // Do not trust externally supplied derived metrics on resume. Their
+        // base values were merged above and are recalculated locally.
+        recomputeDerived();
         startTicker();
         resumeTrackingEnginesIfNeeded();
         updateNotification();
@@ -1103,6 +1125,9 @@ public class WalkService extends Service implements LocationListener, SensorEven
             currentCalories = 0.0;
             currentPace = 0.0;
             gpsDistanceKm = 0.0;
+            gpsStepRemainderMeters = 0.0;
+            paceAnchorDistanceKm = 0.0;
+            paceAnchorElapsedMs = 0L;
             updateCount = 0;
             isVehicleFlagged = false;
         } else {
@@ -1116,8 +1141,10 @@ public class WalkService extends Service implements LocationListener, SensorEven
             currentDistanceKm = Math.max(p.getFloat(KEY_DISTANCE, 0f), (float) Math.max(0, distanceKm));
             currentSteps = Math.max(p.getInt(KEY_STEPS, 0), Math.max(0, steps));
             this.durationSec = Math.max(p.getLong(KEY_DURATION, 0L), Math.max(0L, durationSec));
-            currentCalories = Math.max(p.getFloat(KEY_CALORIES, 0f), (float) Math.max(0, calories));
-            currentPace = Math.max(p.getFloat(KEY_PACE, 0f), (float) Math.max(0, pace));
+            // These two fields are derived from the canonical values below.
+            // Never merge a delayed JS display value into the native totals.
+            currentCalories = 0.0;
+            currentPace = 0.0;
             gpsDistanceKm = Math.max(p.getFloat(KEY_GPS_KM, 0f), (float) gpsDistanceKm);
         }
 
@@ -1127,6 +1154,9 @@ public class WalkService extends Service implements LocationListener, SensorEven
         // the notification. A fresh walk starts with paused=false as before.
         paused = startPaused;
         startedAtMs = SystemClock.elapsedRealtime() - this.durationSec * 1000L;
+        paceAnchorDistanceKm = currentDistanceKm;
+        paceAnchorElapsedMs = SystemClock.elapsedRealtime();
+        recomputeDerived();
         lastLocation = null; // first fix after (re)start only sets the baseline
         lastProcessedLocationTimeMs = 0L;
         lastVehicleCheckWallMs = 0L;
@@ -2223,6 +2253,9 @@ public class WalkService extends Service implements LocationListener, SensorEven
         currentCalories = 0.0;
         currentPace = 0.0;
         startedAtMs = 0L;
+        paceAnchorDistanceKm = 0.0;
+        paceAnchorElapsedMs = 0L;
+        gpsStepRemainderMeters = 0.0;
         lastLocation = null;
         lastGpsFixWallMs = 0L;
         lastFixElapsedRealtime = 0L;
@@ -2356,14 +2389,13 @@ public class WalkService extends Service implements LocationListener, SensorEven
         double stepKm = (currentSteps * STRIDE_METERS) / 1000.0;
         currentDistanceKm = Math.max(currentDistanceKm, Math.max(stepKm, gpsDistanceKm));
 
-        double km = currentDistanceKm;
-        currentPace = (km > 0.001 && durationSec > 0) ? (durationSec / 60.0) / km : 0.0;
-        // Calories (kcal): strictly activity-based. Derived from real physical distance and steps walked.
+        updateSmoothedPace();
+        // Calories (kcal): strictly activity-based. Derived from validated
+        // physical distance and the user's actual profile weight.
         // Standard energy expenditure for walking is ~0.755 kcal / kg / km.
         // If the user has not moved (0 km, 0 steps), calories strictly remain 0.
-        double effectiveWeight = userWeightKg > 0.0 ? userWeightKg : 70.0;
-        currentCalories = (currentDistanceKm > 0.001 || currentSteps > 0)
-                ? effectiveWeight * currentDistanceKm * 0.755
+        currentCalories = userWeightKg > 0.0 && currentDistanceKm > 0.001
+                ? userWeightKg * currentDistanceKm * 0.755
                 : 0.0;
 
         Log.d(TAG, "recompute: steps=" + currentSteps
@@ -2374,12 +2406,54 @@ public class WalkService extends Service implements LocationListener, SensorEven
                 + " calories=" + String.format(java.util.Locale.US, "%.1f", currentCalories));
     }
 
-    /** Estimates steps from GPS distance when hardware step sensors are silent. */
-    private void maybeImputeStepsFromGps(long nowWall) {
-        if (isVehicleFlagged || nowWall - lastStepEventWallMs < 15_000L) return;
-        int impliedSteps = (int) Math.round((gpsDistanceKm * 1000.0) / STRIDE_METERS);
-        if (impliedSteps > currentSteps) {
-            currentSteps = impliedSteps;
+    /**
+     * Updates live pace only after a sufficiently long movement sample. Pace
+     * is intentionally not recomputed from total elapsed time on every clock
+     * tick: that made a first step look like a sprint and made standing still
+     * look like a dramatic pace change.
+     */
+    private void updateSmoothedPace() {
+        long nowElapsed = SystemClock.elapsedRealtime();
+        if (paceAnchorElapsedMs <= 0L) {
+            paceAnchorElapsedMs = nowElapsed;
+            paceAnchorDistanceKm = currentDistanceKm;
+            return;
+        }
+
+        double sampleDistanceKm = currentDistanceKm - paceAnchorDistanceKm;
+        long sampleDurationMs = nowElapsed - paceAnchorElapsedMs;
+        if (sampleDistanceKm < MIN_PACE_SAMPLE_KM || sampleDurationMs < MIN_PACE_SAMPLE_MS) return;
+
+        double samplePace = (sampleDurationMs / 60_000.0) / sampleDistanceKm;
+        // Reject GPS/sensor outliers instead of exposing them as a pace spike.
+        if (samplePace >= MIN_WALK_PACE_MIN_PER_KM && samplePace <= MAX_WALK_PACE_MIN_PER_KM) {
+            currentPace = currentPace > 0.0
+                    ? currentPace * 0.75 + samplePace * 0.25
+                    : samplePace;
+        }
+        // Advance the window even for a rejected sample; otherwise the same
+        // bad point would contaminate every subsequent pace calculation.
+        paceAnchorDistanceKm = currentDistanceKm;
+        paceAnchorElapsedMs = nowElapsed;
+    }
+
+    /**
+     * Estimates steps only on devices without any usable motion sensor. The
+     * estimate is based on the newly accepted GPS segment, never the whole
+     * cumulative route, so it cannot produce a late catch-up jump.
+     */
+    private void maybeImputeStepsFromGps(double acceptedMeters, long nowWall) {
+        boolean hasMotionSensor = stepCounterSensor != null
+                || stepDetectorSensor != null
+                || accelerometerSensor != null;
+        if (isVehicleFlagged || hasMotionSensor || acceptedMeters <= 0.0
+                || nowWall - lastStepEventWallMs < 15_000L) return;
+
+        gpsStepRemainderMeters += acceptedMeters;
+        int addedSteps = (int) (gpsStepRemainderMeters / STRIDE_METERS);
+        if (addedSteps > 0) {
+            currentSteps += addedSteps;
+            gpsStepRemainderMeters -= addedSteps * STRIDE_METERS;
         }
     }
 
@@ -2447,14 +2521,17 @@ public class WalkService extends Service implements LocationListener, SensorEven
                 long locationDtMs = lastLocation.getTime() > 0L
                         ? location.getTime() - lastLocation.getTime() : 0L;
                 long effectiveDtMs = locationDtMs > 0L ? locationDtMs : dtMs;
-                float speedMs = location.hasSpeed() ? location.getSpeed()
-                        : (effectiveDtMs > 0L ? (distMeters * 1000f) / (float) effectiveDtMs : 0f);
+                float inferredSpeedMs = effectiveDtMs > 0L
+                        ? (distMeters * 1000f) / (float) effectiveDtMs : 0f;
+                float reportedSpeedMs = location.hasSpeed() ? location.getSpeed() : 0f;
+                // A stale provider speed must not let a bad coordinate pass.
+                float speedMs = Math.max(reportedSpeedMs, inferredSpeedMs);
 
-                boolean distancePlausible = distMeters >= 1.0f && distMeters <= 50.0f;
-                boolean speedPlausible = speedMs <= 7.0f;
+                boolean distancePlausible = distMeters >= 1.0f && distMeters <= MAX_GPS_DELTA_METERS;
+                boolean speedPlausible = speedMs <= MAX_WALKING_SPEED_MPS;
                 boolean stepsFresh = nowWall - lastStepEventWallMs < 15_000L;
-                boolean providerSpeedMoving = location.hasSpeed() && location.getSpeed() >= 0.5f;
-                boolean computedSpeedMoving = speedMs >= 0.5f;
+                boolean providerSpeedMoving = reportedSpeedMs >= 0.5f;
+                boolean computedSpeedMoving = inferredSpeedMs >= 0.5f;
                 boolean motionPlausible = stepsFresh || providerSpeedMoving || computedSpeedMoving;
 
                 checkVehicleMotion(speedMs, nowWall);
@@ -2467,7 +2544,7 @@ public class WalkService extends Service implements LocationListener, SensorEven
                     lastGpsFixWallMs = nowWall;
                     lastFixElapsedRealtime = nowElapsed;
 
-                    maybeImputeStepsFromGps(nowWall);
+                    maybeImputeStepsFromGps(distMeters, nowWall);
                     persistLocationPoint(location, speedMs);
                 }
 

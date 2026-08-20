@@ -270,6 +270,9 @@ function WalkPage() {
   const handleFinish = async () => {
     try {
       sounds.playActionClick();
+      // A live Leaflet map can be in fullscreen above this page. Dismiss it
+      // before finalising so it cannot remain over the completion summary.
+      setShowLiveMap(false);
       const result = await finishWalk();
       if (result) {
         await handleWalkComplete(result);
@@ -727,6 +730,7 @@ function WalkPage() {
             summary={completedSummary}
             session={completedSession}
             onClose={() => {
+              setShowLiveMap(false);
               setCompletedSummary(null);
               setCompletedSession(null);
             }}

@@ -126,6 +126,7 @@ export function useWalk(
   const jsTrailRef = useRef<WalkRoutePoint[]>([]);
   const jsStepsRef = useRef(0);
   const gpsDistanceRef = useRef(0);
+  const gpsStepRemainderRef = useRef(0);
   // Cleanup for the JS step-sensor fallback listener (StepCounter/devicemotion),
   // so applyNativeStatus can tear it down the moment native tracking is live.
   const stepCleanupRef = useRef<(() => void) | null>(null);
@@ -159,6 +160,10 @@ export function useWalk(
   // While true, the native values are the authoritative source for
   // distance/steps and the JS fallback accumulators are paused.
   const nativeActiveRef = useRef(false);
+  // Native events and the 4s status poll can arrive out of order. Keep the
+  // latest snapshot timestamp so an older payload cannot overwrite a newer,
+  // validated metric with a stale value.
+  const lastNativeSnapshotTimestampRef = useRef(0);
   const lastNativeUpdateCountRef = useRef(0);
   // Last native step total — step-only progress (indoor walk with no accepted
   // GPS fixes) must count as motion for the auto-pause gate, otherwise a
@@ -175,19 +180,18 @@ export function useWalk(
   isAutoPausedRef.current = isAutoPaused;
   const isNative = Capacitor.isNativePlatform();
 
-  // Calculate real calories based on actual movement (distance & steps).
+  // Calculate calories from the actual profile weight and validated distance.
   // Standard energy expenditure for walking is ~0.755 kcal / kg / km.
   // When the user has not moved (0 km, 0 steps), calories strictly remain 0.
   useEffect(() => {
     const distKm = distance / 1000;
-    if (distKm <= 0.001 && steps === 0) {
+    if (distKm <= 0.001 || userWeightKg <= 0) {
       setCalories(0);
       return;
     }
-    const weightKg = userWeightKg > 0 ? userWeightKg : 70;
-    const kcal = weightKg * distKm * 0.755;
-    setCalories((prev) => Math.max(prev, Math.round(kcal)));
-  }, [distance, steps, userWeightKg]);
+    const kcal = userWeightKg * distKm * 0.755;
+    setCalories(Math.round(kcal));
+  }, [distance, userWeightKg]);
 
   // Active Timer Loop
   useEffect(() => {
@@ -243,6 +247,16 @@ export function useWalk(
       return;
     }
 
+    if (
+      typeof data.timestamp === "number" &&
+      data.timestamp < lastNativeSnapshotTimestampRef.current
+    ) {
+      return;
+    }
+    if (typeof data.timestamp === "number") {
+      lastNativeSnapshotTimestampRef.current = data.timestamp;
+    }
+
     // The native service is the single source of truth the moment it reports
     // REAL progress (a step or accumulated distance). A service that is
     // tracking but has produced nothing yet (no accepted GPS fix, dead step
@@ -266,7 +280,9 @@ export function useWalk(
         monotonicUpdate(setDuration, data.durationSec);
       }
       if (typeof data.calories === "number" && data.calories >= 0) {
-        monotonicUpdate(setCalories, Math.round(data.calories));
+        // The service derives calories from validated distance and the user's
+        // real weight. Do not retain an older, higher display estimate.
+        setCalories(Math.round(data.calories));
       }
       if (typeof data.paceMinPerKm === "number" && data.paceMinPerKm > 0) {
         setPace(data.paceMinPerKm);
@@ -315,12 +331,8 @@ export function useWalk(
 
       if (data.steps > 0) {
         monotonicUpdate(setSteps, data.steps);
-      } else if (data.distanceKm > 0.01) {
-        // Sensorless / silent-sensor devices: native GPS distance is the only
-        // movement signal, so mirror the native stride estimate (0.762 m/step)
-        // as a floor — the counter must never sit at 0 while distance moves.
-        monotonicUpdate(setSteps, Math.round((data.distanceKm * 1000) / 0.762));
       }
+      // Native step updates remain the sole step source after hand-off.
 
       // Feed native GPS fixes into the JS coordinate trail so the path
       // recorded to Firestore keeps growing even when the WebView watcher
@@ -691,10 +703,14 @@ export function useWalk(
             const dtMs = lastFixTimeRef.current > 0 ? nowTs - lastFixTimeRef.current : 0;
             const reportedSpeed = typeof speed === "number" && Number.isFinite(speed) ? speed : 0;
             const computedSpeed = dtMs > 0 ? (distDelta * 1000) / dtMs : 0;
-            const speedMoving = Math.max(reportedSpeed, computedSpeed) >= 0.5;
+            const effectiveSpeed = Math.max(reportedSpeed, computedSpeed);
+            const speedMoving = effectiveSpeed >= 0.5;
+            const speedPlausible = effectiveSpeed <= 3.0;
             const motionPlausible = stepFresh || speedMoving;
-            // Only add valid human walking speed deltas (1.0m to 35m jump)
-            if (distDelta >= 1.0 && distDelta <= 35 && motionPlausible) {
+            // Only add validated human-walking segments. In particular, use
+            // the inferred speed as well as the provider's reported speed so
+            // a stale low speed cannot admit a GPS jump.
+            if (distDelta >= 1.0 && distDelta <= 25 && speedPlausible && motionPlausible) {
               lastMotionTimeRef.current = Date.now();
               // Native service owns the accumulated distance while it's live;
               // the WebView fallback only fills in before the first native
@@ -708,14 +724,18 @@ export function useWalk(
                     Math.round(jsStepsRef.current * 0.762),
                   ),
                 );
-                // GPS-derived step floor (mirrors the native stride estimate):
-                // on devices where the devicemotion stream never fires
-                // (permission denied / unsupported), steps still track the
-                // distance instead of freezing at 0.
-                const impliedSteps = Math.round(gpsDistanceRef.current / 0.762);
-                if (impliedSteps > jsStepsRef.current) {
-                  jsStepsRef.current = impliedSteps;
-                  setSteps(impliedSteps);
+                // Only estimate steps when the motion sensor is genuinely
+                // silent, and convert this accepted segment rather than the
+                // whole GPS history. That prevents a delayed GPS fix from
+                // becoming a large step-count catch-up jump.
+                if (!stepFresh) {
+                  gpsStepRemainderRef.current += distDelta;
+                  const estimatedSteps = Math.floor(gpsStepRemainderRef.current / 0.762);
+                  if (estimatedSteps > 0) {
+                    gpsStepRemainderRef.current -= estimatedSteps * 0.762;
+                    jsStepsRef.current += estimatedSteps;
+                    monotonicUpdate(setSteps, jsStepsRef.current);
+                  }
                 }
               }
               jsTrailRef.current.push(currentPoint);
@@ -824,6 +844,8 @@ export function useWalk(
       jsTrailRef.current = [];
       jsStepsRef.current = 0;
       gpsDistanceRef.current = 0;
+      gpsStepRemainderRef.current = 0;
+      lastNativeSnapshotTimestampRef.current = 0;
 
       // Seed initial location immediately if available
       if (typeof window !== "undefined" && "geolocation" in navigator) {
@@ -1230,6 +1252,8 @@ export function useWalk(
       jsTrailRef.current = [];
       jsStepsRef.current = 0;
       gpsDistanceRef.current = 0;
+      gpsStepRemainderRef.current = 0;
+      lastNativeSnapshotTimestampRef.current = 0;
       stepCleanupRef.current?.();
       stepCleanupRef.current = null;
       Notifications.stopWalkForeground();
@@ -1292,6 +1316,8 @@ export function useWalk(
     jsTrailRef.current = [];
     jsStepsRef.current = 0;
     gpsDistanceRef.current = 0;
+    gpsStepRemainderRef.current = 0;
+    lastNativeSnapshotTimestampRef.current = 0;
     stepCleanupRef.current?.();
     stepCleanupRef.current = null;
     Notifications.stopWalkForeground();

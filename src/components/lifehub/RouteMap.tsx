@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, useMemo } from "react";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
-import { Maximize2, Minimize2, Layers, MapPin, Navigation } from "lucide-react";
+import { Check, Maximize2, Minimize2, Layers, MapPin, Navigation } from "lucide-react";
 import {
   decodePolyline,
   haversineDistance,
@@ -357,6 +357,23 @@ export default function RouteMap({
       style={{ height: isFullscreen ? "100vh" : height, width: "100%" }}
     >
       <div ref={containerRef} className="h-full w-full z-0" />
+
+      {/* A fullscreen map covers its parent dialog, including the dialog's
+          Done button. Keep an equivalent action within this top layer so the
+          user can reliably return to the activity summary. */}
+      {isFullscreen && (
+        <button
+          type="button"
+          onClick={() => {
+            setIsFullscreen(false);
+            setTimeout(() => mapRef.current?.invalidateSize(), 150);
+          }}
+          className="absolute top-3 left-3 z-20 inline-flex items-center gap-1.5 rounded-full border border-slate-200/60 bg-white/90 px-3 py-1.5 text-[11px] font-black text-[#1E293B] shadow-md backdrop-blur-md transition-all hover:bg-white active:scale-95"
+          aria-label="Done viewing route map"
+        >
+          <Check className="size-3.5 text-[#FC5200]" /> Done
+        </button>
+      )}
 
       {/* Map Header Floating Overlay / Controls */}
       <div className="absolute top-3 right-3 z-10 flex items-center gap-1.5">
