@@ -97,11 +97,12 @@ the APK; without the endpoint the assistant uses the built-in engine.
 
 ### Known caveats
 
-- **Google sign-in**: `signInWithPopup` works in browsers but may fail inside
-  the Android WebView (`auth/popup-blocked`, since `window.open` is not
-  supported there). If on-device testing shows this, switch to the native
-  `@capacitor-firebase/authentication` plugin (recommended) or a
-  redirect-based flow. Validate on a real device or emulator.
+- **Google sign-in**: browsers use Firebase's redirect flow, which avoids
+  popup credential failures in Android browsers. The Capacitor Android/iOS app
+  uses the native `@capacitor-firebase/authentication` plugin instead; do not
+  switch its WebView to the Firebase JS redirect flow. Register the Android
+  app's SHA-1/SHA-256 fingerprints in Firebase and keep
+  `google-services.json` current.
 - Web content is served from `https://localhost` in the WebView; keep Firebase
   auth domain/reCAPTCHA settings compatible with that origin.
 - **Android walk tracking** uses a foreground service (`WalkService`) with a

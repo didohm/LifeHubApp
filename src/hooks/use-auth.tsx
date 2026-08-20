@@ -10,8 +10,9 @@ import {
 import { Capacitor } from "@capacitor/core";
 import { FirebaseAuthentication } from "@capacitor-firebase/authentication";
 import {
+  getRedirectResult,
   onAuthStateChanged,
-  signInWithPopup,
+  signInWithRedirect,
   signInWithCredential,
   GoogleAuthProvider,
   signOut as firebaseSignOut,
@@ -46,7 +47,10 @@ interface AuthContextType {
    */
   isNewUser: boolean;
   isFirebaseConfigured: boolean;
-  signInWithGoogle: () => Promise<void>;
+  /** Starts a browser redirect, or completes immediately for native sign-in. */
+  signInWithGoogle: () => Promise<"redirect" | "complete">;
+  /** Error returned after the browser comes back from Google sign-in. */
+  authError: string | null;
   logout: () => Promise<void>;
   updateUserField: <K extends keyof User>(key: K, value: User[K]) => void;
 }
@@ -81,7 +85,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // True only while the Firebase auth state is unknown. The moment auth
   // resolves (signed in OR out) we stop loading — Firestore/profile data is
   // fetched in the background and never blocks rendering.
-  const [loading, setLoading] = useState<boolean>(true);
+  const [authLoading, setAuthLoading] = useState<boolean>(true);
+  // Consume any Google redirect before treating the user as signed out.
+  // This avoids lost redirect state on slower Android browsers.
+  const [redirectResultLoading, setRedirectResultLoading] = useState<boolean>(
+    () => !Capacitor.isNativePlatform(),
+  );
+  const [authError, setAuthError] = useState<string | null>(null);
+  const loading = authLoading || redirectResultLoading;
   // False only for the brief moment between auth resolution and the Firestore
   // profile read finishing. The root gate waits for this before deciding
   // whether onboarding is needed, so existing users with a saved date of
@@ -127,7 +138,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const mapped = mapFirebaseUser(fbUser, readCachedProfile());
       setFirebaseUser(fbUser);
       setUser(mapped);
-      setLoading(false);
+      setAuthLoading(false);
       cacheProfile(mapped);
       // Cache + preload the real photo so every avatar renders instantly
       // (no placeholder flash) on this and future launches.
@@ -210,7 +221,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       } else {
         setFirebaseUser(null);
         setUser(null);
-        setLoading(false); // auth resolved: signed out → straight to Sign In
+        setAuthLoading(false); // auth resolved: signed out → straight to Sign In
         setProfileReady(true);
         setIsNewUser(false);
       }
@@ -219,7 +230,39 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => unsubscribe();
   }, [publishUser, syncProfileToFirestore]);
 
+  useEffect(() => {
+    // Capacitor's native Google Sign-In returns directly to the app. Its
+    // callback is handled in signInWithGoogle(), not through the WebView.
+    if (Capacitor.isNativePlatform()) return;
+
+    let active = true;
+    void getRedirectResult(auth)
+      .then((result) => {
+        // onAuthStateChanged owns publishing and Firestore profile sync. Read
+        // this result to finalize Firebase's redirect state and retain the
+        // provider photo immediately after returning from Google.
+        if (result?.user.photoURL) {
+          cachePhotoUrl(result.user.photoURL);
+          preloadPhoto(result.user.photoURL);
+        }
+      })
+      .catch((error: any) => {
+        console.error("[Auth] Google redirect sign-in failed:", error);
+        if (active) {
+          setAuthError(error?.message || "Google sign-in failed. Please try again.");
+        }
+      })
+      .finally(() => {
+        if (active) setRedirectResultLoading(false);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, []);
+
   const signInWithGoogle = useCallback(async () => {
+    setAuthError(null);
     if (Capacitor.isNativePlatform()) {
       // Native flow (Android/iOS): Google Sign-In runs outside the WebView via
       // Google Play services through @capacitor-firebase/authentication. The
@@ -251,20 +294,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // Open the app immediately — profile/Firestore sync happens in background.
       publishUser(fbUser);
       void syncProfileToFirestore(fbUser);
+      return "complete" as const;
     } else {
-      // Web flow (browser): the popup flow works fine outside the WebView.
+      // Browser flow: redirects work where popups are blocked or lose their
+      // credential state, which affects some Android browsers.
       const provider = new GoogleAuthProvider();
       provider.setCustomParameters({ prompt: "select_account" });
-      const userCredential = await signInWithPopup(auth, provider);
-      const fbUser = userCredential.user;
-      if (fbUser?.photoURL) {
-        cachePhotoUrl(fbUser.photoURL);
-        preloadPhoto(fbUser.photoURL);
-      }
-      if (fbUser) {
-        publishUser(fbUser);
-        void syncProfileToFirestore(fbUser);
-      }
+      await signInWithRedirect(auth, provider);
+      // The browser normally unloads before this resolves. On return,
+      // getRedirectResult() above consumes the result exactly once.
+      return "redirect" as const;
     }
   }, [publishUser, syncProfileToFirestore]);
 
@@ -305,6 +344,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       isNewUser,
       isFirebaseConfigured,
       signInWithGoogle,
+      authError,
       logout,
       updateUserField,
     }),
@@ -315,6 +355,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       profileReady,
       isNewUser,
       signInWithGoogle,
+      authError,
       logout,
       updateUserField,
     ],

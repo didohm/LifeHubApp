@@ -12,7 +12,7 @@ export const Route = createFileRoute("/auth")({
 });
 
 function AuthPage() {
-  const { user, loading, isFirebaseConfigured, signInWithGoogle } = useAuth();
+  const { user, loading, isFirebaseConfigured, signInWithGoogle, authError } = useAuth();
   const navigate = useNavigate();
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -23,6 +23,13 @@ function AuthPage() {
       navigate({ to: "/" });
     }
   }, [user, loading, navigate]);
+
+  useEffect(() => {
+    if (authError) {
+      setError(authError);
+      setSubmitting(false);
+    }
+  }, [authError]);
 
   // While auth state is unknown, the root gate owns the splash. Here we
   // render nothing — no loading screen, no flash of the Sign In page.
@@ -53,8 +60,12 @@ function AuthPage() {
     setError("");
     setSubmitting(true);
     try {
-      await signInWithGoogle();
-      navigate({ to: "/" });
+      const outcome = await signInWithGoogle();
+      // Browser sign-in is completed by getRedirectResult() after Google
+      // returns to this page. Only native sign-in completes in-place.
+      if (outcome === "complete") {
+        navigate({ to: "/" });
+      }
     } catch (err: any) {
       const message = (err?.message || "").toLowerCase();
       const cancelled =
@@ -65,8 +76,8 @@ function AuthPage() {
         message.includes("cancelled");
       if (cancelled) {
         setError("Sign-in was cancelled. Please try again.");
-      } else if (err.code === "auth/popup-blocked") {
-        setError("Pop-up was blocked by your browser. Please allow pop-ups for this site.");
+      } else if (err.code === "auth/redirect-cancelled-by-user") {
+        setError("Sign-in was cancelled. Please try again.");
       } else {
         setError(err.message || "Google sign-in failed. Please try again.");
       }
