@@ -316,6 +316,7 @@ export async function generateAssistantReply(options: AssistantOptions): Promise
 
   // 2) Retrieve FRESH data at request time (never a stale page-load snapshot)
   const data = await retrieveForPlan(userId, plan);
+  if (signal?.aborted) throw new DOMException("Generation stopped", "AbortError");
 
   // 3) Optional external model — gets ONLY the fetched slice, never the whole account.
   // The call goes through the server-side proxy (/api/assistant), which holds the
@@ -371,12 +372,16 @@ export async function generateAssistantReply(options: AssistantOptions): Promise
         if (typeof reply === "string" && reply.trim()) return reply.trim();
       }
     } catch (err) {
+      // An explicit user stop must never fall through to the local engine and
+      // produce a reply after the UI has said generation was cancelled.
+      if (signal?.aborted) throw err;
       // Fall through to the built-in engine.
       console.warn("Assistant external model unavailable, using built-in engine:", err);
     }
   }
 
   // 4) Built-in engine: answers built ONLY from the freshly retrieved data
+  if (signal?.aborted) throw new DOMException("Generation stopped", "AbortError");
   const reply = buildBuiltInReply(prompt, data);
   onChunk?.(reply);
   return reply;

@@ -126,6 +126,11 @@ function getGreeting(): string {
   return "Good evening";
 }
 
+function conversationTitle(prompt: string): string {
+  const normalized = prompt.replace(/\s+/g, " ").trim();
+  return normalized.length > 56 ? `${normalized.slice(0, 56).trimEnd()}…` : normalized;
+}
+
 // ─── Markdown Renderer (High Performance & Responsive) ───────────────
 function MarkdownContent({ content }: { content: string }) {
   const [copiedCodeIdx, setCopiedCodeIdx] = useState<number | null>(null);
@@ -430,23 +435,19 @@ function AiPage() {
   const hasConversation = messages.length > 0;
   const isTyping = isKeyboardOpen || isInputFocused || isLocalFocused;
 
-  // Load conversations
+  // Load saved conversations. A new conversation is created only after the
+  // user sends a message, so simply opening this page never adds empty history.
   const loadConvs = useCallback(async () => {
     if (!user) return;
     try {
       const convs = await getAiConversations(user.id);
       setConversations(convs);
-      if (convs.length > 0 && !activeConvId) {
-        setActiveConvId(convs[0].id);
-      } else if (convs.length === 0) {
-        const newConv = await createAiConversation(user.id, "Health Chat");
-        setConversations([newConv]);
-        setActiveConvId(newConv.id);
-      }
-    } catch {
-      // silent
+      setActiveConvId((current) => current ?? convs[0]?.id ?? null);
+    } catch (err) {
+      console.error("Failed to load conversations:", err);
+      toast.error("Couldn't load your chat history. Please try again.");
     }
-  }, [user, activeConvId]);
+  }, [user]);
 
   useEffect(() => {
     if (user) loadConvs();
@@ -454,20 +455,40 @@ function AiPage() {
 
   // Load messages for active conversation
   useEffect(() => {
-    if (activeConvId && user) {
-      getAiMessages(activeConvId, user.id).then((msgs) => {
+    // The active conversation can be created on the first send. Local state
+    // owns that in-flight exchange; a concurrent Firestore read could return
+    // before the new message is written and overwrite the visible thread.
+    if (loading) return;
+    if (!activeConvId || !user) {
+      setMessages([]);
+      return;
+    }
+
+    let active = true;
+    void getAiMessages(activeConvId, user.id)
+      .then((msgs) => {
+        if (!active) return;
         setMessages(msgs);
         if (msgs.length > 0) {
           setTimeout(() => {
-            chatEndRef.current?.scrollIntoView({ behavior: "instant" });
+            if (active) chatEndRef.current?.scrollIntoView({ behavior: "instant" });
           }, 60);
         } else if (scrollContainerRef.current) {
           // Keep empty state scrolled to top
           scrollContainerRef.current.scrollTop = 0;
         }
+      })
+      .catch((err) => {
+        if (active) {
+          console.error("Failed to load messages:", err);
+          toast.error("Couldn't load this conversation. Please try again.");
+        }
       });
-    }
-  }, [activeConvId, user]);
+
+    return () => {
+      active = false;
+    };
+  }, [activeConvId, user, loading]);
 
   // Scroll detection for "Jump to Bottom" button
   const handleScroll = () => {
@@ -510,7 +531,7 @@ function AiPage() {
   // ─── Send Message ──────────────────────────────────────────────
   const handleSend = async (customPrompt?: string) => {
     const promptToSend = customPrompt || inputPrompt.trim();
-    if (!promptToSend || !user || !activeConvId) return;
+    if (!promptToSend || !user) return;
     if (loading) return;
 
     setInputPrompt("");
@@ -523,7 +544,15 @@ function AiPage() {
     abortControllerRef.current = controller;
 
     try {
-      const userMsg = await addAiMessage(activeConvId, "user", promptToSend, user.id);
+      let conversationId = activeConvId;
+      if (!conversationId) {
+        const newConversation = await createAiConversation(user.id, conversationTitle(promptToSend));
+        conversationId = newConversation.id;
+        setConversations((prev) => [newConversation, ...prev]);
+        setActiveConvId(conversationId);
+      }
+
+      const userMsg = await addAiMessage(conversationId, "user", promptToSend, user.id);
       setMessages((prev) => [...prev, userMsg]);
 
       // History snapshot taken BEFORE the pending bubble is added, so the
@@ -537,7 +566,7 @@ function AiPage() {
       const pendingId = `pending-${Date.now()}`;
       const pendingMsg: AiMessage = {
         id: pendingId,
-        conversation_id: activeConvId,
+        conversation_id: conversationId,
         role: "assistant",
         content: "",
         created_at: new Date().toISOString(),
@@ -565,8 +594,17 @@ function AiPage() {
       });
 
       // Persist the finished reply and swap it in for the pending bubble.
-      const aiMsg = await addAiMessage(activeConvId, "assistant", replyText, user.id);
+      const aiMsg = await addAiMessage(conversationId, "assistant", replyText, user.id);
       setMessages((prev) => prev.map((m) => (m.id === pendingId ? aiMsg : m)));
+      setConversations((prev) =>
+        prev
+          .map((conversation) =>
+            conversation.id === conversationId
+              ? { ...conversation, updated_at: aiMsg.created_at }
+              : conversation,
+          )
+          .sort((a, b) => b.updated_at.localeCompare(a.updated_at)),
+      );
       sounds.playActionClick();
     } catch (err: unknown) {
       // Drop the pending bubble on failure/abort — nothing partial is saved.
@@ -583,26 +621,21 @@ function AiPage() {
   };
 
   // ─── New Conversation ──────────────────────────────────────────
-  const handleNewChat = async () => {
-    if (!user) return;
-    try {
-      const newConv = await createAiConversation(user.id, "Health Chat");
-      setConversations((prev) => [newConv, ...prev]);
-      setActiveConvId(newConv.id);
-      setMessages([]);
-      setHistoryModalOpen(false);
-      if (scrollContainerRef.current) {
-        scrollContainerRef.current.scrollTop = 0;
-      }
-      toast.success("New conversation started");
-    } catch {
-      toast.error("Failed to start new chat");
+  const handleNewChat = () => {
+    if (loading) return;
+    setActiveConvId(null);
+    setMessages([]);
+    setInputPrompt("");
+    setHistoryModalOpen(false);
+    if (scrollContainerRef.current) {
+      scrollContainerRef.current.scrollTop = 0;
     }
+    toast.success("New conversation started");
   };
 
   // ─── Delete Conversation ───────────────────────────────────────
   const handleDeleteChat = async (id: string) => {
-    if (!user) return;
+    if (!user || loading) return;
     try {
       await deleteAiConversation(id, user.id);
       const updated = conversations.filter((c) => c.id !== id);
@@ -610,11 +643,7 @@ function AiPage() {
       if (activeConvId === id) {
         const nextActive = updated.length > 0 ? updated[0].id : null;
         setActiveConvId(nextActive);
-        if (nextActive) {
-          getAiMessages(nextActive, user.id).then((msgs) => setMessages(msgs));
-        } else {
-          setMessages([]);
-        }
+        setMessages([]);
       }
       setDeleteConfirmId(null);
       toast.success("Conversation deleted");
@@ -721,6 +750,7 @@ function AiPage() {
             }}
             aria-label="New Conversation"
             title="New Chat"
+            disabled={loading}
             className="tap flex size-9 items-center justify-center rounded-full bg-gradient-to-br from-[#7C5CFC] to-[#906FFA] shadow-sm text-white hover:opacity-95 active:scale-95"
           >
             <Plus className="size-4" />
@@ -1081,6 +1111,7 @@ function AiPage() {
               sounds.playActionClick();
               handleNewChat();
             }}
+            disabled={loading}
             className="tap w-full flex items-center justify-center gap-2 rounded-2xl bg-[#7C5CFC] py-2.5 text-xs font-bold text-white shadow-xs hover:bg-[#6C4CE8] transition-colors"
           >
             <Plus className="size-4" />
@@ -1118,10 +1149,12 @@ function AiPage() {
               >
                 <button
                   onClick={() => {
+                    if (loading) return;
                     sounds.playClick();
                     setActiveConvId(conv.id);
                     setHistoryModalOpen(false);
                   }}
+                  disabled={loading}
                   className="flex-1 flex items-center gap-2.5 text-left min-w-0"
                 >
                   <MessageSquare
@@ -1146,8 +1179,10 @@ function AiPage() {
                 <button
                   onClick={(e) => {
                     e.stopPropagation();
+                    if (loading) return;
                     setDeleteConfirmId(conv.id);
                   }}
+                  disabled={loading}
                   className="tap flex size-8 items-center justify-center rounded-full text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
                   aria-label="Delete conversation"
                 >
@@ -1191,6 +1226,7 @@ function AiPage() {
             </button>
             <button
               onClick={() => deleteConfirmId && handleDeleteChat(deleteConfirmId)}
+              disabled={loading}
               className="tap flex-1 rounded-xl bg-destructive px-3 py-2 text-xs font-bold text-destructive-foreground hover:bg-destructive/90 shadow-xs"
             >
               Delete

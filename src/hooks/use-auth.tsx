@@ -15,12 +15,18 @@ import {
   signInWithRedirect,
   signInWithCredential,
   GoogleAuthProvider,
+  deleteUser,
   signOut as firebaseSignOut,
   User as FirebaseUser,
 } from "firebase/auth";
 import { auth, isFirebaseConfigured } from "../lib/firebase";
 import { User } from "../lib/types";
-import { getUserProfile, updateUserProfile, userProfileExists } from "../lib/api";
+import {
+  deleteUserAccount,
+  getUserProfile,
+  updateUserProfile,
+  userProfileExists,
+} from "../lib/api";
 import {
   cachePhotoUrl,
   clearPhotoCache,
@@ -47,10 +53,12 @@ interface AuthContextType {
    */
   isNewUser: boolean;
   isFirebaseConfigured: boolean;
-  /** Starts a browser redirect, or completes immediately for native sign-in. */
-  signInWithGoogle: () => Promise<"redirect" | "complete">;
+  /** Starts the Google sign-in flow. */
+  signInWithGoogle: () => Promise<void>;
   /** Error returned after the browser comes back from Google sign-in. */
   authError: string | null;
+  /** Permanently removes the signed-in user's LifeHub data and Firebase account. */
+  deleteAccount: () => Promise<void>;
   logout: () => Promise<void>;
   updateUserField: <K extends keyof User>(key: K, value: User[K]) => void;
 }
@@ -292,9 +300,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         preloadPhoto(fbUser.photoURL);
       }
       // Open the app immediately — profile/Firestore sync happens in background.
-      publishUser(fbUser);
-      void syncProfileToFirestore(fbUser);
-      return "complete" as const;
+      // onAuthStateChanged publishes the user and syncs their profile. Doing
+      // that work here as well caused duplicate reads and profile writes.
+      return;
     } else {
       // Browser flow: redirects work where popups are blocked or lose their
       // credential state, which affects some Android browsers.
@@ -303,9 +311,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       await signInWithRedirect(auth, provider);
       // The browser normally unloads before this resolves. On return,
       // getRedirectResult() above consumes the result exactly once.
-      return "redirect" as const;
     }
-  }, [publishUser, syncProfileToFirestore]);
+  }, []);
 
   const logout = useCallback(async () => {
     await firebaseSignOut(auth);
@@ -314,6 +321,41 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         await FirebaseAuthentication.signOut();
       } catch (err) {
         console.warn("Native sign-out failed:", err);
+      }
+    }
+    clearPhotoCache();
+    if (typeof window !== "undefined") {
+      localStorage.removeItem(USER_PROFILE_CACHE_KEY);
+    }
+    setUser(null);
+    setFirebaseUser(null);
+    setProfileReady(true);
+    setIsNewUser(false);
+  }, []);
+
+  const deleteAccount = useCallback(async () => {
+    const currentUser = auth.currentUser;
+    if (!currentUser) throw new Error("You are no longer signed in.");
+
+    // Firebase requires a recent login before deleting the authentication
+    // account. Check before removing Firestore data to avoid a stale session
+    // leaving a partially completed deletion.
+    const token = await currentUser.getIdTokenResult();
+    const authenticatedAt = Date.parse(token.authTime);
+    if (!Number.isFinite(authenticatedAt) || Date.now() - authenticatedAt > 4 * 60 * 1000) {
+      throw new Error(
+        "For security, sign in again, then delete your account within a few minutes.",
+      );
+    }
+
+    await deleteUserAccount(currentUser.uid);
+    await deleteUser(currentUser);
+
+    if (Capacitor.isNativePlatform()) {
+      try {
+        await FirebaseAuthentication.signOut();
+      } catch (err) {
+        console.warn("Native sign-out after account deletion failed:", err);
       }
     }
     clearPhotoCache();
@@ -345,6 +387,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       isFirebaseConfigured,
       signInWithGoogle,
       authError,
+      deleteAccount,
       logout,
       updateUserField,
     }),
@@ -356,6 +399,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       isNewUser,
       signInWithGoogle,
       authError,
+      deleteAccount,
       logout,
       updateUserField,
     ],

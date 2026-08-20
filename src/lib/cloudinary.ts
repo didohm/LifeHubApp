@@ -209,33 +209,6 @@ export function formatFileSize(bytes: number): string {
 }
 
 /**
- * Extracts public_id from a Cloudinary URL
- * Useful for deletion or transformation operations
- *
- * @param url Cloudinary secure URL
- * @returns Public ID or null if not found
- */
-export function extractPublicId(url: string): string | null {
-  try {
-    const urlParts = url.split("/");
-    const uploadIndex = urlParts.indexOf("upload");
-    if (uploadIndex === -1) return null;
-
-    // Get everything after 'upload' and version (if present)
-    const pathAfterUpload = urlParts.slice(uploadIndex + 1);
-    // Skip version if present (starts with 'v')
-    const startIndex = pathAfterUpload[0]?.startsWith("v") ? 1 : 0;
-
-    // Join remaining parts and remove file extension
-    const publicIdWithExt = pathAfterUpload.slice(startIndex).join("/");
-    const lastDotIndex = publicIdWithExt.lastIndexOf(".");
-    return lastDotIndex > 0 ? publicIdWithExt.substring(0, lastDotIndex) : publicIdWithExt;
-  } catch {
-    return null;
-  }
-}
-
-/**
  * Generates a Cloudinary transformation URL
  *
  * @param publicId Public ID of the asset

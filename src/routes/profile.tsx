@@ -39,7 +39,7 @@ import { sounds } from "@/lib/sound";
 import { Notifications, readReminderSettings } from "@/lib/notifications-integration";
 import { PermissionManager } from "@/lib/permissions";
 import { Capacitor } from "@capacitor/core";
-import { updateUserProfile, deleteUserAccount, getProfileStats, ProfileStats } from "@/lib/api";
+import { updateUserProfile, getProfileStats, ProfileStats } from "@/lib/api";
 import { uploadAvatar, validateFileSize, formatFileSize } from "@/lib/cloudinary";
 import { cn } from "@/lib/utils";
 
@@ -154,7 +154,7 @@ const MenuRow = memo(function MenuRow({
 });
 
 function ProfilePage() {
-  const { user, logout, updateUserField } = useAuth();
+  const { user, logout, updateUserField, deleteAccount } = useAuth();
   const navigate = useNavigate();
 
   const [editModalOpen, setEditModalOpen] = useState(false);
@@ -297,16 +297,15 @@ function ProfilePage() {
     if (!user) return;
     setDeleting(true);
     try {
-      await deleteUserAccount(user.id);
-      await logout();
+      await deleteAccount();
       toast.success("Account deleted successfully.");
       navigate({ to: "/auth" });
-    } catch {
-      toast.error("Could not delete account.");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Could not delete account.");
     } finally {
       setDeleting(false);
     }
-  }, [user, logout, navigate]);
+  }, [user, deleteAccount, navigate]);
 
   const handleLogout = useCallback(async () => {
     await logout();
@@ -836,7 +835,7 @@ function ProfilePage() {
           </div>
           <h3 className="text-base font-extrabold text-foreground">Delete Account?</h3>
           <p className="mt-1 text-xs text-muted-foreground leading-relaxed">
-            This will permanently erase all your health data, medication schedules, walks, workouts, and appointments.
+            This permanently erases your LifeHub data and removes your account. For security, you may need to sign in again first.
           </p>
 
           <div className="mt-5 flex gap-2">

@@ -695,44 +695,39 @@ export async function updateUserProfile(userId: string, data: Partial<User>): Pr
 }
 
 export async function deleteUserAccount(userId: string): Promise<void> {
-  try {
-    const subcollections = [
-      "appointments",
-      "medications",
-      "medication_logs",
-      "bills",
-      "payments",
-      "documents",
-      "todos",
-      "activity_logs",
-      "ai_conversations",
-      "birthdays",
-      "workout_programs",
-      "workouts",
-      "walk_sessions",
-      "water_logs",
-    ];
+  const subcollections = [
+    "appointments",
+    "medications",
+    "medication_logs",
+    "bills",
+    "payments",
+    "documents",
+    "todos",
+    "activity_logs",
+    "ai_conversations",
+    "birthdays",
+    "workout_programs",
+    "workouts",
+    "walk_sessions",
+    "water_logs",
+  ];
 
-    for (const sub of subcollections) {
-      const colRef = collection(db, "users", userId, sub);
-      const snap = await getDocs(colRef);
-      // Nested subcollection (ai_conversations/{id}/messages) must be removed
-      // before its parent conversation doc.
-      if (sub === "ai_conversations") {
-        for (const conv of snap.docs) {
-          const msgsRef = collection(db, "users", userId, sub, conv.id, "messages");
-          const msgsSnap = await getDocs(msgsRef);
-          await Promise.all(msgsSnap.docs.map((m) => deleteDoc(m.ref)));
-        }
+  for (const sub of subcollections) {
+    const colRef = collection(db, "users", userId, sub);
+    const snap = await getDocs(colRef);
+    // Firestore does not cascade deletes. AI messages must be removed before
+    // their parent conversation documents.
+    if (sub === "ai_conversations") {
+      for (const conv of snap.docs) {
+        const msgsRef = collection(db, "users", userId, sub, conv.id, "messages");
+        const msgsSnap = await getDocs(msgsRef);
+        await Promise.all(msgsSnap.docs.map((message) => deleteDoc(message.ref)));
       }
-      await Promise.all(snap.docs.map((d) => deleteDoc(d.ref)));
     }
-
-    const userRef = doc(db, "users", userId);
-    await deleteDoc(userRef);
-  } catch (err) {
-    console.error("Failed to delete user record in Firestore:", err);
+    await Promise.all(snap.docs.map((item) => deleteDoc(item.ref)));
   }
+
+  await deleteDoc(doc(db, "users", userId));
 }
 
 // AI CONVERSATIONS & MESSAGES API

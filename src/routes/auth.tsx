@@ -60,23 +60,19 @@ function AuthPage() {
     setError("");
     setSubmitting(true);
     try {
-      const outcome = await signInWithGoogle();
-      // Browser sign-in is completed by getRedirectResult() after Google
-      // returns to this page. Only native sign-in completes in-place.
-      if (outcome === "complete") {
-        navigate({ to: "/" });
-      }
+      await signInWithGoogle();
+      // The auth-state listener owns navigation after both browser and native
+      // sign-in, which keeps the two flows consistent.
     } catch (err: any) {
       const message = (err?.message || "").toLowerCase();
       const cancelled =
         err?.code === "auth/popup-closed-by-user" ||
         err?.code === "canceled" ||
         err?.code === "sign_in_cancelled" ||
+        err?.code === "auth/redirect-cancelled-by-user" ||
         message.includes("canceled") ||
         message.includes("cancelled");
       if (cancelled) {
-        setError("Sign-in was cancelled. Please try again.");
-      } else if (err.code === "auth/redirect-cancelled-by-user") {
         setError("Sign-in was cancelled. Please try again.");
       } else {
         setError(err.message || "Google sign-in failed. Please try again.");
