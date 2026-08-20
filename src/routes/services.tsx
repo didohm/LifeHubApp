@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import {
   Calendar,
@@ -13,12 +14,15 @@ import {
   Footprints,
   Sunrise,
   ChevronRight,
+  Search,
 } from "lucide-react";
 import { motion } from "framer-motion";
 import { Screen, ScreenHeader } from "@/components/lifehub/Screen";
 import { useData } from "@/lib/data-context";
 import { sounds } from "@/lib/sound";
 import { cn } from "@/lib/utils";
+import { useAuth } from "@/hooks/use-auth";
+import { GlobalSearchModal } from "@/components/lifehub/GlobalSearchModal";
 
 export const Route = createFileRoute("/services")({
   head: () => ({
@@ -176,16 +180,33 @@ const servicesData: ServiceItem[] = [
     iconColor: "text-[#7C5CFC] bg-[#7C5CFC]/15",
     badgeColor: "bg-[#7C5CFC]/10 text-[#7C5CFC]",
     Icon: Activity,
-    getCount: () => "Charts & Trends",
+    getCount: () => "Charts",
   },
 ];
 
 function Services() {
   const data = useData();
+  const { user } = useAuth();
+  const [searchOpen, setSearchOpen] = useState(false);
 
   return (
     <Screen>
-      <ScreenHeader title="Services" subtitle="All daily routines, health & tools" showBack />
+      <ScreenHeader
+        title="Services"
+        subtitle="All daily routines, health & tools"
+        showBack
+        action={
+          <button
+            type="button"
+            onClick={() => setSearchOpen(true)}
+            className="tap flex size-10 items-center justify-center rounded-full border border-black/[0.04] bg-white text-[#12131A] shadow-sm hover:bg-slate-50"
+            aria-label="Search services and items"
+            title="Search"
+          >
+            <Search className="size-5" strokeWidth={2.4} />
+          </button>
+        }
+      />
 
       {/* ════════════════════════════════════════════════════════════
           SERVICES GRID
@@ -206,7 +227,7 @@ function Services() {
                 to={service.to}
                 onClick={() => sounds.playCardClick()}
                 className={cn(
-                  "card-soft tap group relative flex flex-col justify-between p-4 shadow-2xs hover:shadow-md transition-all min-h-[145px] border",
+                  "card-soft tap group relative flex min-h-[150px] flex-col justify-between overflow-hidden border p-4 pr-9 shadow-2xs transition-all hover:-translate-y-0.5 hover:shadow-md",
                   "bg-gradient-to-br",
                   service.gradient,
                 )}
@@ -215,17 +236,17 @@ function Services() {
                   <div className="flex items-center justify-between">
                     <div
                       className={cn(
-                        "flex size-9 items-center justify-center rounded-2xl shadow-2xs transition-transform group-hover:scale-105",
+                        "flex size-11 items-center justify-center rounded-full shadow-sm transition-transform group-hover:scale-105",
                         service.iconColor,
                       )}
                     >
-                      <service.Icon className="size-4.5" />
+                      <service.Icon className="size-5" strokeWidth={2.35} />
                     </div>
 
                     {count && (
                       <span
                         className={cn(
-                          "rounded-full px-2 py-0.5 text-[11px] font-black uppercase tracking-wide shadow-2xs truncate max-w-[80px]",
+                          "rounded-full px-2.5 py-1 text-[10px] font-extrabold uppercase tracking-wide shadow-2xs truncate max-w-[96px]",
                           service.badgeColor,
                         )}
                       >
@@ -236,7 +257,7 @@ function Services() {
 
                   <h3
                     className={cn(
-                      "mt-3 text-sm font-extrabold leading-snug line-clamp-1 group-hover:translate-x-0.5 transition-transform",
+                      "mt-3 text-[15px] font-extrabold leading-snug line-clamp-1 group-hover:translate-x-0.5 transition-transform",
                       isAi ? "text-white" : "text-foreground",
                     )}
                   >
@@ -245,18 +266,34 @@ function Services() {
 
                   <p
                     className={cn(
-                      "mt-1 text-xs leading-snug line-clamp-2",
+                      "mt-1 text-[12px] leading-snug line-clamp-2",
                       isAi ? "text-white/80" : "text-muted-foreground",
                     )}
                   >
                     {service.description}
                   </p>
                 </div>
+
+                <ChevronRight
+                  className={cn(
+                    "absolute right-3.5 top-1/2 size-5 -translate-y-1/2 transition-transform group-hover:translate-x-0.5",
+                    isAi ? "text-white/85" : "text-[#12131A]",
+                  )}
+                  strokeWidth={2.2}
+                />
               </Link>
             </motion.div>
           );
         })}
       </div>
+
+      {user && (
+        <GlobalSearchModal
+          isOpen={searchOpen}
+          onClose={() => setSearchOpen(false)}
+          userId={user.id}
+        />
+      )}
     </Screen>
   );
 }
