@@ -752,10 +752,62 @@ export function DataProvider({ userId, children }: { userId: string | null; chil
   return <DataContext.Provider value={value}>{children}</DataContext.Provider>;
 }
 
+/**
+ * Safe fallback when a component calls useData outside a DataProvider.
+ * This happens during auth redirects (e.g. unauthenticated user briefly
+ * matching a protected route before MainContentGate navigates to /auth) or
+ * if a child renders outside the expected tree due to a stale chunk / SSR
+ * mismatch. Throwing here crashes the whole app; returning empty data lets
+ * the redirect finish gracefully.
+ */
+const EMPTY_DATA_FALLBACK: DataContextValue = {
+  medications: [],
+  medicationLogs: [],
+  medLoading: false,
+  medError: null,
+  addMedication: async () => null,
+  editMedication: async () => null,
+  removeMedication: async () => {},
+  toggleMedication: async () => {},
+  refreshMedications: async () => {},
+  bills: [],
+  payments: [],
+  billLoading: false,
+  billError: null,
+  addBill: async () => null,
+  editBill: async () => null,
+  removeBill: async () => {},
+  payBill: async () => {},
+  refreshBills: async () => {},
+  appointments: [],
+  birthdays: [],
+  appLoading: false,
+  appError: null,
+  refreshAppointments: async () => {},
+  documents: [],
+  docLoading: false,
+  refreshDocuments: async () => {},
+  workoutPrograms: [],
+  workouts: [],
+  walkSessions: [],
+  fitnessLoading: false,
+  refreshFitness: async () => {},
+  activityLogs: [],
+  activityLoading: false,
+  todos: [],
+  todosLoading: false,
+  waterLogs: [],
+  waterLoading: false,
+  refreshAll: async () => {},
+};
+
 export function useData(): DataContextValue {
   const ctx = useContext(DataContext);
   if (!ctx) {
-    throw new Error("useData must be used within a DataProvider");
+    if (import.meta.env.DEV) {
+      console.warn("useData called outside DataProvider — returning empty fallback (auth redirect race)");
+    }
+    return EMPTY_DATA_FALLBACK;
   }
   return ctx;
 }

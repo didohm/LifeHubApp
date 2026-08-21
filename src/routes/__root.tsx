@@ -166,6 +166,20 @@ function AuthLoadingSplash() {
 }
 
 /**
+ * Always-mounted DataProvider wrapper.
+ * Mounting DataProvider at the root (outside the auth gate) guarantees that
+ * `useData()` never throws "must be used within a DataProvider" even when
+ * a protected route briefly matches during an auth redirect race, SSR
+ * hydration mismatch, or a stale chunk (index-B* vs routes-B* hash skew).
+ * When no user is signed in the provider holds empty arrays and no
+ * Firestore listeners — zero cost.
+ */
+function DataProviderGate({ children }: { children: ReactNode }) {
+  const { user } = useAuth();
+  return <DataProvider userId={user?.id ?? null}>{children}</DataProvider>;
+}
+
+/**
  * Auth & Onboarding Gate:
  * Controls root level layout rendering.
  *
@@ -173,8 +187,9 @@ function AuthLoadingSplash() {
  *    the ONLY moment a loading screen is allowed, and it lasts milliseconds.
  * 2. Unauthenticated: renders nothing and redirects immediately to /auth —
  *    no loading screen, no user data is loaded.
- * 3. Authenticated: mounts DataProvider immediately (cached profile shows
- *    instantly); Firestore data streams in the background.
+ * 3. Authenticated: mounted immediately (cached profile shows instantly);
+ *    Firestore data streams in the background via the always-mounted
+ *    DataProviderGate.
  * 4. Brand-new account (no Firestore profile document) with missing DOB:
  *    redirects to /onboarding without flashing the home page. Existing
  *    accounts are NEVER sent to onboarding, even without a saved DOB.
@@ -230,9 +245,10 @@ function MainContentGate() {
     return <AuthLoadingSplash />;
   }
 
-  // 2. Signed out: never mount protected pages or DataProvider. Render nothing
-  //    for the instant the redirect effect takes; the user lands on /auth
-  //    immediately with zero loading screens.
+  // 2. Signed out: never mount protected pages. Render nothing for the
+  //    instant the redirect effect takes; the user lands on /auth
+  //    immediately with zero loading screens. DataProvider is always
+  //    mounted (empty) via DataProviderGate, so useData() never throws.
   if (!user) {
     if (location.pathname === "/auth") {
       return <Outlet />;
@@ -243,22 +259,14 @@ function MainContentGate() {
   // 3. Brand-new account with missing DOB → onboarding (only new users).
   if (shouldOnboard) {
     if (location.pathname === "/onboarding") {
-      return (
-        <DataProvider userId={user.id}>
-          <Outlet />
-        </DataProvider>
-      );
+      return <Outlet />;
     }
     return null;
   }
 
   // 4. Fully authenticated with complete profile → protected routes, data
-  //    loads in the background via Firestore listeners.
-  return (
-    <DataProvider userId={user.id}>
-      <Outlet />
-    </DataProvider>
-  );
+  //    loads in the background via Firestore listeners (DataProviderGate).
+  return <Outlet />;
 }
 
 /**
@@ -283,8 +291,10 @@ function RootComponent() {
 
   return (
     <AuthProvider>
-      <MainContentGate />
-      <NotificationTapListener />
+      <DataProviderGate>
+        <MainContentGate />
+        <NotificationTapListener />
+      </DataProviderGate>
       <Toaster position="top-right" richColors closeButton />
     </AuthProvider>
   );
