@@ -35,7 +35,6 @@ import {
   DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu";
 import { useAuth } from "@/hooks/use-auth";
-import { useAuthGuard } from "@/hooks/use-auth-guard";
 import { useDeleteWithGuard } from "@/hooks/use-delete-with-guard";
 import { useData } from "@/lib/data-context";
 import { createAppointment, updateAppointment, deleteAppointment, todayLocalDate } from "@/lib/api";
@@ -52,7 +51,8 @@ export const Route = createFileRoute("/appointments")({
       { title: "Medical Appointments & Health Sessions — LifeHub" },
       {
         name: "description",
-        content: "Track doctor visits, medical consultations, dental checkups, and therapy sessions.",
+        content:
+          "Track doctor visits, medical consultations, dental checkups, and therapy sessions.",
       },
     ],
   }),
@@ -109,8 +109,7 @@ const QUICK_PRESETS = [
 type FilterTab = "Upcoming" | "Today" | "Completed" | "All";
 
 function AppointmentsPage() {
-  const { user, loading: authLoading } = useAuth();
-  useAuthGuard(user, authLoading);
+  const { user } = useAuth();
 
   const { appointments, appLoading, refreshAppointments } = useData();
 
@@ -1019,7 +1018,10 @@ function AppointmentCard({
             <MoreHorizontal className="size-4" />
           </button>
         </DropdownMenuTrigger>
-        <DropdownMenuContent align="end" className="w-40 rounded-2xl bg-white p-1.5 shadow-lg border border-black/5">
+        <DropdownMenuContent
+          align="end"
+          className="w-40 rounded-2xl bg-white p-1.5 shadow-lg border border-black/5"
+        >
           <DropdownMenuItem onClick={onSelect} className="rounded-xl text-xs font-bold py-2">
             View Details
           </DropdownMenuItem>

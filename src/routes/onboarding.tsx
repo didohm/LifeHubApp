@@ -21,7 +21,7 @@ const MIN_WEIGHT_KG = 30;
 const MAX_WEIGHT_KG = 300;
 
 function OnboardingPage() {
-  const { user, loading: authLoading, isNewUser, updateUserField } = useAuth();
+  const { user, loading: authLoading, profileReady, isNewUser, updateUserField } = useAuth();
   const navigate = useNavigate();
 
   const [dob, setDob] = useState("");
@@ -33,18 +33,20 @@ function OnboardingPage() {
   const todayStr = toDateInputValue();
 
   useEffect(() => {
-    if (authLoading) return;
-    if (!user) {
-      navigate({ to: "/auth" });
-    } else if (user.date_of_birth) {
-      // Already onboarded — skip this screen
-      navigate({ to: "/" });
+    // Delegate unauthenticated redirect to MainContentGate. This effect only
+    // corrects the onboarding-specific case: a user who shouldn't be here.
+    // Must wait for profileReady — otherwise isNewUser is still false and
+    // a new user would be incorrectly bounced to "/".
+    if (authLoading || (user && !profileReady)) return;
+    if (!user) return;
+    if (user.date_of_birth) {
+      // Already onboarded — root gate also does this; replace keeps history clean.
+      navigate({ to: "/", replace: true });
     } else if (!isNewUser) {
-      // The Birthday (Date of Birth) screen is only for brand-new accounts.
-      // Existing users who somehow land here are sent home — never prompted.
-      navigate({ to: "/" });
+      // Existing users are never shown the Birthday screen, even without DOB.
+      navigate({ to: "/", replace: true });
     }
-  }, [authLoading, user, isNewUser, navigate]);
+  }, [authLoading, profileReady, user, isNewUser, navigate]);
 
   const isFuture = dob !== "" && dob > todayStr;
   const isTooOld = dob !== "" && dob < MIN_DATE;
@@ -74,7 +76,7 @@ function OnboardingPage() {
       updateUserField("height", heightNum);
       updateUserField("weight", weightNum);
       toast.success("Welcome to LifeHub! 🎉");
-      navigate({ to: "/" });
+      navigate({ to: "/", replace: true });
     } catch {
       setError("Could not save your profile details. Please try again.");
     } finally {
@@ -82,9 +84,11 @@ function OnboardingPage() {
     }
   };
 
-  // While auth state is unknown render nothing (the root gate owns the splash
-  // — no loading screens after auth is resolved).
-  if (authLoading) return null;
+  // Root gate owns the splash while auth/profile is unknown. Render nothing
+  // during that window — no second loader, no flash.
+  if (authLoading || (user && !profileReady)) return null;
+  // Signed-out: root gate will replace to /auth.
+  if (!user) return null;
 
   return (
     <Screen>

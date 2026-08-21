@@ -24,7 +24,6 @@ import { toast } from "sonner";
 import { Screen, ScreenHeader } from "@/components/lifehub/Screen";
 import { Modal } from "@/components/lifehub/Modal";
 import { useAuth } from "@/hooks/use-auth";
-import { useAuthGuard } from "@/hooks/use-auth-guard";
 import { useDeleteWithGuard } from "@/hooks/use-delete-with-guard";
 import { createDocument, updateDocument, deleteDocument } from "@/lib/api";
 import { DocumentItem } from "@/lib/types";
@@ -121,8 +120,7 @@ export const Route = createFileRoute("/documents")({
 });
 
 function DocumentsPage() {
-  const { user, firebaseUser, loading: authLoading } = useAuth();
-  useAuthGuard(user, authLoading);
+  const { user, firebaseUser } = useAuth();
 
   const { documents, docLoading: loading } = useData();
 

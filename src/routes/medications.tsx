@@ -20,7 +20,6 @@ import { motion, AnimatePresence } from "framer-motion";
 import { Screen, ScreenHeader } from "@/components/lifehub/Screen";
 import { Modal } from "@/components/lifehub/Modal";
 import { useAuth } from "@/hooks/use-auth";
-import { useAuthGuard } from "@/hooks/use-auth-guard";
 import { useDeleteWithGuard } from "@/hooks/use-delete-with-guard";
 import { useData } from "@/lib/data-context";
 import { useHydration } from "@/lib/use-hydration";
@@ -37,8 +36,7 @@ export const Route = createFileRoute("/medications")({
 });
 
 function MedicationsPage() {
-  const { user, loading: authLoading } = useAuth();
-  useAuthGuard(user, authLoading);
+  const { user } = useAuth();
 
   const {
     medications = [],
@@ -252,7 +250,9 @@ function MedicationsPage() {
             />
           </svg>
           <div className="absolute flex flex-col items-center justify-center">
-            <span className="text-3xl font-black text-[#12131A] tracking-tight">{waterGlasses}</span>
+            <span className="text-3xl font-black text-[#12131A] tracking-tight">
+              {waterGlasses}
+            </span>
             <span className="text-[11px] font-bold text-sky-900/80">/ {waterGoal} glasses</span>
             <span className="text-[10px] font-extrabold text-sky-600">{waterPct}%</span>
           </div>
@@ -362,7 +362,11 @@ function MedicationsPage() {
                   )}
                   title={med.taken ? "Mark not taken" : "Mark as taken"}
                 >
-                  {med.taken ? <Check className="size-5 stroke-[3]" /> : <CheckCircle2 className="size-5" />}
+                  {med.taken ? (
+                    <Check className="size-5 stroke-[3]" />
+                  ) : (
+                    <CheckCircle2 className="size-5" />
+                  )}
                 </button>
                 <button
                   onClick={() => openEditModal(med)}
@@ -406,7 +410,9 @@ function MedicationsPage() {
 
         <form onSubmit={handleSave} className="mt-4 space-y-3">
           <div>
-            <label className="text-xs font-bold text-foreground">Medication / Supplement Name</label>
+            <label className="text-xs font-bold text-foreground">
+              Medication / Supplement Name
+            </label>
             <input
               type="text"
               required
@@ -470,7 +476,9 @@ function MedicationsPage() {
           </div>
 
           <div>
-            <label className="text-xs font-bold text-foreground">Special Instructions (optional)</label>
+            <label className="text-xs font-bold text-foreground">
+              Special Instructions (optional)
+            </label>
             <input
               type="text"
               placeholder="e.g. Take with breakfast / after meal"
@@ -531,7 +539,12 @@ function MedicationsPage() {
               >
                 <span className="font-bold text-foreground">Dose marked taken</span>
                 <span className="text-[10px] text-muted-foreground font-semibold">
-                  {l.taken_at ? new Date(l.taken_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "Logged"}
+                  {l.taken_at
+                    ? new Date(l.taken_at).toLocaleTimeString([], {
+                        hour: "2-digit",
+                        minute: "2-digit",
+                      })
+                    : "Logged"}
                 </span>
               </div>
             ))

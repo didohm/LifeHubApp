@@ -18,7 +18,7 @@
   --color-priority-high-soft: oklch(0.95 0.04 25);
   --color-priority-medium: oklch(0.75 0.16 65);
   --color-priority-medium-soft: oklch(0.95 0.04 65);
-  --color-priority-low: oklch(0.70 0.14 235);
+  --color-priority-low: oklch(0.7 0.14 235);
   --color-priority-low-soft: oklch(0.95 0.04 235);
   --shadow-soft: 0 12px 32px -12px oklch(0.14 0.02 265 / 0.12);
   --shadow-pill: 0 14px 34px -10px oklch(0.65 0.21 282 / 0.35);
@@ -95,7 +95,8 @@
 }
 
 @keyframes pulseGlow {
-  0%, 100% {
+  0%,
+  100% {
     opacity: 0.25;
     transform: scale3d(1, 1, 1);
   }
@@ -106,7 +107,8 @@
 }
 
 @keyframes floatSoft {
-  0%, 100% {
+  0%,
+  100% {
     transform: translate3d(0, 0, 0);
   }
   50% {

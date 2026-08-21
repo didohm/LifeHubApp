@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { createFileRoute } from "@tanstack/react-router";
 import { useAuth } from "../hooks/use-auth";
 import { Screen } from "@/components/lifehub/Screen";
 import hero3d from "@/assets/hero-3d.webp";
@@ -13,16 +13,9 @@ export const Route = createFileRoute("/auth")({
 
 function AuthPage() {
   const { user, loading, isFirebaseConfigured, signInWithGoogle, authError } = useAuth();
-  const navigate = useNavigate();
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const reduceMotion = useReducedMotion();
-
-  useEffect(() => {
-    if (!loading && user) {
-      navigate({ to: "/" });
-    }
-  }, [user, loading, navigate]);
 
   useEffect(() => {
     if (authError) {
@@ -31,11 +24,20 @@ function AuthPage() {
     }
   }, [authError]);
 
-  // While auth state is unknown, the root gate owns the splash. Here we
-  // render nothing — no loading screen, no flash of the Sign In page.
+  // Vercel best-practice: AuthPage is purely presentational.
+  // Redirect ownership belongs exclusively to MainContentGate in __root.tsx,
+  // which already waits for `profileReady` before choosing "/" vs "/onboarding".
+  // Duplicated `navigate({to:"/"})` here previously caused:
+  //  - new users to be sent to "/" instead of "/onboarding"
+  //  - push (not replace) navigation leaving a back-button loop to /auth
+  //  - race where this effect and the root gate both navigated simultaneously.
+  // While auth is resolving, the root gate shows the splash. Here we render
+  // nothing — no second loader, no flash.
   if (loading) return null;
 
-  // After loading, if user exists, don't render anything (redirect in progress)
+  // Authenticated: the root gate will replace to "/" (existing user) or
+  // "/onboarding" (new user). Render nothing for the instant the replace
+  // is in flight.
   if (user) return null;
 
   if (!isFirebaseConfigured) {

@@ -27,7 +27,6 @@ import { toast } from "sonner";
 import { Screen, ScreenHeader } from "@/components/lifehub/Screen";
 import { WeeklySplitGrid } from "@/components/lifehub/WeeklySplitGrid";
 import { useAuth } from "@/hooks/use-auth";
-import { useAuthGuard } from "@/hooks/use-auth-guard";
 import { useData } from "@/lib/data-context";
 import { completeDayWorkout, activateWorkoutProgram, DAY_LABELS } from "@/lib/api";
 import { DayKey } from "@/lib/types";
@@ -60,8 +59,7 @@ export const Route = createFileRoute("/workouts")({
 });
 
 function WorkoutsPage() {
-  const { user, loading: authLoading } = useAuth();
-  useAuthGuard(user, authLoading);
+  const { user } = useAuth();
 
   const { workouts, workoutPrograms, fitnessLoading, refreshFitness } = useData();
 

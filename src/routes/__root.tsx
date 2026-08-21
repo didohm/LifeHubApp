@@ -8,7 +8,7 @@ import {
   HeadContent,
   Scripts,
 } from "@tanstack/react-router";
-import { useEffect, type ReactNode } from "react";
+import { useEffect, useMemo, type ReactNode } from "react";
 import { Toaster } from "sonner";
 
 import appCss from "../styles.css?url";
@@ -184,13 +184,22 @@ function MainContentGate() {
   const location = useLocation();
   const navigate = useNavigate();
 
-  // The Birthday (Date of Birth) screen is shown ONLY for brand-new accounts
-  // whose profile is missing the date of birth.
-  const missingDob = !!user && !user.date_of_birth;
-  const shouldOnboard = !!user && isNewUser && missingDob;
+  // Vercel best-practice: derive primitives, memoize derived state to keep
+  // effect deps stable and avoid redundant navigations (rerender-derived-state, rerender-dependencies).
+  const missingDob = useMemo(() => !!user && !user.date_of_birth, [user]);
+  // Keep derived boolean stable with useMemo so effect only re-runs when it actually flips.
+  const shouldOnboard = useMemo(
+    () => !!user && isNewUser && missingDob,
+    [user, isNewUser, missingDob],
+  );
 
   useEffect(() => {
-    if (loading) return;
+    // CRITICAL: do not decide any route while Firebase is still resolving
+    // (loading) OR while the Firestore profile read that determines
+    // onboarding is pending (user && !profileReady). Navigating during
+    // that window caused the bug where a fresh login was sent to "/" and
+    // then bounced back to "/auth" when the gate re-evaluated.
+    if (loading || (user && !profileReady)) return;
 
     if (!user) {
       if (location.pathname !== "/auth") {
@@ -210,7 +219,7 @@ function MainContentGate() {
     ) {
       navigate({ to: "/", replace: true });
     }
-  }, [user, loading, shouldOnboard, location.pathname, navigate]);
+  }, [user, loading, profileReady, shouldOnboard, location.pathname, navigate]);
 
   // 1. Splash ONLY while Firebase auth state is unknown (milliseconds) or
   //    while the Firestore profile read that decides onboarding is pending.

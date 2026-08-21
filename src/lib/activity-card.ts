@@ -403,7 +403,10 @@ function drawRouteDot(
     const textWidth = ctx.measureText(label).width;
     const badgeW = textWidth + 16;
     const badgeH = 26;
-    const badgeX = Math.min(Math.max(point.x - badgeW / 2, ROUTE_BOX.x + 20), ROUTE_BOX.x + ROUTE_BOX.width - badgeW - 20);
+    const badgeX = Math.min(
+      Math.max(point.x - badgeW / 2, ROUTE_BOX.x + 20),
+      ROUTE_BOX.x + ROUTE_BOX.width - badgeW - 20,
+    );
     const badgeY = point.y > ROUTE_BOX.y + 100 ? point.y - 42 : point.y + 24;
 
     roundedRectPath(ctx, badgeX, badgeY, badgeW, badgeH, 13);
@@ -469,11 +472,7 @@ function drawHeroStats(ctx: CanvasRenderingContext2D, input: ActivityCardInput):
   ctx.stroke();
 
   const colWidth = panel.width / 3;
-  const centers = [
-    panel.x + colWidth * 0.5,
-    panel.x + colWidth * 1.5,
-    panel.x + colWidth * 2.5,
-  ];
+  const centers = [panel.x + colWidth * 0.5, panel.x + colWidth * 1.5, panel.x + colWidth * 2.5];
 
   // Subtle vertical dividers between columns
   ctx.strokeStyle = COLORS.panelDivider;
@@ -580,7 +579,11 @@ function drawHeroMetric(
 function drawTiles(ctx: CanvasRenderingContext2D, input: ActivityCardInput): void {
   const tiles: { dot: string; label: string; value: string }[] = [
     { dot: COLORS.orange, label: "Calories", value: `${Math.round(input.calories)} kcal` },
-    { dot: COLORS.emerald, label: "Steps", value: `${Math.round(input.steps).toLocaleString("en-US")} steps` },
+    {
+      dot: COLORS.emerald,
+      label: "Steps",
+      value: `${Math.round(input.steps).toLocaleString("en-US")} steps`,
+    },
     {
       dot: COLORS.cyan,
       label: "Avg Speed",

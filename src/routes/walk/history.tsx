@@ -41,7 +41,8 @@ function WalkHistoryPage() {
   const filteredSessions = sessions.filter((s) => {
     if (filter === "all") return true;
     const walkDay =
-      s.day || (s.started_at ? s.started_at.slice(0, 10) : s.created_at ? s.created_at.slice(0, 10) : "");
+      s.day ||
+      (s.started_at ? s.started_at.slice(0, 10) : s.created_at ? s.created_at.slice(0, 10) : "");
     if (!walkDay) return true;
     // Parse as LOCAL midnight (new Date("YYYY-MM-DD") is UTC midnight, which
     // shifts the day boundary for non-UTC users and skews the week/month diff).
@@ -159,13 +160,7 @@ function WalkHistoryPage() {
   );
 }
 
-function WalkHistoryCard({
-  session,
-  onClick,
-}: {
-  session: WalkSession;
-  onClick: () => void;
-}) {
+function WalkHistoryCard({ session, onClick }: { session: WalkSession; onClick: () => void }) {
   const path = session.path && session.path.length >= 2 ? session.path : null;
   const hasRoute = !!path;
   const first = path ? path[0] : null;

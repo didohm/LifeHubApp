@@ -22,7 +22,6 @@ import { motion, AnimatePresence } from "framer-motion";
 import { Screen, ScreenHeader } from "@/components/lifehub/Screen";
 import { Modal } from "@/components/lifehub/Modal";
 import { useAuth } from "@/hooks/use-auth";
-import { useAuthGuard } from "@/hooks/use-auth-guard";
 import { useDeleteWithGuard } from "@/hooks/use-delete-with-guard";
 import { useData } from "@/lib/data-context";
 import { todayLocalDate } from "@/lib/api";
@@ -41,8 +40,7 @@ export const Route = createFileRoute("/bills")({
 const CATEGORIES = ["all", "Health", "Utilities", "Subscription", "Personal", "Housing"] as const;
 
 function BillsPage() {
-  const { user, loading: authLoading } = useAuth();
-  useAuthGuard(user, authLoading);
+  const { user } = useAuth();
 
   const {
     bills = [],
@@ -149,7 +147,9 @@ function BillsPage() {
     try {
       await payBillAction(payModalBill.id, paymentMethod);
       sounds.playSuccess();
-      toast.success(`Paid ${Number(payModalBill.amount).toLocaleString()} DZD via ${paymentMethod}! 🎉`);
+      toast.success(
+        `Paid ${Number(payModalBill.amount).toLocaleString()} DZD via ${paymentMethod}! 🎉`,
+      );
       setPayModalBill(null);
     } catch {
       toast.error("Payment failed. Please try again.");
@@ -310,7 +310,9 @@ function BillsPage() {
             <Wallet className="mx-auto size-10 text-muted-foreground/40" />
             <p className="mt-2 text-sm font-extrabold text-[#12131A]">No bills recorded</p>
             <p className="mt-1 text-xs text-muted-foreground">
-              {searchTerm ? "No match for your search" : "Log your first upcoming bill or recurring utility."}
+              {searchTerm
+                ? "No match for your search"
+                : "Log your first upcoming bill or recurring utility."}
             </p>
             <button
               type="button"
@@ -331,7 +333,9 @@ function BillsPage() {
                 animate={{ opacity: 1, y: 0 }}
                 className={cn(
                   "card-soft p-4 border transition-all flex items-center justify-between shadow-2xs group",
-                  isPaid ? "bg-emerald-50/40 border-emerald-200/70" : "bg-white border-border/70 hover:shadow-xs",
+                  isPaid
+                    ? "bg-emerald-50/40 border-emerald-200/70"
+                    : "bg-white border-border/70 hover:shadow-xs",
                 )}
               >
                 <div className="min-w-0 flex-1 pr-3">
@@ -354,7 +358,9 @@ function BillsPage() {
                   </h3>
 
                   <div className="mt-1 flex items-center gap-2 text-xs font-semibold text-muted-foreground">
-                    <span className="text-sm font-black text-[#12131A]">{Number(b.amount).toLocaleString()} DZD</span>
+                    <span className="text-sm font-black text-[#12131A]">
+                      {Number(b.amount).toLocaleString()} DZD
+                    </span>
                     {b.due_date && (
                       <span className="flex items-center gap-1 text-[11px]">
                         <Calendar className="size-3" /> Due {b.due_date}
@@ -513,7 +519,9 @@ function BillsPage() {
         {payModalBill && (
           <form onSubmit={handleConfirmPayment} className="mt-4 space-y-4">
             <div className="rounded-2xl bg-slate-50 p-4 border border-border/60 text-center">
-              <span className="text-xs font-bold text-muted-foreground uppercase">{payModalBill.title}</span>
+              <span className="text-xs font-bold text-muted-foreground uppercase">
+                {payModalBill.title}
+              </span>
               <p className="mt-1 text-3xl font-black text-[#12131A]">
                 {Number(payModalBill.amount).toLocaleString()} DZD
               </p>
@@ -550,7 +558,11 @@ function BillsPage() {
                 disabled={paying}
                 className="w-1/2 flex items-center justify-center gap-1.5 rounded-xl bg-emerald-600 py-2.5 text-xs font-bold text-white shadow-xs hover:bg-emerald-700 disabled:opacity-50"
               >
-                {paying ? <Loader2 className="size-3.5 animate-spin" /> : <Check className="size-3.5" />}
+                {paying ? (
+                  <Loader2 className="size-3.5 animate-spin" />
+                ) : (
+                  <Check className="size-3.5" />
+                )}
                 Confirm Paid
               </button>
             </div>
@@ -580,7 +592,9 @@ function BillsPage() {
 
         <div className="mt-3 max-h-72 overflow-y-auto space-y-2">
           {payments.length === 0 ? (
-            <p className="p-6 text-center text-xs text-muted-foreground">No settled payments yet.</p>
+            <p className="p-6 text-center text-xs text-muted-foreground">
+              No settled payments yet.
+            </p>
           ) : (
             payments.map((p) => (
               <div
@@ -591,10 +605,14 @@ function BillsPage() {
                   <span className="font-bold text-foreground block">
                     {bills.find((b) => b.id === p.bill_id)?.title || "Bill Payment"}
                   </span>
-                  <span className="text-[10px] text-muted-foreground">Via {p.payment_method || "Payment"}</span>
+                  <span className="text-[10px] text-muted-foreground">
+                    Via {p.payment_method || "Payment"}
+                  </span>
                 </div>
                 <div className="text-right">
-                  <span className="font-black text-emerald-600 block">{Number(p.amount).toLocaleString()} DZD</span>
+                  <span className="font-black text-emerald-600 block">
+                    {Number(p.amount).toLocaleString()} DZD
+                  </span>
                   <span className="text-[10px] text-muted-foreground">
                     {p.payment_date ? new Date(p.payment_date).toLocaleDateString() : "Settled"}
                   </span>

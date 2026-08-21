@@ -3,13 +3,7 @@
   "mcp": {
     "sequential-thinking": {
       "type": "local",
-      "command": [
-        "cmd",
-        "/c",
-        "npx",
-        "-y",
-        "@modelcontextprotocol/server-sequential-thinking"
-      ]
+      "command": ["cmd", "/c", "npx", "-y", "@modelcontextprotocol/server-sequential-thinking"]
     }
   }
 }

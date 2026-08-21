@@ -122,9 +122,7 @@ const MenuRow = memo(function MenuRow({
         <div
           className={cn(
             "flex size-9 shrink-0 items-center justify-center rounded-xl transition-transform group-hover:scale-105",
-            variant === "danger"
-              ? "bg-rose-100 text-rose-600"
-              : "bg-slate-100 text-[#12131A]",
+            variant === "danger" ? "bg-rose-100 text-rose-600" : "bg-slate-100 text-[#12131A]",
           )}
         >
           <Icon className="size-4.5" />
@@ -299,19 +297,22 @@ function ProfilePage() {
     try {
       await deleteAccount();
       toast.success("Account deleted successfully.");
-      navigate({ to: "/auth" });
+      // Root gate (MainContentGate) watches `user === null` and does
+      // `navigate({to: "/auth", replace:true})`. No manual navigate here
+      // avoids double-replace and keeps logout idempotent.
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Could not delete account.");
     } finally {
       setDeleting(false);
     }
-  }, [user, deleteAccount, navigate]);
+  }, [user, deleteAccount]);
 
   const handleLogout = useCallback(async () => {
     await logout();
     toast.success("Logged out safely");
-    navigate({ to: "/auth" });
-  }, [logout, navigate]);
+    // Delegate redirect to MainContentGate — prevents race where this
+    // push-navigate to /auth competes with the root gate's replace.
+  }, [logout]);
 
   const openEdit = () => {
     sounds.playActionClick();
@@ -549,7 +550,11 @@ function ProfilePage() {
             >
               <div className="flex items-center gap-3">
                 <div className="flex size-9 items-center justify-center rounded-xl bg-white shadow-2xs text-[#7C5CFC]">
-                  {soundsEnabled ? <Volume2 className="size-4.5" /> : <VolumeX className="size-4.5 text-muted-foreground" />}
+                  {soundsEnabled ? (
+                    <Volume2 className="size-4.5" />
+                  ) : (
+                    <VolumeX className="size-4.5 text-muted-foreground" />
+                  )}
                 </div>
                 <div className="text-left">
                   <span className="block text-xs font-bold text-foreground">Sound Effects</span>
@@ -561,7 +566,9 @@ function ProfilePage() {
               <span
                 className={cn(
                   "rounded-full px-2.5 py-0.5 text-xs font-black",
-                  soundsEnabled ? "bg-emerald-500/15 text-emerald-700" : "bg-slate-200 text-muted-foreground",
+                  soundsEnabled
+                    ? "bg-emerald-500/15 text-emerald-700"
+                    : "bg-slate-200 text-muted-foreground",
                 )}
               >
                 {soundsEnabled ? "Enabled" : "Muted"}
@@ -835,7 +842,8 @@ function ProfilePage() {
           </div>
           <h3 className="text-base font-extrabold text-foreground">Delete Account?</h3>
           <p className="mt-1 text-xs text-muted-foreground leading-relaxed">
-            This permanently erases your LifeHub data and removes your account. For security, you may need to sign in again first.
+            This permanently erases your LifeHub data and removes your account. For security, you
+            may need to sign in again first.
           </p>
 
           <div className="mt-5 flex gap-2">

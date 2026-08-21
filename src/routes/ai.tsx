@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute, Link, useNavigate, useRouter } from "@tanstack/react-router";
 import {
   Send,
   Plus,
@@ -25,13 +25,13 @@ import {
   Zap,
   Sparkles,
   Droplets,
+  ChevronLeft,
 } from "lucide-react";
 import { toast } from "sonner";
 import { motion, AnimatePresence } from "framer-motion";
 import { Screen } from "@/components/lifehub/Screen";
 import { Modal } from "@/components/lifehub/Modal";
 import { useAuth } from "@/hooks/use-auth";
-import { useAuthGuard } from "@/hooks/use-auth-guard";
 import { useKeyboard } from "@/hooks/use-keyboard";
 import { generateAssistantReply } from "@/lib/ai-provider";
 import {
@@ -409,8 +409,14 @@ function TypingIndicator({ onStop }: { onStop?: () => void }) {
 
 // ─── Main Page Component ────────────────────────────────────────────
 function AiPage() {
-  const { user, firebaseUser, loading: authLoading } = useAuth();
-  useAuthGuard(user, authLoading);
+  const { user, firebaseUser } = useAuth();
+  const navigate = useNavigate();
+  const router = useRouter();
+
+  const handleBack = () => {
+    if (router.history.canGoBack()) router.history.back();
+    else navigate({ to: "/services" });
+  };
 
   const { isKeyboardOpen, isInputFocused } = useKeyboard();
   const [isLocalFocused, setIsLocalFocused] = useState(false);
@@ -546,7 +552,10 @@ function AiPage() {
     try {
       let conversationId = activeConvId;
       if (!conversationId) {
-        const newConversation = await createAiConversation(user.id, conversationTitle(promptToSend));
+        const newConversation = await createAiConversation(
+          user.id,
+          conversationTitle(promptToSend),
+        );
         conversationId = newConversation.id;
         setConversations((prev) => [newConversation, ...prev]);
         setActiveConvId(conversationId);
@@ -681,37 +690,52 @@ function AiPage() {
   );
 
   return (
-    <Screen fullHeight noBottomPadding contentClassName="px-3 sm:px-5">
+    <Screen
+      fullHeight
+      noBottomPadding
+      contentClassName="max-w-2xl lg:max-w-3xl !px-4 sm:!px-6 lg:!px-8"
+    >
       {/* ════════════════════════════════════════════════════════════
-          APP HEADER — Clean Fixed Top Bar
+          APP HEADER — Clean Fixed Top Bar + Back Navigation
+          Returns to Services hub / history (ux:back-behavior)
           ════════════════════════════════════════════════════════════ */}
-      <header className="flex items-center justify-between pb-3 border-b border-border/40 shrink-0">
-        <Link to="/profile" className="flex items-center gap-2.5 group">
-          <UserAvatar
-            name={user?.full_name}
-            src={user?.avatar_url}
-            alt={user?.full_name || "User profile"}
-            className="size-9 sm:size-10 rounded-full border-2 border-primary/30 shadow-xs group-hover:scale-105 transition-transform"
-            initialsClassName="text-xs"
-          />
-          <div>
-            <div className="flex items-center gap-1.5">
-              <span className="text-sm sm:text-base font-extrabold text-foreground tracking-tight">
-                AI Assistant
-              </span>
-              <span className="flex items-center gap-1 rounded-full bg-emerald-500/10 px-2 py-0.5 text-[10px] font-bold text-emerald-600">
-                <span className="size-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                Live
-              </span>
+      <header className="flex items-center justify-between gap-2 pb-3 border-b border-border/40 shrink-0">
+        <div className="flex items-center gap-2 min-w-0">
+          <button
+            onClick={handleBack}
+            aria-label="Go back"
+            title="Back to Services"
+            className="tap flex size-9 shrink-0 items-center justify-center rounded-full bg-white text-[#12131A] shadow-xs border border-black/5 hover:bg-black/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#7C5CFC] focus-visible:ring-offset-2"
+          >
+            <ChevronLeft className="size-5" />
+          </button>
+          <Link to="/profile" className="flex items-center gap-2.5 group min-w-0">
+            <UserAvatar
+              name={user?.full_name}
+              src={user?.avatar_url}
+              alt={user?.full_name || "User profile"}
+              className="size-9 sm:size-10 rounded-full border-2 border-primary/30 shadow-xs group-hover:scale-105 transition-transform shrink-0"
+              initialsClassName="text-xs"
+            />
+            <div className="min-w-0">
+              <div className="flex items-center gap-1.5">
+                <span className="text-sm sm:text-base font-extrabold text-foreground tracking-tight truncate">
+                  AI Assistant
+                </span>
+                <span className="flex items-center gap-1 rounded-full bg-emerald-500/10 px-2 py-0.5 text-[10px] font-bold text-emerald-600 shrink-0">
+                  <span className="size-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                  Live
+                </span>
+              </div>
+              <p className="text-[11px] font-medium text-muted-foreground truncate">
+                {getGreeting()}, {user?.full_name?.split(" ")[0] || "Friend"}
+              </p>
             </div>
-            <p className="text-[11px] font-medium text-muted-foreground">
-              {getGreeting()}, {user?.full_name?.split(" ")[0] || "Friend"}
-            </p>
-          </div>
-        </Link>
+          </Link>
+        </div>
 
-        <div className="flex items-center gap-1.5">
-          {/* Search Button */}
+        <div className="flex items-center gap-2 shrink-0">
+          {/* Search Button - 44px min touch target (ux:touch-target-size) */}
           <button
             onClick={() => {
               sounds.playNavClick();
@@ -719,7 +743,7 @@ function AiPage() {
             }}
             aria-label="Search"
             title="Global Search"
-            className="tap flex size-9 items-center justify-center rounded-full bg-white shadow-xs border border-border/60 hover:bg-accent active:scale-95 text-foreground"
+            className="tap flex size-10 sm:size-9 items-center justify-center rounded-full bg-white shadow-xs border border-border/60 hover:bg-accent active:scale-95 text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#7C5CFC]"
           >
             <Search className="size-4" />
           </button>
@@ -732,7 +756,7 @@ function AiPage() {
             }}
             aria-label="Conversation History"
             title="Chat History"
-            className="tap relative flex size-9 items-center justify-center rounded-full bg-white shadow-xs border border-border/60 hover:bg-accent active:scale-95 text-foreground"
+            className="tap relative flex size-10 sm:size-9 items-center justify-center rounded-full bg-white shadow-xs border border-border/60 hover:bg-accent active:scale-95 text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#7C5CFC]"
           >
             <History className="size-4" />
             {conversations.length > 1 && (
@@ -751,7 +775,7 @@ function AiPage() {
             aria-label="New Conversation"
             title="New Chat"
             disabled={loading}
-            className="tap flex size-9 items-center justify-center rounded-full bg-gradient-to-br from-[#7C5CFC] to-[#906FFA] shadow-sm text-white hover:opacity-95 active:scale-95"
+            className="tap flex size-10 sm:size-9 items-center justify-center rounded-full bg-gradient-to-br from-[#7C5CFC] to-[#906FFA] shadow-sm text-white hover:opacity-95 active:scale-95 disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#7C5CFC]"
           >
             <Plus className="size-4" />
           </button>
@@ -764,51 +788,51 @@ function AiPage() {
       <div
         ref={scrollContainerRef}
         onScroll={handleScroll}
-        className="flex-1 min-h-0 overflow-y-auto overscroll-contain py-2.5 px-0.5 space-y-3.5 scroll-smooth"
+        className="flex-1 min-h-0 overflow-y-auto overscroll-contain py-3 sm:py-4 px-0.5 sm:px-1 space-y-3.5 scroll-smooth"
         role="log"
         aria-label="Chat conversation"
         aria-live="polite"
       >
         {!hasConversation ? (
           /* Empty / Welcome State — Compact, balanced, non-overflowing */
-          <div className="space-y-3.5 pt-1 pb-3">
-            {/* Hero Welcome Banner */}
+          <div className="space-y-4 pt-1 pb-3">
+            {/* Hero Welcome Banner — extra vertical padding on tablet */}
             <motion.div
               initial={{ opacity: 0, y: 8 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.25 }}
-              className="rounded-3xl bg-gradient-to-br from-[#ECE8FF] via-[#F5F2FF] to-[#FAF8FF] p-4 sm:p-5 border border-[#7C5CFC]/25 shadow-xs relative overflow-hidden"
+              className="rounded-3xl bg-gradient-to-br from-[#ECE8FF] via-[#F5F2FF] to-[#FAF8FF] p-4 sm:p-5 lg:p-6 border border-[#7C5CFC]/25 shadow-xs relative overflow-hidden"
             >
-              <div className="flex items-center justify-between gap-3 relative z-10">
-                <div className="max-w-[70%]">
+              <div className="flex items-center justify-between gap-3 sm:gap-4 relative z-10">
+                <div className="max-w-[70%] sm:max-w-[68%]">
                   <span className="inline-flex items-center gap-1 rounded-full bg-white/95 px-2.5 py-0.5 text-[10.5px] font-extrabold text-[#7C5CFC] shadow-2xs border border-[#7C5CFC]/15">
                     <Sparkles className="size-3 text-[#7C5CFC]" /> Clinical & Wellness AI
                   </span>
-                  <h2 className="mt-1.5 text-base sm:text-lg font-black text-[#12131A] tracking-tight leading-snug">
+                  <h2 className="mt-1.5 text-base sm:text-lg lg:text-xl font-black text-[#12131A] tracking-tight leading-snug">
                     How can I assist your health today?
                   </h2>
-                  <p className="mt-0.5 text-[11.5px] font-medium text-[#6B7280] leading-relaxed">
+                  <p className="mt-1 text-[11.5px] sm:text-xs font-medium text-[#6B7280] leading-relaxed">
                     Ask about medications, appointments, health records, or daily wellness routines.
                   </p>
                 </div>
                 <img
                   src="/illustration/ai-robot.webp"
                   alt="AI Assistant"
-                  className="h-16 w-16 sm:h-20 sm:w-20 object-contain shrink-0 drop-shadow-[0_6px_14px_rgba(124,92,252,0.22)]"
+                  className="h-16 w-16 sm:h-20 sm:w-20 lg:h-24 lg:w-24 object-contain shrink-0 drop-shadow-[0_6px_14px_rgba(124,92,252,0.22)]"
                 />
               </div>
             </motion.div>
 
-            {/* Quick Action Prompt Cards — High-density 2x2 Grid */}
+            {/* Quick Action Prompt Cards — 2 cols mobile, 4 cols tablet (ux:mobile-first) */}
             <div>
-              <div className="flex items-center justify-between px-1 mb-2">
+              <div className="flex items-center justify-between px-1 mb-2.5">
                 <p className="text-[11px] font-bold text-muted-foreground uppercase tracking-wider">
                   Suggested Actions
                 </p>
                 <span className="text-[10px] text-muted-foreground/80 font-medium">Tap to ask</span>
               </div>
 
-              <div className="grid grid-cols-2 gap-2.5">
+              <div className="grid grid-cols-2 gap-3 sm:gap-4 md:grid-cols-4">
                 {quickActions.map((action, idx) => (
                   <motion.button
                     key={action.title}
@@ -904,10 +928,10 @@ function AiPage() {
                     )}
                   </div>
 
-                  {/* Message Bubble */}
+                  {/* Message Bubble — line-length 35–60ch mobile, 60–75ch desktop (ux:line-length-control) */}
                   <div
                     className={cn(
-                      "relative max-w-[88%] sm:max-w-[82%] px-3.5 py-2.5 sm:px-4 sm:py-3 text-[13.5px] leading-relaxed shadow-xs",
+                      "relative max-w-[86%] sm:max-w-[78%] lg:max-w-[68%] xl:max-w-[60ch] px-3.5 py-2.5 sm:px-4 sm:py-3 text-[13.5px] sm:text-[14px] leading-relaxed shadow-xs break-words",
                       m.role === "user"
                         ? "bg-slate-900 text-white rounded-3xl rounded-tr-sm"
                         : "bg-white border border-[#7C5CFC]/20 text-foreground rounded-3xl rounded-tl-sm",
@@ -983,7 +1007,7 @@ function AiPage() {
         )}
       </div>
 
-      {/* Floating Jump to Bottom Button */}
+      {/* Floating Jump to Bottom Button — safe offset above input dock + BottomNav */}
       <AnimatePresence>
         {showScrollBottom && (
           <motion.button
@@ -994,7 +1018,7 @@ function AiPage() {
               sounds.playClick();
               scrollToBottom(true);
             }}
-            className="absolute right-6 bottom-24 z-20 flex size-9 items-center justify-center rounded-full bg-slate-900 text-white shadow-lg border border-white/20 active:scale-95"
+            className="absolute right-4 sm:right-6 bottom-[7.5rem] sm:bottom-28 z-20 flex size-10 sm:size-9 items-center justify-center rounded-full bg-slate-900 text-white shadow-lg border border-white/20 active:scale-95"
             aria-label="Scroll to bottom"
           >
             <ArrowDown className="size-4" />
@@ -1004,14 +1028,15 @@ function AiPage() {
 
       {/* ════════════════════════════════════════════════════════════
           BOTTOM INPUT DOCK — Responsive, Keyboard & Nav Aware
+          pb accounts for BottomNav (≈5rem) + safe-area
           ════════════════════════════════════════════════════════════ */}
       <div
         className={cn(
           "w-full shrink-0 transition-all duration-200",
-          isTyping ? "pb-2 pt-1" : "pb-24 pt-2",
+          isTyping ? "pb-2 pt-1" : "pb-[calc(6rem+env(safe-area-inset-bottom))] sm:pb-24 pt-2",
         )}
       >
-        <div className="flex items-end gap-2 rounded-3xl border border-border/80 bg-white px-3.5 py-2 shadow-[0_8px_24px_-8px_rgba(18,19,26,0.12)] focus-within:border-[#7C5CFC] focus-within:ring-2 focus-within:ring-[#7C5CFC]/20 transition-all duration-200">
+        <div className="flex items-end gap-2 rounded-3xl border border-border/80 bg-white px-3.5 sm:px-4 py-2 sm:py-2.5 shadow-[0_8px_24px_-8px_rgba(18,19,26,0.12)] focus-within:border-[#7C5CFC] focus-within:ring-2 focus-within:ring-[#7C5CFC]/20 transition-all duration-200">
           <textarea
             ref={textareaRef}
             value={inputPrompt}

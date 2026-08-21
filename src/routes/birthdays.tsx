@@ -1,5 +1,5 @@
 import { useState, useMemo } from "react";
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, useNavigate, useRouter } from "@tanstack/react-router";
 import {
   Plus,
   Cake,
@@ -13,13 +13,13 @@ import {
   PartyPopper,
   ChevronRight,
   AlertCircle,
+  ChevronLeft,
 } from "lucide-react";
 import { toast } from "sonner";
 import { motion, AnimatePresence } from "framer-motion";
 import { Screen } from "@/components/lifehub/Screen";
 import { Modal } from "@/components/lifehub/Modal";
 import { useAuth } from "@/hooks/use-auth";
-import { useAuthGuard } from "@/hooks/use-auth-guard";
 import { useDeleteWithGuard } from "@/hooks/use-delete-with-guard";
 import { useData } from "@/lib/data-context";
 import { createBirthday, updateBirthday, deleteBirthday } from "@/lib/api";
@@ -91,8 +91,13 @@ function getNextAge(birthdayDate: string): number | null {
 // ─── Page Component ───────────────────────────────────────────────
 
 function BirthdaysPage() {
-  const { user, loading: authLoading } = useAuth();
-  useAuthGuard(user, authLoading);
+  const { user } = useAuth();
+  const navigate = useNavigate();
+  const router = useRouter();
+  const handleBack = () => {
+    if (router.history.canGoBack()) router.history.back();
+    else navigate({ to: "/services" });
+  };
 
   const { birthdays, refreshAll } = useData();
 
@@ -207,12 +212,22 @@ function BirthdaysPage() {
   if (error) {
     return (
       <Screen>
-        <header className="flex items-center justify-between">
-          <div>
-            <h1 className="text-2xl font-extrabold text-foreground flex items-center gap-2">
-              <Cake className="size-6 text-pink-500" /> Birthdays
-            </h1>
-            <p className="text-xs text-muted-foreground">Never miss a special date</p>
+        <header className="flex items-center justify-between gap-3">
+          <div className="flex items-center gap-3 min-w-0">
+            <button
+              onClick={handleBack}
+              aria-label="Go back to Services"
+              title="Back to Services"
+              className="tap flex size-9 shrink-0 items-center justify-center rounded-full bg-white text-[#12131A] shadow-xs border border-black/5 hover:bg-black/5"
+            >
+              <ChevronLeft className="size-5" />
+            </button>
+            <div>
+              <h1 className="text-xl sm:text-2xl font-extrabold text-foreground flex items-center gap-2">
+                <Cake className="size-5 sm:size-6 text-pink-500" /> Birthdays
+              </h1>
+              <p className="text-xs text-muted-foreground font-medium">Never miss a special date</p>
+            </div>
           </div>
         </header>
         <div className="mt-6 rounded-3xl border border-dashed border-destructive/50 p-8 text-center bg-destructive/5">
@@ -232,22 +247,34 @@ function BirthdaysPage() {
 
   return (
     <Screen>
-      {/* ── Header ── */}
-      <header className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-extrabold text-foreground flex items-center gap-2">
-            <Cake className="size-6 text-pink-500" /> Birthdays
-          </h1>
-          <p className="text-xs text-muted-foreground">Never miss a special date</p>
-        </div>
-        <div className="flex gap-2">
+      {/* ── Header with return/back button (consistent with other services, ux:back-behavior) ── */}
+      <header className="flex items-center justify-between gap-3">
+        <div className="flex items-center gap-3 min-w-0">
           <button
-            onClick={openAddModal}
-            className="tap flex items-center gap-1 rounded-full bg-ink px-4 py-2 text-xs font-bold text-card shadow-md transition-transform active:scale-95 hover:opacity-90"
+            onClick={handleBack}
+            aria-label="Go back to Services"
+            title="Back to Services"
+            className="tap flex size-9 shrink-0 items-center justify-center rounded-full bg-white text-[#12131A] shadow-xs border border-black/5 hover:bg-black/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
-            <Plus className="size-4" /> Add Birthday
+            <ChevronLeft className="size-5" />
           </button>
+          <div className="min-w-0">
+            <h1 className="text-xl sm:text-2xl font-extrabold text-foreground flex items-center gap-2 truncate">
+              <Cake className="size-5 sm:size-6 text-pink-500 shrink-0" /> Birthdays
+            </h1>
+            <p className="text-xs text-muted-foreground font-medium truncate">
+              Never miss a special date
+            </p>
+          </div>
         </div>
+        <button
+          onClick={openAddModal}
+          className="tap flex shrink-0 items-center gap-1 rounded-full bg-ink px-4 py-2 text-xs font-bold text-card shadow-md transition-transform active:scale-95 hover:opacity-90"
+        >
+          <Plus className="size-4" />{" "}
+          <span className="hidden xs:inline sm:inline">Add Birthday</span>
+          <span className="xs:hidden sm:hidden">Add</span>
+        </button>
       </header>
 
       {/* ── Upcoming Banner ── */}

@@ -34,7 +34,17 @@ export function useKeyboard(): KeyboardState {
       if (tag === "textarea") return true;
       if (tag === "input") {
         const type = (el as HTMLInputElement).type?.toLowerCase();
-        const nonTextTypes = ["checkbox", "radio", "button", "submit", "file", "range", "color", "image", "reset"];
+        const nonTextTypes = [
+          "checkbox",
+          "radio",
+          "button",
+          "submit",
+          "file",
+          "range",
+          "color",
+          "image",
+          "reset",
+        ];
         return !nonTextTypes.includes(type);
       }
       return el.getAttribute("contenteditable") === "true";
@@ -54,7 +64,9 @@ export function useKeyboard(): KeyboardState {
       // 2. Or if an editable element is focused and height is significantly less than screen height
       const keyboardDetected =
         heightDiff > 120 ||
-        (focused && typeof window.screen !== "undefined" && currentHeight < window.screen.availHeight * 0.78);
+        (focused &&
+          typeof window.screen !== "undefined" &&
+          currentHeight < window.screen.availHeight * 0.78);
 
       setIsKeyboardOpen(keyboardDetected || focused);
       setKeyboardHeight(keyboardDetected ? Math.max(0, heightDiff) : 0);

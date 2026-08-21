@@ -18,7 +18,6 @@ import { motion, AnimatePresence } from "framer-motion";
 import { Screen, ScreenHeader } from "@/components/lifehub/Screen";
 import { Modal } from "@/components/lifehub/Modal";
 import { useAuth } from "@/hooks/use-auth";
-import { useAuthGuard } from "@/hooks/use-auth-guard";
 import { useDeleteWithGuard } from "@/hooks/use-delete-with-guard";
 import { createTodo, updateTodo, deleteTodo, todayLocalDate } from "@/lib/api";
 import { Notifications } from "@/lib/notifications-integration";
@@ -59,8 +58,7 @@ function formatDueDate(value: string): string {
 const CATEGORIES = ["all", "Health", "Finance", "Personal", "Work"] as const;
 
 function TasksPage() {
-  const { user, loading: authLoading } = useAuth();
-  useAuthGuard(user, authLoading);
+  const { user } = useAuth();
 
   const { todos = [], todosLoading: loading } = useData();
   const [categoryFilter, setCategoryFilter] = useState("all");
@@ -213,11 +211,12 @@ function TasksPage() {
             </span>
             <div className="mt-2 flex items-baseline gap-2">
               <span className="text-2xl sm:text-3xl font-black text-[#12131A]">
-                {completedCount} <span className="text-sm font-bold text-muted-foreground">/ {todos.length} Done</span>
+                {completedCount}{" "}
+                <span className="text-sm font-bold text-muted-foreground">
+                  / {todos.length} Done
+                </span>
               </span>
-              <span className="text-xs font-bold text-emerald-600">
-                {completionPct}% Complete
-              </span>
+              <span className="text-xs font-bold text-emerald-600">{completionPct}% Complete</span>
             </div>
             <p className="mt-0.5 text-xs font-medium text-muted-foreground">
               {todos.length - completedCount} active tasks remaining today
@@ -287,7 +286,9 @@ function TasksPage() {
             <ListChecks className="mx-auto size-10 text-muted-foreground/40" />
             <p className="mt-2 text-sm font-extrabold text-[#12131A]">No tasks found</p>
             <p className="mt-1 text-xs text-muted-foreground">
-              {searchTerm ? "Try searching another term" : "Tap Add Task to create your first to-do."}
+              {searchTerm
+                ? "Try searching another term"
+                : "Tap Add Task to create your first to-do."}
             </p>
           </div>
         ) : (

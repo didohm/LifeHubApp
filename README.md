@@ -18,12 +18,12 @@ npm run dev
 Environment configuration lives in `.env` (copy from `.env.example` — never
 commit the real file):
 
-| Variable | Where used | Secret? |
-|---|---|---|
-| `VITE_FIREBASE_*` | Client (Firebase config — public by design) | No |
-| `VITE_ASSISTANT_MODEL` | Client (model name for the assistant) | No |
-| `ASSISTANT_API_KEY` | **Server only** — OpenRouter key for the assistant proxy | **Yes** |
-| `ASSISTANT_ENDPOINT` | **Server only** — default `https://openrouter.ai/api/v1/chat/completions` | No |
+| Variable               | Where used                                                                | Secret? |
+| ---------------------- | ------------------------------------------------------------------------- | ------- |
+| `VITE_FIREBASE_*`      | Client (Firebase config — public by design)                               | No      |
+| `VITE_ASSISTANT_MODEL` | Client (model name for the assistant)                                     | No      |
+| `ASSISTANT_API_KEY`    | **Server only** — OpenRouter key for the assistant proxy                  | **Yes** |
+| `ASSISTANT_ENDPOINT`   | **Server only** — default `https://openrouter.ai/api/v1/chat/completions` | No      |
 
 ### How the assistant stays secure
 

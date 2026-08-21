@@ -54,12 +54,9 @@ export default function PersonalStats({ userId, walkSessions }: PersonalStatsPro
       total_duration: totalDuration,
       total_steps: totalSteps,
       total_calories: totalCalories,
-      avg_pace:
-        paces.length > 0 ? paces.reduce((a, b) => a + b, 0) / paces.length : null,
+      avg_pace: paces.length > 0 ? paces.reduce((a, b) => a + b, 0) / paces.length : null,
       longest_distance:
-        finished.length > 0
-          ? Math.max(...finished.map((w) => w.distance || 0))
-          : null,
+        finished.length > 0 ? Math.max(...finished.map((w) => w.distance || 0)) : null,
       fastest_pace: paces.length > 0 ? Math.min(...paces) : null,
     };
   }, [finished]);
@@ -75,7 +72,12 @@ export default function PersonalStats({ userId, walkSessions }: PersonalStatsPro
     return dates.map((date) => {
       const dayWalks = finished.filter((s) => {
         const walkDay =
-          s.day || (s.started_at ? s.started_at.slice(0, 10) : s.created_at ? s.created_at.slice(0, 10) : "");
+          s.day ||
+          (s.started_at
+            ? s.started_at.slice(0, 10)
+            : s.created_at
+              ? s.created_at.slice(0, 10)
+              : "");
         return walkDay === date;
       });
       const totalDistance = dayWalks.reduce((sum, w) => sum + (w.distance || 0), 0);
@@ -115,19 +117,11 @@ export default function PersonalStats({ userId, walkSessions }: PersonalStatsPro
             unit="per km"
           />
           {avgSpeedKmh && (
-            <RecordRow
-              label="Average Speed"
-              value={avgSpeedKmh.toFixed(1)}
-              unit="km/h"
-            />
+            <RecordRow label="Average Speed" value={avgSpeedKmh.toFixed(1)} unit="km/h" />
           )}
           <RecordRow
             label="Longest Walk"
-            value={
-              stats.longest_distance
-                ? (stats.longest_distance / 1000).toFixed(2)
-                : "0"
-            }
+            value={stats.longest_distance ? (stats.longest_distance / 1000).toFixed(2) : "0"}
             unit="km"
           />
           <RecordRow
@@ -154,17 +148,12 @@ export default function PersonalStats({ userId, walkSessions }: PersonalStatsPro
             <YAxis hide />
             <Bar dataKey="distance" radius={[6, 6, 0, 0]}>
               {weeklyData.map((entry, index) => (
-                <Cell
-                  key={`cell-${index}`}
-                  fill={entry.distance > 0 ? "#7C5CFC" : "#E2E8F0"}
-                />
+                <Cell key={`cell-${index}`} fill={entry.distance > 0 ? "#7C5CFC" : "#E2E8F0"} />
               ))}
             </Bar>
           </BarChart>
         </ResponsiveContainer>
-        <p className="text-[10px] font-bold text-[#64748B] text-center mt-2">
-          Daily distance (km)
-        </p>
+        <p className="text-[10px] font-bold text-[#64748B] text-center mt-2">Daily distance (km)</p>
       </div>
     </div>
   );
@@ -190,26 +179,14 @@ export function StatCard({
 
   return (
     <div className="rounded-xl bg-white border border-slate-200 p-4">
-      <div className={`inline-flex rounded-lg p-2 ${bgColors[color]} mb-2`}>
-        {icon}
-      </div>
-      <p className="text-xs font-bold uppercase tracking-wide text-[#64748B] mb-1">
-        {label}
-      </p>
+      <div className={`inline-flex rounded-lg p-2 ${bgColors[color]} mb-2`}>{icon}</div>
+      <p className="text-xs font-bold uppercase tracking-wide text-[#64748B] mb-1">{label}</p>
       <p className="text-xl font-black tabular-nums text-[#0A0E27]">{value}</p>
     </div>
   );
 }
 
-function RecordRow({
-  label,
-  value,
-  unit,
-}: {
-  label: string;
-  value: string;
-  unit: string;
-}) {
+function RecordRow({ label, value, unit }: { label: string; value: string; unit: string }) {
   return (
     <div className="flex items-center justify-between py-2 border-b border-slate-100 last:border-0">
       <span className="text-sm font-bold text-[#64748B]">{label}</span>

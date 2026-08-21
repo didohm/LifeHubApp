@@ -32,7 +32,8 @@ export const Route = createFileRoute("/adhkar")({
       { title: "Daily Adhkar & Supplications — LifeHub" },
       {
         name: "description",
-        content: "Daily Morning, Evening, and Situational Adhkar with an interactive digital Tasbih.",
+        content:
+          "Daily Morning, Evening, and Situational Adhkar with an interactive digital Tasbih.",
       },
     ],
   }),
@@ -172,7 +173,8 @@ function Browse({
             </h2>
 
             <p className="mt-1 text-xs font-semibold text-muted-foreground">
-              {dueTotal} daily supplications · {dueDoneAll ? "Completed today ✓" : `${dueDone}/${dueTotal} recited`}
+              {dueTotal} daily supplications ·{" "}
+              {dueDoneAll ? "Completed today ✓" : `${dueDone}/${dueTotal} recited`}
             </p>
           </div>
 
@@ -182,7 +184,13 @@ function Browse({
               dueDoneAll ? "bg-emerald-500 text-white" : "bg-white text-[#12131A]",
             )}
           >
-            {dueDoneAll ? <Check className="size-6 stroke-[3]" /> : isMorning ? <Sunrise className="size-6 text-amber-600" /> : <Moon className="size-6 text-indigo-600" />}
+            {dueDoneAll ? (
+              <Check className="size-6 stroke-[3]" />
+            ) : isMorning ? (
+              <Sunrise className="size-6 text-amber-600" />
+            ) : (
+              <Moon className="size-6 text-indigo-600" />
+            )}
           </div>
         </div>
 
@@ -252,7 +260,9 @@ function Browse({
       {filtered.length === 0 ? (
         <div className="card-soft mt-2 border border-dashed border-border bg-white p-8 text-center shadow-2xs">
           <BookOpenText className="mx-auto size-10 text-muted-foreground/40" />
-          <p className="mt-2 text-sm font-extrabold text-foreground">No matching supplications found</p>
+          <p className="mt-2 text-sm font-extrabold text-foreground">
+            No matching supplications found
+          </p>
           <p className="mt-1 text-xs text-muted-foreground">
             Try searching by category name, zikr phrase, or hadith source.
           </p>
@@ -445,7 +455,9 @@ function Reader({
               }}
               className={cn(
                 "size-7 rounded-full text-xs font-black transition-all",
-                fontSize === size ? "bg-[#12131A] text-white" : "text-muted-foreground hover:text-foreground",
+                fontSize === size
+                  ? "bg-[#12131A] text-white"
+                  : "text-muted-foreground hover:text-foreground",
               )}
             >
               {size === "sm" ? "A" : size === "md" ? "A+" : "A++"}
@@ -459,7 +471,9 @@ function Reader({
         <div className="h-1.5 w-full rounded-full bg-slate-100 overflow-hidden">
           <div
             className="h-full bg-emerald-500 rounded-full transition-all duration-300"
-            style={{ width: `${total > 0 ? Math.round(((zekrIdx + (done ? 1 : 0)) / total) * 100) : 0}%` }}
+            style={{
+              width: `${total > 0 ? Math.round(((zekrIdx + (done ? 1 : 0)) / total) * 100) : 0}%`,
+            }}
           />
         </div>
       </div>
@@ -558,7 +572,9 @@ function Reader({
                   <CheckCircle2 className="size-10 text-emerald-500 animate-in zoom-in-50 duration-200" />
                 ) : (
                   <>
-                    <span className="text-3xl font-black text-[#12131A] tracking-tight">{remaining}</span>
+                    <span className="text-3xl font-black text-[#12131A] tracking-tight">
+                      {remaining}
+                    </span>
                     <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">
                       {remaining === 1 ? "tap left" : "taps left"}
                     </span>

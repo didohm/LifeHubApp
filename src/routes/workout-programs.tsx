@@ -20,7 +20,6 @@ import { Screen, ScreenHeader } from "@/components/lifehub/Screen";
 import { Modal } from "@/components/lifehub/Modal";
 import { WeeklySplitGrid, todayDayKey } from "@/components/lifehub/WeeklySplitGrid";
 import { useAuth } from "@/hooks/use-auth";
-import { useAuthGuard } from "@/hooks/use-auth-guard";
 import { useDeleteWithGuard } from "@/hooks/use-delete-with-guard";
 import { useData } from "@/lib/data-context";
 import {
@@ -161,8 +160,7 @@ const PROGRAM_PRESETS: ProgramPreset[] = [
 ];
 
 function WorkoutProgramsPage() {
-  const { user, loading: authLoading } = useAuth();
-  useAuthGuard(user, authLoading);
+  const { user } = useAuth();
 
   const { workoutPrograms, fitnessLoading, refreshFitness } = useData();
 

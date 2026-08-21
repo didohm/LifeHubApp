@@ -33,7 +33,6 @@ import { motion, AnimatePresence } from "framer-motion";
 import { Screen } from "@/components/lifehub/Screen";
 import { UserAvatar } from "@/components/lifehub/UserAvatar";
 import { useAuth } from "@/hooks/use-auth";
-import { useAuthGuard } from "@/hooks/use-auth-guard";
 import { useData } from "@/lib/data-context";
 import { useHydration } from "@/lib/use-hydration";
 import { getActivityTimeline, ActivityEntry, todayLocalDate } from "@/lib/api";
@@ -78,7 +77,6 @@ function getGreeting(): string {
 
 function Index() {
   const { user, loading: authLoading } = useAuth();
-  useAuthGuard(user, authLoading);
 
   const {
     medications,
@@ -233,7 +231,7 @@ function Index() {
     () => appointments.find((a) => a.status !== "completed") || appointments[0],
     [appointments],
   );
-  
+
   const upcomingMed = useMemo(
     () => medications.find((m) => !m.taken) || medications[0],
     [medications],
@@ -271,11 +269,11 @@ function Index() {
   }
 
   return (
-    <Screen>
+    <Screen contentClassName="max-w-3xl lg:max-w-4xl xl:max-w-5xl !px-4 sm:!px-6 lg:!px-8 !pt-4 sm:!pt-6 lg:!pt-8 !pb-28 sm:!pb-32">
       {/* ════════════════════════════════════════════════════════════
-          APP HEADER — GREETING & SEARCH
+          APP HEADER — GREETING & SEARCH (responsive padding per html-tailwind)
           ════════════════════════════════════════════════════════════ */}
-      <header className="flex items-center justify-between">
+      <header className="flex items-center justify-between gap-3">
         <Link to="/profile" className="flex items-center gap-3 group">
           <UserAvatar
             name={user?.full_name}
@@ -313,9 +311,9 @@ function Index() {
           }}
           aria-label="Search"
           title="Search features and items"
-          className="tap flex size-10 items-center justify-center rounded-full bg-white shadow-xs border border-border/60 hover:bg-accent active:scale-95 text-[#12131A]"
+          className="tap flex size-11 sm:size-10 items-center justify-center rounded-full bg-white shadow-xs border border-border/60 hover:bg-accent active:scale-95 text-[#12131A] shrink-0"
         >
-          <Search className="size-4.5" />
+          <Search className="size-[18px] sm:size-4.5" />
         </button>
       </header>
 
@@ -326,9 +324,9 @@ function Index() {
         initial={{ opacity: 0, y: 8 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.3 }}
-        className="card-soft relative mt-5 overflow-hidden bg-gradient-to-br from-[#EAE6FF] via-[#F4F1FF] to-[#FAF8FF] p-5 shadow-sm border border-[#7C5CFC]/15"
+        className="card-soft relative mt-4 sm:mt-5 lg:mt-6 overflow-hidden bg-gradient-to-br from-[#EAE6FF] via-[#F4F1FF] to-[#FAF8FF] p-4 sm:p-5 lg:p-6 shadow-sm border border-[#7C5CFC]/15"
       >
-        <div className="max-w-[62%] relative z-10">
+        <div className="max-w-[62%] sm:max-w-[60%] lg:max-w-[58%] relative z-10">
           <span className="inline-flex items-center gap-1.5 rounded-full bg-white/95 px-3 py-1 text-[11px] font-black text-[#7C5CFC] shadow-2xs">
             <Zap className="size-3 text-[#7C5CFC]" />
             {dailyScore > 0 ? `${dailyScore}% Daily Score` : "Daily Routine"}
@@ -371,37 +369,37 @@ function Index() {
           alt="Health & LifeHub Illustration"
           width={400}
           height={400}
-          className="pointer-events-none absolute -right-3 top-1/2 w-44 max-h-40 -translate-y-1/2 object-contain drop-shadow-[0_12px_24px_rgba(124,92,252,0.25)]"
+          className="pointer-events-none absolute -right-2 sm:-right-3 top-1/2 w-36 sm:w-44 lg:w-52 max-h-40 sm:max-h-44 lg:max-h-48 -translate-y-1/2 object-contain drop-shadow-[0_12px_24px_rgba(124,92,252,0.25)]"
         />
       </motion.section>
 
       {/* ════════════════════════════════════════════════════════════
           7-DAY DATE STRIP — Dynamic Calendar Navigation
           ════════════════════════════════════════════════════════════ */}
-      <section className="mt-4">
-        <div className="flex items-center justify-between gap-2 mb-2 px-1">
+      <section className="mt-4 sm:mt-5">
+        <div className="flex items-center justify-between gap-2 mb-2.5 px-1">
           <button
             onClick={goPrevWeek}
-            className="tap flex size-8 items-center justify-center rounded-full bg-white text-[#12131A] shadow-xs border border-border/60 hover:bg-accent"
+            className="tap flex size-9 sm:size-8 items-center justify-center rounded-full bg-white text-[#12131A] shadow-xs border border-border/60 hover:bg-accent shrink-0"
             aria-label="Previous week"
           >
             <ChevronLeft className="size-4" />
           </button>
-          <span className="text-xs font-extrabold text-muted-foreground flex-1 text-center">
+          <span className="text-xs sm:text-[13px] font-extrabold text-muted-foreground flex-1 text-center">
             {weekStrip[0]
               ? `${weekStrip[0].day} ${weekStrip[0].date} – ${weekStrip[6].day} ${weekStrip[6].date}`
               : "Current Week"}
           </span>
           <button
             onClick={goNextWeek}
-            className="tap flex size-8 items-center justify-center rounded-full bg-white text-[#12131A] shadow-xs border border-border/60 hover:bg-accent"
+            className="tap flex size-9 sm:size-8 items-center justify-center rounded-full bg-white text-[#12131A] shadow-xs border border-border/60 hover:bg-accent shrink-0"
             aria-label="Next week"
           >
             <ChevronRight className="size-4" />
           </button>
         </div>
 
-        <div className="flex items-center justify-between gap-1.5 overflow-x-auto pb-1 -mx-5 px-5">
+        <div className="flex items-center justify-between gap-2 sm:gap-2.5 overflow-x-auto pb-2 -mx-4 sm:-mx-6 lg:-mx-8 px-4 sm:px-6 lg:px-8">
           {weekStrip.map(({ day, date, key, isToday }) => {
             const isSelected = key === selectedDate;
             return (
@@ -436,18 +434,20 @@ function Index() {
       {/* ════════════════════════════════════════════════════════════
           "YOUR PLAN" SECTION — Real Appointment & Dose Action Cards
           ════════════════════════════════════════════════════════════ */}
-      <div className="mt-5 flex items-center justify-between px-1">
-        <h2 className="text-lg font-extrabold text-[#12131A] tracking-tight">Today's Schedule</h2>
+      <div className="mt-5 sm:mt-6 flex items-center justify-between px-1">
+        <h2 className="text-lg sm:text-xl font-extrabold text-[#12131A] tracking-tight">
+          Today's Schedule
+        </h2>
         <Link
           to="/appointments"
           onClick={() => sounds.playNavClick()}
-          className="inline-flex items-center gap-0.5 rounded-full bg-slate-100 px-3 py-1 text-xs font-bold text-[#12131A] hover:bg-slate-200 transition-colors"
+          className="inline-flex items-center gap-0.5 rounded-full bg-slate-100 px-3 py-1.5 text-xs font-bold text-[#12131A] hover:bg-slate-200 transition-colors shrink-0"
         >
           View All ({appointments.length}) <ChevronRight className="size-3.5" />
         </Link>
       </div>
 
-      <section className="mt-2.5 grid grid-cols-2 gap-3">
+      <section className="mt-3 grid grid-cols-2 gap-3 sm:gap-4 lg:gap-5">
         {/* Real Appointment Card */}
         {appLoading ? (
           <div className="card-soft animate-pulse flex flex-col justify-between bg-[#FFC593]/70 p-4 min-h-[160px]" />
@@ -520,9 +520,7 @@ function Index() {
         {medLoading ? (
           <div className="card-soft animate-pulse flex flex-col justify-between bg-[#BEE3FF]/70 p-4 min-h-[160px]" />
         ) : upcomingMed ? (
-          <div
-            className="card-soft group relative flex flex-col justify-between bg-gradient-to-br from-[#D9EFFF] to-[#C3E5FF] p-4 text-[#12131A] shadow-xs border border-sky-400/20 min-h-[160px]"
-          >
+          <div className="card-soft group relative flex flex-col justify-between bg-gradient-to-br from-[#D9EFFF] to-[#C3E5FF] p-4 text-[#12131A] shadow-xs border border-sky-400/20 min-h-[160px]">
             <Link to="/medications" className="flex-1">
               <div className="flex items-center justify-between">
                 <span className="rounded-full bg-white/80 px-2.5 py-0.5 text-[10px] font-black uppercase tracking-wide text-sky-900 shadow-2xs">
@@ -582,9 +580,9 @@ function Index() {
       </section>
 
       {/* ════════════════════════════════════════════════════════════
-          QUICK TRACKERS — Hydration & Health Adherence
+          QUICK TRACKERS — Hydration & Health Adherence (gap scales per html-tailwind)
           ════════════════════════════════════════════════════════════ */}
-      <section className="mt-4 grid grid-cols-2 gap-3">
+      <section className="mt-4 sm:mt-5 grid grid-cols-2 gap-3 sm:gap-4 lg:gap-5">
         {/* Interactive Circular Hydration Tracker */}
         <div className="card-soft relative overflow-hidden border border-border/60 bg-gradient-to-br from-[#F0F9FF] via-white to-[#F5F0FF] p-4 shadow-xs">
           <div className="flex items-center justify-between">
@@ -648,7 +646,9 @@ function Index() {
           </div>
 
           <p className="mt-2.5 text-center text-[11px] font-semibold text-muted-foreground">
-            {waterGoalReached ? "🎉 Target achieved!" : `${Math.max(0, waterGoal - waterGlasses)} glasses remaining`}
+            {waterGoalReached
+              ? "🎉 Target achieved!"
+              : `${Math.max(0, waterGoal - waterGlasses)} glasses remaining`}
           </p>
 
           {/* Quick Glass Controls */}
@@ -665,9 +665,7 @@ function Index() {
             >
               <Minus className="size-3.5" />
             </button>
-            <span className="text-[10px] font-black uppercase text-muted-foreground">
-              Water
-            </span>
+            <span className="text-[10px] font-black uppercase text-muted-foreground">Water</span>
             <button
               type="button"
               onClick={() => {
@@ -730,17 +728,17 @@ function Index() {
       </section>
 
       {/* ════════════════════════════════════════════════════════════
-          QUICK SERVICES DOCK — 5 Core Daily Tools
+          QUICK SERVICES DOCK — 5 Core Daily Tools (touch-spacing ≥8px)
           ════════════════════════════════════════════════════════════ */}
-      <section className="mt-4 card-soft bg-gradient-to-br from-[#FFF0F5] via-[#FFF5F8] to-[#FFE8F0] p-4 text-[#12131A] border border-pink-200/40 shadow-xs">
-        <div className="flex items-center justify-between mb-3 px-1">
+      <section className="mt-4 sm:mt-5 card-soft bg-gradient-to-br from-[#FFF0F5] via-[#FFF5F8] to-[#FFE8F0] p-3.5 sm:p-4 lg:p-5 text-[#12131A] border border-pink-200/40 shadow-xs">
+        <div className="flex items-center justify-between mb-3 sm:mb-4 px-1">
           <span className="text-xs font-extrabold uppercase tracking-wider text-pink-950">
             Quick Services
           </span>
           <span className="text-[11px] font-bold text-pink-900/70">5 Essentials</span>
         </div>
 
-        <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center justify-between gap-2 sm:gap-3 lg:gap-4">
           <Link
             to="/bills"
             title="Bills & Finance"
@@ -823,7 +821,9 @@ function Index() {
         {activityTimeline.length === 0 ? (
           <div className="rounded-2xl border border-dashed border-border p-5 text-center bg-white">
             <Activity className="mx-auto size-7 text-muted-foreground/50" />
-            <p className="mt-1.5 text-xs text-muted-foreground font-medium">No activity recorded yet</p>
+            <p className="mt-1.5 text-xs text-muted-foreground font-medium">
+              No activity recorded yet
+            </p>
           </div>
         ) : (
           activityTimeline.slice(0, 5).map((log) => {

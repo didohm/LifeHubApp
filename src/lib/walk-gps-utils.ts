@@ -1,6 +1,6 @@
 /**
  * GPS Noise Filtering and Stats Computation for Walk Tracking
- * 
+ *
  * Pure functions for processing raw GPS points into clean, accurate metrics.
  * No external API dependencies - all calculations done locally.
  */
@@ -45,12 +45,7 @@ const MAX_SPEED_JUMP = 3.0; // m/s - reject unrealistic acceleration
 /**
  * Haversine formula for distance between two GPS coordinates
  */
-export function haversineDistance(
-  lat1: number,
-  lng1: number,
-  lat2: number,
-  lng2: number
-): number {
+export function haversineDistance(lat1: number, lng1: number, lat2: number, lng2: number): number {
   const R = 6371000; // Earth radius in meters
   const toRad = (deg: number) => (deg * Math.PI) / 180;
 
@@ -59,10 +54,7 @@ export function haversineDistance(
 
   const a =
     Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-    Math.cos(toRad(lat1)) *
-      Math.cos(toRad(lat2)) *
-      Math.sin(dLng / 2) *
-      Math.sin(dLng / 2);
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) * Math.sin(dLng / 2);
 
   const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
   return R * c;
@@ -70,7 +62,7 @@ export function haversineDistance(
 
 /**
  * Filter GPS noise before computing stats
- * 
+ *
  * Removes points with:
  * - Poor accuracy (> 15m)
  * - Minimal displacement (< 3m from previous point)
@@ -98,12 +90,7 @@ export function filterGPSPoints(points: GPSPoint[]): FilteredGPSPoint[] {
     }
 
     // Calculate distance from last valid point
-    const distance = haversineDistance(
-      lastValid.lat,
-      lastValid.lng,
-      point.lat,
-      point.lng
-    );
+    const distance = haversineDistance(lastValid.lat, lastValid.lng, point.lat, point.lng);
 
     // Skip if displacement is too small (GPS jitter)
     if (distance < MIN_DISPLACEMENT) {
@@ -142,7 +129,7 @@ export function filterGPSPoints(points: GPSPoint[]): FilteredGPSPoint[] {
  */
 export function computeWalkStats(
   filteredPoints: FilteredGPSPoint[],
-  totalDuration: number // seconds (excluding pauses)
+  totalDuration: number, // seconds (excluding pauses)
 ): WalkStats {
   if (filteredPoints.length < 2) {
     return {
@@ -158,19 +145,12 @@ export function computeWalkStats(
 
   // Compute cumulative distance
   let cumulativeDistance = 0;
-  const pointsWithDistance: FilteredGPSPoint[] = [
-    { ...filteredPoints[0], distance: 0 },
-  ];
+  const pointsWithDistance: FilteredGPSPoint[] = [{ ...filteredPoints[0], distance: 0 }];
 
   for (let i = 1; i < filteredPoints.length; i++) {
     const prev = filteredPoints[i - 1];
     const curr = filteredPoints[i];
-    const segmentDistance = haversineDistance(
-      prev.lat,
-      prev.lng,
-      curr.lat,
-      curr.lng
-    );
+    const segmentDistance = haversineDistance(prev.lat, prev.lng, curr.lat, curr.lng);
     cumulativeDistance += segmentDistance;
     pointsWithDistance.push({ ...curr, distance: cumulativeDistance });
   }
@@ -224,10 +204,7 @@ export function computeWalkStats(
 /**
  * Compute per-kilometer splits with pace and elevation
  */
-function computeSplits(
-  pointsWithDistance: FilteredGPSPoint[],
-  totalDuration: number
-): WalkSplit[] {
+function computeSplits(pointsWithDistance: FilteredGPSPoint[], totalDuration: number): WalkSplit[] {
   if (pointsWithDistance.length < 2) return [];
 
   const splits: WalkSplit[] = [];
@@ -261,7 +238,12 @@ function computeSplits(
       }
     }
 
-    if (startIdx === -1 || endIdx === -1 || startIdx >= pointsWithDistance.length || endIdx >= pointsWithDistance.length) {
+    if (
+      startIdx === -1 ||
+      endIdx === -1 ||
+      startIdx >= pointsWithDistance.length ||
+      endIdx >= pointsWithDistance.length
+    ) {
       continue;
     }
 
@@ -269,8 +251,7 @@ function computeSplits(
     const endPoint = pointsWithDistance[endIdx];
 
     // Compute actual distance and duration for this split
-    const splitDistance =
-      (endPoint.distance ?? 0) - (startPoint.distance ?? 0);
+    const splitDistance = (endPoint.distance ?? 0) - (startPoint.distance ?? 0);
     const splitTimeDelta = (endPoint.ts - startPoint.ts) / 1000;
 
     // Estimate split duration, normalizing against total active duration if pauses occurred
@@ -278,17 +259,21 @@ function computeSplits(
       splitTimeDelta > 0
         ? splitTimeDelta
         : totalDuration > 0 && totalDistance > 0
-        ? (splitDistance / totalDistance) * totalDuration
-        : 0;
+          ? (splitDistance / totalDistance) * totalDuration
+          : 0;
 
-    if (totalTimeDelta > totalDuration && totalDuration > 0 && totalTimeDelta > 0 && splitTimeDelta > 0) {
+    if (
+      totalTimeDelta > totalDuration &&
+      totalDuration > 0 &&
+      totalTimeDelta > 0 &&
+      splitTimeDelta > 0
+    ) {
       // Scale out paused gaps proportionally to match active walking duration
       splitDuration = (splitTimeDelta / totalTimeDelta) * totalDuration;
     }
 
     // Compute pace for this split (sec/km)
-    const splitPace =
-      splitDistance > 0 ? (splitDuration / splitDistance) * 1000 : 0;
+    const splitPace = splitDistance > 0 ? (splitDuration / splitDistance) * 1000 : 0;
 
     // Compute elevation change for this split
     let elevationChange: number | null = null;
@@ -437,11 +422,7 @@ function rdpSimplify(points: GPSPoint[], epsilon: number): GPSPoint[] {
 /**
  * Calculate perpendicular distance from point to line segment
  */
-function perpendicularDistance(
-  point: GPSPoint,
-  lineStart: GPSPoint,
-  lineEnd: GPSPoint
-): number {
+function perpendicularDistance(point: GPSPoint, lineStart: GPSPoint, lineEnd: GPSPoint): number {
   const x0 = point.lat;
   const y0 = point.lng;
   const x1 = lineStart.lat;

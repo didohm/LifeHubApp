@@ -71,72 +71,78 @@ export function useHydration(userId: string | null | undefined) {
     };
   }, [fetchToday]);
 
-  const add = useCallback(async (amount = 1) => {
-    const uid = userIdRef.current;
-    if (!uid) return;
-    
-    // Optimistic UI update
-    setLog((prev) => {
-      const currentGlasses = prev?.glasses ?? 0;
-      const currentGoal = prev?.goal ?? DEFAULT_WATER_GOAL;
-      const newGlasses = Math.max(0, currentGlasses + amount);
-      return {
-        id: prev?.id || `opt_${Date.now()}`,
-        user_id: uid,
-        day: prev?.day || localDayKey(new Date()),
-        glasses: newGlasses,
-        goal: currentGoal,
-        goal_reached: newGlasses >= currentGoal,
-        created_at: prev?.created_at || new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      };
-    });
+  const add = useCallback(
+    async (amount = 1) => {
+      const uid = userIdRef.current;
+      if (!uid) return;
 
-    setBusy(true);
-    try {
-      const updated = await addWaterGlass(uid, amount);
-      setLog(updated);
-    } catch (err) {
-      console.error("Failed to add water glass:", err);
-      // Rollback on error
-      await fetchToday(true);
-    } finally {
-      setBusy(false);
-    }
-  }, [fetchToday]);
+      // Optimistic UI update
+      setLog((prev) => {
+        const currentGlasses = prev?.glasses ?? 0;
+        const currentGoal = prev?.goal ?? DEFAULT_WATER_GOAL;
+        const newGlasses = Math.max(0, currentGlasses + amount);
+        return {
+          id: prev?.id || `opt_${Date.now()}`,
+          user_id: uid,
+          day: prev?.day || localDayKey(new Date()),
+          glasses: newGlasses,
+          goal: currentGoal,
+          goal_reached: newGlasses >= currentGoal,
+          created_at: prev?.created_at || new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        };
+      });
 
-  const remove = useCallback(async (amount = 1) => {
-    const uid = userIdRef.current;
-    if (!uid) return;
+      setBusy(true);
+      try {
+        const updated = await addWaterGlass(uid, amount);
+        setLog(updated);
+      } catch (err) {
+        console.error("Failed to add water glass:", err);
+        // Rollback on error
+        await fetchToday(true);
+      } finally {
+        setBusy(false);
+      }
+    },
+    [fetchToday],
+  );
 
-    // Optimistic UI update
-    setLog((prev) => {
-      const currentGlasses = prev?.glasses ?? 0;
-      const currentGoal = prev?.goal ?? DEFAULT_WATER_GOAL;
-      const newGlasses = Math.max(0, currentGlasses - amount);
-      return {
-        id: prev?.id || `opt_${Date.now()}`,
-        user_id: uid,
-        day: prev?.day || localDayKey(new Date()),
-        glasses: newGlasses,
-        goal: currentGoal,
-        goal_reached: newGlasses >= currentGoal,
-        created_at: prev?.created_at || new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      };
-    });
+  const remove = useCallback(
+    async (amount = 1) => {
+      const uid = userIdRef.current;
+      if (!uid) return;
 
-    setBusy(true);
-    try {
-      const updated = await removeWaterGlass(uid, amount);
-      if (updated) setLog(updated);
-    } catch (err) {
-      console.error("Failed to remove water glass:", err);
-      await fetchToday(true);
-    } finally {
-      setBusy(false);
-    }
-  }, [fetchToday]);
+      // Optimistic UI update
+      setLog((prev) => {
+        const currentGlasses = prev?.glasses ?? 0;
+        const currentGoal = prev?.goal ?? DEFAULT_WATER_GOAL;
+        const newGlasses = Math.max(0, currentGlasses - amount);
+        return {
+          id: prev?.id || `opt_${Date.now()}`,
+          user_id: uid,
+          day: prev?.day || localDayKey(new Date()),
+          glasses: newGlasses,
+          goal: currentGoal,
+          goal_reached: newGlasses >= currentGoal,
+          created_at: prev?.created_at || new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        };
+      });
+
+      setBusy(true);
+      try {
+        const updated = await removeWaterGlass(uid, amount);
+        if (updated) setLog(updated);
+      } catch (err) {
+        console.error("Failed to remove water glass:", err);
+        await fetchToday(true);
+      } finally {
+        setBusy(false);
+      }
+    },
+    [fetchToday],
+  );
 
   const updateGoal = useCallback(
     async (goal: number) => {

@@ -190,7 +190,13 @@ function Services() {
   const [searchOpen, setSearchOpen] = useState(false);
 
   return (
-    <Screen>
+    <Screen
+      // Responsive container overrides: relax the global max-w-md cap so the
+      // services hub can breathe on tablet/desktop while keeping mobile tight.
+      // Mobile-first outer padding: px-4 (16px) on <640px gives cards more
+      // room; scales to sm:px-6 / lg:px-8 per html-tailwind responsive-padding.
+      contentClassName="max-w-5xl xl:max-w-6xl !px-4 sm:!px-6 lg:!px-8 !pt-4 sm:!pt-6 lg:!pt-8 !pb-28 sm:!pb-32"
+    >
       <ScreenHeader
         title="Services"
         subtitle="All daily routines, health & tools"
@@ -199,7 +205,7 @@ function Services() {
           <button
             type="button"
             onClick={() => setSearchOpen(true)}
-            className="tap flex size-10 items-center justify-center rounded-full border border-black/[0.04] bg-white text-[#12131A] shadow-sm hover:bg-slate-50"
+            className="tap flex size-11 sm:size-10 items-center justify-center rounded-full border border-black/[0.04] bg-white text-[#12131A] shadow-sm hover:bg-slate-50"
             aria-label="Search services and items"
             title="Search"
           >
@@ -209,9 +215,11 @@ function Services() {
       />
 
       {/* ════════════════════════════════════════════════════════════
-          SERVICES GRID
+          SERVICES GRID — responsive, mobile-first
+          2 cols on mobile (375px), 3 cols from md (768px), 4 cols on xl
+          gap scales with viewport to keep ≥8px touch spacing (ux:touch-spacing)
           ════════════════════════════════════════════════════════════ */}
-      <div className="mt-1 grid grid-cols-2 gap-3">
+      <div className="mt-2 grid grid-cols-2 gap-3 sm:mt-3 sm:gap-4 md:grid-cols-3 lg:gap-5 xl:grid-cols-4">
         {servicesData.map((service, idx) => {
           const count = service.getCount?.(data);
           const isAi = service.to === "/ai";
@@ -227,26 +235,26 @@ function Services() {
                 to={service.to}
                 onClick={() => sounds.playCardClick()}
                 className={cn(
-                  "card-soft tap group relative flex min-h-[150px] flex-col justify-between overflow-hidden border p-4 pr-9 shadow-2xs transition-all hover:-translate-y-0.5 hover:shadow-md",
+                  "card-soft tap group relative flex min-h-[148px] flex-col justify-between overflow-hidden border p-3.5 pr-9 shadow-2xs transition-all hover:-translate-y-0.5 hover:shadow-md sm:min-h-[160px] sm:p-4 sm:pr-10 lg:min-h-[172px] lg:p-5 lg:pr-10",
                   "bg-gradient-to-br",
                   service.gradient,
                 )}
               >
                 <div>
-                  <div className="flex items-center justify-between">
+                  <div className="flex items-center justify-between gap-1.5">
                     <div
                       className={cn(
-                        "flex size-11 items-center justify-center rounded-full shadow-sm transition-transform group-hover:scale-105",
+                        "flex size-10 shrink-0 items-center justify-center rounded-full shadow-sm transition-transform group-hover:scale-105 sm:size-11",
                         service.iconColor,
                       )}
                     >
-                      <service.Icon className="size-5" strokeWidth={2.35} />
+                      <service.Icon className="size-[18px] sm:size-5" strokeWidth={2.35} />
                     </div>
 
                     {count && (
                       <span
                         className={cn(
-                          "rounded-full px-2.5 py-1 text-[10px] font-extrabold uppercase tracking-wide shadow-2xs truncate max-w-[96px]",
+                          "rounded-full px-2 py-1 text-[9px] font-extrabold uppercase tracking-wide shadow-2xs truncate max-w-[84px] sm:max-w-[96px] sm:px-2.5 sm:text-[10px] lg:max-w-[110px]",
                           service.badgeColor,
                         )}
                       >
@@ -257,7 +265,7 @@ function Services() {
 
                   <h3
                     className={cn(
-                      "mt-3 text-[15px] font-extrabold leading-snug line-clamp-1 group-hover:translate-x-0.5 transition-transform",
+                      "mt-3 text-[14px] font-extrabold leading-snug line-clamp-1 transition-transform group-hover:translate-x-0.5 sm:mt-3.5 sm:text-[15px]",
                       isAi ? "text-white" : "text-foreground",
                     )}
                   >
@@ -266,7 +274,7 @@ function Services() {
 
                   <p
                     className={cn(
-                      "mt-1 text-[12px] leading-snug line-clamp-2",
+                      "mt-1 line-clamp-2 text-[11.5px] leading-snug sm:text-[12px]",
                       isAi ? "text-white/80" : "text-muted-foreground",
                     )}
                   >
@@ -276,7 +284,7 @@ function Services() {
 
                 <ChevronRight
                   className={cn(
-                    "absolute right-3.5 top-1/2 size-5 -translate-y-1/2 transition-transform group-hover:translate-x-0.5",
+                    "absolute right-3 top-1/2 size-4 -translate-y-1/2 transition-transform group-hover:translate-x-0.5 sm:right-3.5 sm:size-5",
                     isAi ? "text-white/85" : "text-[#12131A]",
                   )}
                   strokeWidth={2.2}

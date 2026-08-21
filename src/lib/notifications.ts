@@ -593,12 +593,9 @@ export class NotificationService {
   /** Listens to notifications received while the app is in the foreground. */
   static registerForegroundListener() {
     if (!isNative()) return () => {};
-    const listener = LocalNotifications.addListener(
-      "localNotificationReceived",
-      () => {
-        sounds.playNotification();
-      },
-    );
+    const listener = LocalNotifications.addListener("localNotificationReceived", () => {
+      sounds.playNotification();
+    });
     return () => {
       listener.then((l) => l.remove()).catch(() => {});
     };

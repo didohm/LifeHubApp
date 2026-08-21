@@ -1,5 +1,10 @@
 import { initializeApp, getApps, getApp } from "firebase/app";
-import { getAuth } from "firebase/auth";
+import {
+  getAuth,
+  setPersistence,
+  browserLocalPersistence,
+  indexedDBLocalPersistence,
+} from "firebase/auth";
 import {
   initializeFirestore,
   persistentLocalCache,
@@ -38,8 +43,20 @@ const app = !getApps().length
     )
   : getApp();
 
-// Initialize Firebase Authentication
+// Initialize Firebase Authentication with explicit persistence.
+// Vercel best practice (async-parallel): auth initialization is synchronous;
+// persistence is set in the background without blocking Firestore setup.
+// `indexedDBLocalPersistence` is preferred (fast local cache); falls back to
+// `browserLocalPersistence` automatically. This prevents session loss after
+// redirect and eliminates race where a reload restores as signed-out.
 export const auth = getAuth(app);
+if (typeof window !== "undefined") {
+  // Fire-and-forget: do not await — `onAuthStateChanged` will fire once
+  // persistence is ready. A failure here is non-fatal (defaults still work).
+  void setPersistence(auth, indexedDBLocalPersistence).catch(() =>
+    setPersistence(auth, browserLocalPersistence).catch(() => {}),
+  );
+}
 
 // Initialize Cloud Firestore with persistence enabled for improved performance and offline support.
 // Use try-catch to handle HMR / double-import: if already initialized with different options,

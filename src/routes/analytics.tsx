@@ -26,7 +26,6 @@ import {
 import { motion } from "framer-motion";
 import { Screen, ScreenHeader } from "@/components/lifehub/Screen";
 import { useAuth } from "@/hooks/use-auth";
-import { useAuthGuard } from "@/hooks/use-auth-guard";
 import { useData } from "@/lib/data-context";
 import { DashboardSkeleton } from "@/components/lifehub/SkeletonLoader";
 import { parseLocalDate } from "@/lib/date-utils";
@@ -111,7 +110,6 @@ const DUP_LOG_MARKERS = [
 
 function AnalyticsPage() {
   const { user, loading: authLoading } = useAuth();
-  useAuthGuard(user, authLoading);
 
   const {
     medications = [],
@@ -185,8 +183,7 @@ function AnalyticsPage() {
     const safeWaterLogs = waterLogs || [];
 
     const takenMeds = safeMeds.filter((m) => m?.taken).length;
-    const adherencePct =
-      safeMeds.length > 0 ? Math.round((takenMeds / safeMeds.length) * 100) : 0;
+    const adherencePct = safeMeds.length > 0 ? Math.round((takenMeds / safeMeds.length) * 100) : 0;
 
     const dosesTaken = safeMedLogs.filter((l) => {
       const t = isoMs(l?.taken_at);
@@ -229,8 +226,13 @@ function AnalyticsPage() {
       const t = parseDateOnly(d).getTime();
       return t >= startMs && t <= endMs;
     });
-    const walkKm = periodWalks.reduce((sum, s) => sum + (s?.distance || (s as any)?.distance_meters || 0), 0) / 1000;
-    const walkSteps = periodWalks.reduce((sum, s) => sum + (s?.steps || (s as any)?.step_count || 0), 0);
+    const walkKm =
+      periodWalks.reduce((sum, s) => sum + (s?.distance || (s as any)?.distance_meters || 0), 0) /
+      1000;
+    const walkSteps = periodWalks.reduce(
+      (sum, s) => sum + (s?.steps || (s as any)?.step_count || 0),
+      0,
+    );
     const walksDone = periodWalks.length;
 
     const waterGlasses = safeWaterLogs
@@ -418,7 +420,17 @@ function AnalyticsPage() {
     });
 
     return buckets;
-  }, [timeFilter, startMs, endMs, activityLogs, medicationLogs, payments, workouts, walkSessions, waterLogs]);
+  }, [
+    timeFilter,
+    startMs,
+    endMs,
+    activityLogs,
+    medicationLogs,
+    payments,
+    workouts,
+    walkSessions,
+    waterLogs,
+  ]);
 
   const chartTotals = useMemo(() => {
     return chartData.reduce(
@@ -541,7 +553,8 @@ function AnalyticsPage() {
           <TrendingUp className="mx-auto size-10 text-[#7C5CFC]/40" />
           <p className="mt-2 text-sm font-extrabold text-[#12131A]">No analytics recorded</p>
           <p className="mt-1 text-xs text-muted-foreground max-w-xs mx-auto leading-relaxed">
-            Actions from medications, water, appointments, tasks, workouts, and bills will calculate here in real time.
+            Actions from medications, water, appointments, tasks, workouts, and bills will calculate
+            here in real time.
           </p>
         </div>
       )}
@@ -883,7 +896,9 @@ function AnalyticsPage() {
             <h3 className="text-sm font-extrabold text-[#12131A] flex items-center gap-1.5">
               💊 Dose Logging History
             </h3>
-            <span className="text-xs font-semibold text-muted-foreground">{stats.dosesTaken} logged</span>
+            <span className="text-xs font-semibold text-muted-foreground">
+              {stats.dosesTaken} logged
+            </span>
           </div>
           <div className="h-40 min-h-[160px] w-full relative">
             <ResponsiveContainer width="100%" height="100%">
