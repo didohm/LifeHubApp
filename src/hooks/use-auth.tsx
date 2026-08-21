@@ -12,6 +12,7 @@ import { FirebaseAuthentication } from "@capacitor-firebase/authentication";
 import {
   getRedirectResult,
   onAuthStateChanged,
+  signInWithPopup,
   signInWithRedirect,
   signInWithCredential,
   GoogleAuthProvider,
@@ -295,24 +296,67 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const credential = GoogleAuthProvider.credential(idToken);
       const userCredential = await signInWithCredential(auth, credential);
       const fbUser = userCredential.user;
-      if (fbUser.photoURL) {
+      if (fbUser?.photoURL) {
         cachePhotoUrl(fbUser.photoURL);
         preloadPhoto(fbUser.photoURL);
       }
-      // Open the app immediately — profile/Firestore sync happens in background.
-      // onAuthStateChanged publishes the user and syncs their profile. Doing
-      // that work here as well caused duplicate reads and profile writes.
+      // Publish immediately so MainContentGate can redirect to "/" instantly.
+      // onAuthStateChanged will also publish, but waiting for it adds ~300ms
+      // where the user sees "null" and could be bounced to /auth.
+      if (fbUser) {
+        publishUser(fbUser);
+        setProfileReady(false);
+        const sync = syncProfileToFirestore(fbUser);
+        const timeout = new Promise<void>((resolve) => setTimeout(resolve, 4000));
+        void Promise.race([sync, timeout]).finally(() => setProfileReady(true));
+      }
       return;
     } else {
-      // Browser flow: redirects work where popups are blocked or lose their
-      // credential state, which affects some Android browsers.
+      // Browser flow: try popup first (instant, no page reload) — this is the
+      // path that reliably returns to "/" after connect. If the popup is
+      // blocked (e.g. some Android browsers) fall back to redirect, which is
+      // consumed by getRedirectResult() on the next load.
       const provider = new GoogleAuthProvider();
       provider.setCustomParameters({ prompt: "select_account" });
-      await signInWithRedirect(auth, provider);
-      // The browser normally unloads before this resolves. On return,
-      // getRedirectResult() above consumes the result exactly once.
+      try {
+        const userCredential = await signInWithPopup(auth, provider);
+        const fbUser = userCredential.user;
+        if (fbUser?.photoURL) {
+          cachePhotoUrl(fbUser.photoURL);
+          preloadPhoto(fbUser.photoURL);
+        }
+        if (fbUser) {
+          publishUser(fbUser);
+          setProfileReady(false);
+          const sync = syncProfileToFirestore(fbUser);
+          const timeout = new Promise<void>((resolve) => setTimeout(resolve, 4000));
+          void Promise.race([sync, timeout]).finally(() => setProfileReady(true));
+        }
+        return;
+      } catch (popupError: any) {
+        const code = popupError?.code || "";
+        // User closed popup — don't fallback, just surface the error.
+        if (code === "auth/popup-closed-by-user" || code === "auth/cancelled-popup-request") {
+          throw popupError;
+        }
+        // Popup blocked or environment doesn't support it → fallback to redirect.
+        if (
+          code === "auth/popup-blocked" ||
+          code === "auth/operation-not-supported-in-this-environment" ||
+          code === "auth/popup-blocked-by-browser"
+        ) {
+          await signInWithRedirect(auth, provider);
+          return;
+        }
+        // Unknown popup error → try redirect as last resort, otherwise surface.
+        if (code.startsWith("auth/popup")) {
+          await signInWithRedirect(auth, provider);
+          return;
+        }
+        throw popupError;
+      }
     }
-  }, []);
+  }, [publishUser, syncProfileToFirestore]);
 
   const logout = useCallback(async () => {
     await firebaseSignOut(auth);

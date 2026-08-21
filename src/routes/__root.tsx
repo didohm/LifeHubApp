@@ -209,12 +209,15 @@ function MainContentGate() {
   );
 
   useEffect(() => {
-    // CRITICAL: do not decide any route while Firebase is still resolving
-    // (loading) OR while the Firestore profile read that determines
-    // onboarding is pending (user && !profileReady). Navigating during
-    // that window caused the bug where a fresh login was sent to "/" and
-    // then bounced back to "/auth" when the gate re-evaluated.
-    if (loading || (user && !profileReady)) return;
+    // CRITICAL: do not decide any route while Firebase is still resolving.
+    // For users with a cached date_of_birth we already know onboarding is NOT
+    // needed, so an authenticated user on /auth can be sent to "/" immediately
+    // (instant home after connect). For users without a cached DOB we must wait
+    // for `profileReady` + `isNewUser` to decide "/" vs "/onboarding" — otherwise
+    // a new user would briefly see home then be bounced to onboarding.
+    if (loading) return;
+    const hasCachedDob = !!user?.date_of_birth;
+    if (user && !profileReady && !hasCachedDob) return;
 
     if (!user) {
       if (location.pathname !== "/auth") {
@@ -237,11 +240,10 @@ function MainContentGate() {
   }, [user, loading, profileReady, shouldOnboard, location.pathname, navigate]);
 
   // 1. Splash ONLY while Firebase auth state is unknown (milliseconds) or
-  //    while the Firestore profile read that decides onboarding is pending.
-  //    This guarantees the onboarding screen is only ever shown to users
-  //    whose profile is truly missing the date of birth — never to users who
-  //    already completed it, even when the device cache is cold.
-  if (loading || (user && !profileReady)) {
+  //    while the Firestore profile decision is pending for a user who *might*
+  //    need onboarding (missing DOB). Users with a cached DOB go straight to
+  //    home ("/") without waiting — fixes the "connect → stays on /auth" delay.
+  if (loading || (user && !profileReady && missingDob)) {
     return <AuthLoadingSplash />;
   }
 
