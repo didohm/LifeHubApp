@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { createFileRoute } from "@tanstack/react-router";
+import { Capacitor } from "@capacitor/core";
 import { useAuth } from "../hooks/use-auth";
 import { Screen } from "@/components/lifehub/Screen";
 import hero3d from "@/assets/hero-3d.webp";
@@ -31,9 +32,25 @@ function AuthPage() {
   //  - new users to be sent to "/" instead of "/onboarding"
   //  - push (not replace) navigation leaving a back-button loop to /auth
   //  - race where this effect and the root gate both navigated simultaneously.
-  // While auth is resolving, the root gate shows the splash. Here we render
-  // nothing — no second loader, no flash.
-  if (loading) return null;
+  // Fresh installs (no cached session) show the auth UI instantly without
+  // waiting 2-3s for Firebase IndexedDB warm-up — the splash is only shown
+  // when a previous session might exist.
+  const hasCachedSession = (() => {
+    if (typeof window === "undefined") return true;
+    try {
+      return (
+        localStorage.getItem("lifehub_has_session") === "1" ||
+        !!localStorage.getItem("lifehub_user_profile")
+      );
+    } catch {
+      return false;
+    }
+  })();
+  const isNative = Capacitor.isNativePlatform();
+  // On web, `getRedirectResult` must finish before we can decide; keep the
+  // delegate-to-gate behavior (return null while gate shows splash). On native
+  // with no cached session we render the auth UI instantly.
+  if (loading && (hasCachedSession || !isNative)) return null;
 
   // Authenticated: the root gate will replace to "/" (existing user) or
   // "/onboarding" (new user). Render nothing for the instant the replace

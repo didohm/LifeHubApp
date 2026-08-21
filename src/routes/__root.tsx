@@ -11,6 +11,8 @@ import {
 import { useEffect, useMemo, type ReactNode } from "react";
 import { Toaster } from "sonner";
 
+import { Capacitor } from "@capacitor/core";
+
 import appCss from "../styles.css?url";
 import { AuthProvider, useAuth } from "../hooks/use-auth";
 import { DataProvider } from "../lib/data-context";
@@ -151,7 +153,7 @@ function RootShell({ children }: { children: ReactNode }) {
 
 function AuthLoadingSplash() {
   return (
-    <div className="flex min-h-dvh w-full items-center justify-center bg-white">
+    <div className="flex min-h-dvh w-full items-center justify-center bg-gradient-to-b from-[#FBFBFE] via-[#F7F7FA] to-[#F3F4F8]">
       <div className="flex flex-col items-center gap-4">
         <div className="relative size-20">
           <div className="absolute inset-0 animate-spin rounded-full border-4 border-[#E8E2FF] border-t-[#7C5CFC]" />
@@ -199,6 +201,24 @@ function MainContentGate() {
   const location = useLocation();
   const navigate = useNavigate();
 
+  // Synchronous hint: does a previous session likely exist? Checked every render
+  // so the decision updates instantly after login/logout without a full reload.
+  // Fresh installs (no flag, no cached profile) can skip the 2-3s Firebase
+  // IndexedDB warm-up and show the auth page instantly — eliminating the
+  // "undefined user" flash and the long spinner before /auth.
+  const isNative = Capacitor.isNativePlatform();
+  const hasCachedSession = (() => {
+    if (typeof window === "undefined") return true;
+    try {
+      return (
+        localStorage.getItem("lifehub_has_session") === "1" ||
+        !!localStorage.getItem("lifehub_user_profile")
+      );
+    } catch {
+      return false;
+    }
+  })();
+
   // Vercel best-practice: derive primitives, memoize derived state to keep
   // effect deps stable and avoid redundant navigations (rerender-derived-state, rerender-dependencies).
   const missingDob = useMemo(() => !!user && !user.date_of_birth, [user]);
@@ -209,13 +229,13 @@ function MainContentGate() {
   );
 
   useEffect(() => {
-    // CRITICAL: do not decide any route while Firebase is still resolving.
-    // For users with a cached date_of_birth we already know onboarding is NOT
-    // needed, so an authenticated user on /auth can be sent to "/" immediately
-    // (instant home after connect). For users without a cached DOB we must wait
-    // for `profileReady` + `isNewUser` to decide "/" vs "/onboarding" — otherwise
-    // a new user would briefly see home then be bounced to onboarding.
-    if (loading) return;
+    // While Firebase is still resolving, only block navigation if a session
+    // *might* exist (hasCachedSession) on native. On web the redirect flow
+    // (`getRedirectResult`) must always be awaited, so we never skip there.
+    // Fresh native installs skip the 2-3s IndexedDB warm-up and go to /auth instantly.
+    const shouldWaitForAuth = loading && (hasCachedSession || !isNative);
+    if (shouldWaitForAuth) return;
+    if (loading && !hasCachedSession && user) return;
     const hasCachedDob = !!user?.date_of_birth;
     if (user && !profileReady && !hasCachedDob) return;
 
@@ -237,25 +257,28 @@ function MainContentGate() {
     ) {
       navigate({ to: "/", replace: true });
     }
-  }, [user, loading, profileReady, shouldOnboard, location.pathname, navigate]);
+  }, [user, loading, hasCachedSession, isNative, profileReady, shouldOnboard, location.pathname, navigate]);
 
-  // 1. Splash ONLY while Firebase auth state is unknown (milliseconds) or
-  //    while the Firestore profile decision is pending for a user who *might*
-  //    need onboarding (missing DOB). Users with a cached DOB go straight to
-  //    home ("/") without waiting — fixes the "connect → stays on /auth" delay.
-  if (loading || (user && !profileReady && missingDob)) {
+  // 1. Splash ONLY when a session might exist (or on web where redirect must
+  //    be awaited) and Firebase is still unknown, or while the Firestore
+  //    profile decision is pending for a user who *might* need onboarding
+  //    (missing DOB). Fresh native installs skip the splash to show /auth instantly.
+  if ((loading && (hasCachedSession || !isNative)) || (user && !profileReady && missingDob)) {
     return <AuthLoadingSplash />;
   }
 
-  // 2. Signed out: never mount protected pages. Render nothing for the
-  //    instant the redirect effect takes; the user lands on /auth
-  //    immediately with zero loading screens. DataProvider is always
-  //    mounted (empty) via DataProviderGate, so useData() never throws.
+  // 2. Signed out: never mount protected pages. While the redirect effect
+  //    is in flight we keep showing the splash (never a blank `null`) so
+  //    the user never sees a white flash or an index page with "undefined".
+  //    DataProvider is always mounted (empty) via DataProviderGate.
   if (!user) {
     if (location.pathname === "/auth") {
       return <Outlet />;
     }
-    return null;
+    // Not at /auth yet — keep splash until the replace() lands. This is
+    // a single frame for fresh installs (hasCachedSession === false) else
+    // the splash above already covered the 2-3s wait.
+    return <AuthLoadingSplash />;
   }
 
   // 3. Brand-new account with missing DOB → onboarding (only new users).

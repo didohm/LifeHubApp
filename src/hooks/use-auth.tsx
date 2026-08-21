@@ -36,6 +36,7 @@ import {
 } from "../lib/photo-cache";
 
 const USER_PROFILE_CACHE_KEY = "lifehub_user_profile";
+const HAS_SESSION_KEY = "lifehub_has_session";
 
 // Hoisted: resolvedOptions() is relatively expensive — computed once per app
 // load instead of on every mapFirebaseUser() call (runs on each login/sync).
@@ -149,6 +150,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setUser(mapped);
       setAuthLoading(false);
       cacheProfile(mapped);
+      try {
+        localStorage.setItem(HAS_SESSION_KEY, "1");
+      } catch {
+        /* ignore */
+      }
       // Cache + preload the real photo so every avatar renders instantly
       // (no placeholder flash) on this and future launches.
       cachePhotoUrl(mapped.avatar_url);
@@ -370,6 +376,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     clearPhotoCache();
     if (typeof window !== "undefined") {
       localStorage.removeItem(USER_PROFILE_CACHE_KEY);
+      try {
+        localStorage.removeItem(HAS_SESSION_KEY);
+      } catch {
+        /* ignore */
+      }
     }
     setUser(null);
     setFirebaseUser(null);
@@ -405,6 +416,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     clearPhotoCache();
     if (typeof window !== "undefined") {
       localStorage.removeItem(USER_PROFILE_CACHE_KEY);
+      try {
+        localStorage.removeItem(HAS_SESSION_KEY);
+      } catch {
+        /* ignore */
+      }
     }
     setUser(null);
     setFirebaseUser(null);
