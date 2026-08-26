@@ -65,7 +65,19 @@ jobs:
       - name: Build unsigned IPA (for testing / sideloading)
         working-directory: ios/App
         run: |
-          xcodebuild -workspace App.xcworkspace \
+          # Capacitor 8+ uses SPM (no Podfile) -> no App.xcworkspace, use App.xcodeproj
+          # Resolve SPM deps first
+          if [ -d "App.xcworkspace" ]; then
+            XCODE_FLAG="-workspace App.xcworkspace"
+          else
+            echo "No App.xcworkspace found, using App.xcodeproj (SPM)"
+            XCODE_FLAG="-project App.xcodeproj"
+            # Resolve Swift Package dependencies (Capacitor plugins)
+            xcodebuild -resolvePackageDependencies -project App.xcodeproj -scheme App || echo "resolvePackageDependencies failed or no packages"
+          fi
+
+          echo "Building with $XCODE_FLAG"
+          xcodebuild $XCODE_FLAG \
             -scheme App \
             -configuration Release \
             -sdk iphoneos \

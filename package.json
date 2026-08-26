@@ -15,7 +15,7 @@
     "sync:ios": "npm run build:capacitor && cap sync ios",
     "open:ios": "cap open ios",
     "build:ios": "npm run build:capacitor && cap sync ios",
-    "ipa:ios": "npm run build:capacitor && npx cap sync ios && xcodebuild -workspace ios/App/App.xcworkspace -scheme App -configuration Release -sdk iphoneos -derivedDataPath ios/App/build CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY=\"\" && mkdir -p ios/App/build/ipa/Payload && rm -rf ios/App/build/ipa/Payload/App.app && cp -r ios/App/build/Build/Products/Release-iphoneos/App.app ios/App/build/ipa/Payload/ && cd ios/App/build/ipa && zip -r LifeHub-unsigned.ipa Payload && echo \"IPA at ios/App/build/ipa/LifeHub-unsigned.ipa\"",
+    "ipa:ios": "npm run build:capacitor && npx cap sync ios && bash -c 'if [ -d \"ios/App/App.xcworkspace\" ]; then FLAG=\"-workspace ios/App/App.xcworkspace\"; else FLAG=\"-project ios/App/App.xcodeproj\"; xcodebuild -resolvePackageDependencies -project ios/App/App.xcodeproj -scheme App || true; fi; echo \"Building with $FLAG\"; xcodebuild $FLAG -scheme App -configuration Release -sdk iphoneos -derivedDataPath ios/App/build CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY=\"\"' && mkdir -p ios/App/build/ipa/Payload && rm -rf ios/App/build/ipa/Payload/App.app && cp -r ios/App/build/Build/Products/Release-iphoneos/App.app ios/App/build/ipa/Payload/ && cd ios/App/build/ipa && zip -r LifeHub-unsigned.ipa Payload && echo \"IPA at ios/App/build/ipa/LifeHub-unsigned.ipa\"",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "verify:card": "tsx scripts/verify-activity-card.ts",
