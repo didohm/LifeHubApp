@@ -16,9 +16,29 @@ on:
 
 jobs:
   build-ios:
-    runs-on: macos-14
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
+
+      - name: Select Xcode 16.4 (required for firebase-ios-sdk >=12.7 / Swift tools 6.1)
+        run: |
+          echo "Available Xcodes:"
+          ls -1 /Applications | grep -E "Xcode"
+          # Prefer 16.4, fallback to 16.3, 16, then latest
+          if [ -d "/Applications/Xcode_16.4.app" ]; then
+            sudo xcode-select -s /Applications/Xcode_16.4.app/Contents/Developer
+          elif [ -d "/Applications/Xcode_16.3.app" ]; then
+            sudo xcode-select -s /Applications/Xcode_16.3.app/Contents/Developer
+          elif [ -d "/Applications/Xcode_16.2.app" ]; then
+            sudo xcode-select -s /Applications/Xcode_16.2.app/Contents/Developer
+          elif [ -d "/Applications/Xcode_16.app" ]; then
+            sudo xcode-select -s /Applications/Xcode_16.app/Contents/Developer
+          fi
+          echo "Selected Xcode:"
+          xcodebuild -version
+          swift --version
+          # fail fast if Swift tools <6.1
+          swift --version | grep -q "6\." || echo "::warning::Swift 6.x not detected - firebase-ios-sdk 12.x requires Xcode 16.3+ (Swift 6.1)"
 
       - uses: actions/setup-node@v4
         with:
