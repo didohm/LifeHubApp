@@ -4,6 +4,10 @@ const config: CapacitorConfig = {
   appId: "com.lifehub.app",
   appName: "LifeHub",
   webDir: "dist-capacitor/client",
+  ios: {
+    contentInset: "always",
+    scrollEnabled: true,
+  },
   plugins: {
     FirebaseAuthentication: {
       // Run Google Sign-In natively (Google Play services, outside the

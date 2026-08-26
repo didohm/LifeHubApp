@@ -1,0 +1,108 @@
+name: iOS Build (IPA)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "src/**"
+      - "public/**"
+      - "ios/**"
+      - "capacitor.config.ts"
+      - "vite.config.capacitor.ts"
+      - "package.json"
+
+jobs:
+  build-ios:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build web assets (Capacitor SPA)
+        run: npm run build:capacitor
+
+      - name: Sync Capacitor iOS (add platform if missing)
+        run: |
+          if [ ! -d "ios/App" ]; then
+            echo "iOS platform not found - adding via Capacitor"
+            npx cap add ios
+          fi
+          npx cap sync ios
+
+      - name: Setup GoogleService-Info.plist (Firebase iOS)
+        run: |
+          mkdir -p ios/App/App
+          if [ -f "GoogleService-Info.plist" ]; then
+            echo "Found GoogleService-Info.plist at repo root - copying to ios/App/App/"
+            cp GoogleService-Info.plist ios/App/App/GoogleService-Info.plist
+          elif [ -n "${{ secrets.GOOGLE_SERVICE_INFO_PLIST }}" ]; then
+            echo "Decoding GoogleService-Info.plist from GitHub Secret"
+            echo "${{ secrets.GOOGLE_SERVICE_INFO_PLIST }}" | base64 --decode > ios/App/App/GoogleService-Info.plist
+          else
+            echo "::warning::GoogleService-Info.plist not found at root and secret GOOGLE_SERVICE_INFO_PLIST not set. Firebase iOS features may fail. To fix: base64 -w 0 GoogleService-Info.plist | gh secret set GOOGLE_SERVICE_INFO_PLIST"
+          fi
+          ls -l ios/App/App/GoogleService-Info.plist || echo "No plist - build will continue without Firebase config"
+
+      - name: Install CocoaPods (if Podfile exists)
+        working-directory: ios/App
+        run: |
+          if [ -f "Podfile" ]; then
+            pod install
+          else
+            echo "No Podfile found - using SPM (Capacitor 8+), skipping pod install"
+          fi
+
+      - name: Build unsigned IPA (for testing / sideloading)
+        working-directory: ios/App
+        run: |
+          xcodebuild -workspace App.xcworkspace \
+            -scheme App \
+            -configuration Release \
+            -sdk iphoneos \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY=""
+
+          mkdir -p build/ipa/Payload
+          cp -r build/Build/Products/Release-iphoneos/App.app build/ipa/Payload/
+          cd build/ipa
+          zip -r LifeHub-unsigned.ipa Payload
+
+      - name: Upload unsigned IPA artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: LifeHub-unsigned-ipa
+          path: ios/App/build/ipa/LifeHub-unsigned.ipa
+          retention-days: 7
+
+      # --- For App Store / TestFlight (requires Apple Developer certificates) ---
+      # 1. Add secrets to GitHub: APPLE_CERTIFICATE (base64 .p12), APPLE_PROVISIONING_PROFILE (base64 .mobileprovision),
+      #    CERTIFICATE_PASSWORD, KEYCHAIN_PASSWORD
+      # 2. Uncomment below and comment out the unsigned build above
+      #
+      # - name: Import certificates
+      #   uses: apple-actions/import-codesign-certs@v3
+      #   with:
+      #     p12-file-base64: ${{ secrets.APPLE_CERTIFICATE }}
+      #     p12-password: ${{ secrets.CERTIFICATE_PASSWORD }}
+      # - name: Install provisioning profile
+      #   uses: apple-actions/download-provisioning-profiles@v3
+      #   with:
+      #     bundle-id: com.lifehub.app
+      #     issuer-id: ${{ secrets.APPSTORE_ISSUER_ID }}
+      #     api-key-id: ${{ secrets.APPSTORE_KEY_ID }}
+      #     api-private-key: ${{ secrets.APPSTORE_PRIVATE_KEY }}
+      # - name: Archive signed IPA
+      #   working-directory: ios/App
+      #   run: |
+      #     xcodebuild -workspace App.xcworkspace -scheme App -configuration Release archive -archivePath build/App.xcarchive
+      #     xcodebuild -exportArchive -archivePath build/App.xcarchive -exportPath build/ipa -exportOptionsPlist ExportOptions.plist

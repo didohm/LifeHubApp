@@ -30,6 +30,8 @@ build
 
 # Firebase / Google Services
 google-services.json
+GoogleService-Info.plist
+**/GoogleService-Info.plist
 firebase-adminsdk*.json
 serviceAccountKey.json
 
