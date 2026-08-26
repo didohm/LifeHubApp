@@ -22,12 +22,15 @@ import {
   getDocuments,
   getBirthdays,
   getWorkouts,
+  getWorkoutPrograms,
   getWalkSessions,
   getTodayWaterLog,
   getWaterLogs,
   getActivityTimeline,
   getUserProfile,
   getProfileStats,
+  getPayments,
+  getMedicationLogs,
   type ProfileStats,
   type ActivityEntry,
 } from "./api";
@@ -40,8 +43,11 @@ import type {
   DocumentItem,
   Birthday,
   Workout,
+  WorkoutProgram,
   WalkSession,
   WaterLog,
+  Payment,
+  MedicationLog,
 } from "./types";
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -56,10 +62,12 @@ export type DataModule =
   | "documents"
   | "birthdays"
   | "workouts"
+  | "workout_programs"
   | "walks"
   | "water"
   | "activity"
   | "profile"
+  | "payments"
   | "overview";
 
 export interface DataFilters {
@@ -118,6 +126,14 @@ export interface UserContextSnapshot {
   };
   recentActivity: ActivityEntry[];
   stats: ProfileStats | null;
+  /** Full vault — every document the user has uploaded */
+  documents: DocumentItem[];
+  /** All workout programs (active + archived) */
+  workoutPrograms: WorkoutProgram[];
+  /** Payment history for bills */
+  payments: Payment[];
+  /** Medication intake history */
+  medicationLogs: MedicationLog[];
   fetchedAt: string;
 }
 
@@ -310,6 +326,36 @@ export async function queryUserData(
       return { ...base, items: out as unknown as Record<string, unknown>[], truncated };
     }
 
+    case "workout_programs": {
+      const all = await getWorkoutPrograms(userId);
+      let items = all;
+      if (filters.query)
+        items = items.filter((p) =>
+          `${p.name} ${p.workout_type || ""} ${p.notes || ""}`
+            .toLowerCase()
+            .includes((filters.query as string).toLowerCase()),
+        );
+      if (filters.status) {
+        const wantActive = String(filters.status).toLowerCase() === "active";
+        items = items.filter((p) => !!p.is_active === wantActive);
+      }
+      const { items: out, truncated } = applyLimit(items, filters.limit);
+      return { ...base, items: out as unknown as Record<string, unknown>[], truncated };
+    }
+
+    case "payments": {
+      const all = await getPayments(userId);
+      let items = all;
+      if (filters.query)
+        items = items.filter((p) =>
+          `${p.payment_method} ${p.reference || ""}`
+            .toLowerCase()
+            .includes((filters.query as string).toLowerCase()),
+        );
+      const { items: out, truncated } = applyLimit(items, filters.limit);
+      return { ...base, items: out as unknown as Record<string, unknown>[], truncated };
+    }
+
     case "water": {
       const [todayLog, recent] = await Promise.all([
         getTodayWaterLog(userId),
@@ -378,6 +424,10 @@ export async function getUserContext(userId: string): Promise<UserContextSnapsho
     recentActivity,
     profile,
     stats,
+    documents,
+    workoutPrograms,
+    payments,
+    medicationLogs,
   ] = await Promise.all([
     getTodos(userId),
     getAppointments(userId),
@@ -390,6 +440,10 @@ export async function getUserContext(userId: string): Promise<UserContextSnapsho
     getActivityTimeline(userId, 10),
     getUserProfile(userId),
     getProfileStats(userId),
+    getDocuments(userId),
+    getWorkoutPrograms(userId),
+    getPayments(userId),
+    getMedicationLogs(userId),
   ]);
 
   const upcomingAppointments = appointments
@@ -430,6 +484,10 @@ export async function getUserContext(userId: string): Promise<UserContextSnapsho
     },
     recentActivity,
     stats,
+    documents,
+    workoutPrograms,
+    payments,
+    medicationLogs,
     fetchedAt: new Date().toISOString(),
   };
 }
@@ -488,6 +546,12 @@ export const AI_TOOLS: AiTool[] = [
       "Fetch the user's workout sessions. Supports filters: today, upcoming, status, dueDate, query, limit.",
   },
   {
+    name: "getWorkoutPrograms",
+    module: "workout_programs",
+    description:
+      "Fetch the user's workout programs (training plans, weekly split, active program). Supports filters: query, status (active), limit.",
+  },
+  {
     name: "getWalkSessions",
     module: "walks",
     description:
@@ -510,16 +574,22 @@ export const AI_TOOLS: AiTool[] = [
       "Fetch the user's profile and computed statistics (task completion, workouts, water streak, achievement level).",
   },
   {
+    name: "getPayments",
+    module: "payments",
+    description:
+      "Fetch the user's payment history for bills (amount, method, date). Supports filters: query, limit.",
+  },
+  {
     name: "queryUserData",
     module: "overview",
     description:
-      "Generic tool — pass { module: one of tasks|appointments|medications|bills|documents|birthdays|workouts|walks|water|activity|profile, filters: {...} } to fetch any module without a dedicated tool.",
+      "Generic tool — pass { module: one of tasks|appointments|medications|bills|documents|birthdays|workouts|workout_programs|walks|water|activity|profile|payments, filters: {...} } to fetch any module without a dedicated tool.",
   },
   {
     name: "getUserContext",
     module: "overview",
     description:
-      "Power tool — fetch one complete snapshot of the user's day: today's tasks, appointments, medications, workouts, walks, water, bills, plus upcoming items, outstanding items, recent activity, and statistics.",
+      "Power tool — fetch ONE complete snapshot of EVERYTHING in the user's account: today's tasks, appointments, medications, workouts, workout programs, walks, water, bills, documents, payments, birthdays, plus upcoming/outstanding items, recent activity, profile and statistics. Use this when the user wants a full overview, 'know my data', 'all my information', or 'summarize everything'.",
   },
 ];
 
@@ -538,11 +608,15 @@ function serializeItem(module: DataModule, item: Record<string, unknown>): strin
     case "bills":
       return `- ${item.title} — $${Number(item.amount ?? 0).toFixed(2)} (${item.status}, due ${item.due_date}, ${item.category})`;
     case "documents":
-      return `- ${item.name} (${item.category})`;
+      return `- ${item.name} (${item.category})${item.file_type ? ` — ${item.file_type}` : ""}${item.file_size ? ` (${item.file_size})` : ""}`;
     case "birthdays":
       return `- ${item.full_name} — ${item.birthday_date}${item.phone_number ? ` (phone: ${item.phone_number})` : ""}`;
     case "workouts":
       return `- ${item.session_name} (${item.workout_type || "Workout"}, ${item.duration ?? 0} min) — ${item.status} on ${item.scheduled_date}${item.program_name ? ` (${item.program_name})` : ""}`;
+    case "workout_programs":
+      return `- ${item.name} (${item.workout_type || "Custom"}${(item as { is_active?: boolean }).is_active ? ", ACTIVE ⭐" : ""})${item.training_days ? ` — days: ${(item.training_days as string[]).join(",")}` : ""}${item.notes ? ` — ${item.notes}` : ""}`;
+    case "payments":
+      return `- ${item.payment_method || "Payment"} — $${Number(item.amount ?? 0).toFixed(2)} on ${String(item.payment_date || item.created_at || "").slice(0, 10)}${item.reference ? ` (${item.reference})` : ""}`;
     case "walks":
       return `- ${new Date(String(item.created_at)).toLocaleDateString()} — ${(Number(item.distance ?? 0) / 1000).toFixed(2)} km, ${item.steps ?? 0} steps, ${item.calories ?? 0} kcal, ${item.duration ?? 0}s`;
     case "water":
@@ -550,7 +624,7 @@ function serializeItem(module: DataModule, item: Record<string, unknown>): strin
     case "activity":
       return `- ${item.action} — ${item.description || ""} (${new Date(String(item.created_at)).toLocaleString()})`;
     case "profile":
-      return `- ${item.full_name}${item.date_of_birth ? `, born ${item.date_of_birth}` : ""}`;
+      return `- ${item.full_name}${item.date_of_birth ? `, born ${item.date_of_birth}` : ""}${item.email ? ` — ${item.email}` : ""}`;
     default:
       return `- ${JSON.stringify(item)}`;
   }
@@ -654,10 +728,33 @@ export function formatUserContextForPrompt(snapshot: UserContextSnapshot): strin
       `### Statistics\n- ${s.tasksCompleted}/${s.tasksTotal} tasks done (${s.avgTaskCompletion}%), ${s.totalWorkoutsCompleted} workouts completed, water streak ${s.waterGoalStreak}d, ${(s.totalWalkingDistanceMeters / 1000).toFixed(1)} km walked, achievement: ${s.currentAchievementLevel}`,
     );
   }
+  // NEW: full account vault — ensures assistant truly knows ALL information
+  push("Document Vault (all files)", snapshot.documents, (d) => {
+    const x = d as DocumentItem;
+    return `- ${x.name} (${x.category})${x.file_type ? ` — ${x.file_type}` : ""}${x.file_size ? ` (${x.file_size})` : ""} — uploaded ${new Date(x.created_at).toLocaleDateString()}`;
+  });
+  push("Workout Programs (all)", snapshot.workoutPrograms, (p) => {
+    const x = p as WorkoutProgram;
+    return `- ${x.name} (${x.workout_type || "Custom"}${x.is_active ? ", ACTIVE ⭐" : ""}) — ${x.training_days?.join(", ") || "no days set"}${x.weekly_plan?.length ? ` | ${x.weekly_plan.map((wd) => `${wd.day}:${wd.focus}`).join(", ")}` : ""}${x.notes ? ` — ${x.notes}` : ""}`;
+  });
+  push("Payment History", snapshot.payments, (p) => {
+    const x = p as Payment;
+    return `- $${Number(x.amount).toFixed(2)} via ${x.payment_method} on ${new Date(x.payment_date).toLocaleDateString()} (bill: ${x.bill_id})${x.reference ? ` ref:${x.reference}` : ""}`;
+  });
+  push("Medication intake log (recent)", snapshot.medicationLogs.slice(0, 10), (m) => {
+    const x = m as MedicationLog;
+    return `- ${x.medication_id} — ${x.status} at ${new Date(x.taken_at).toLocaleString()}${x.notes ? ` — ${x.notes}` : ""}`;
+  });
+  if (snapshot.profile) {
+    const p = snapshot.profile;
+    lines.push(
+      `### Profile\n- ${p.full_name} (${p.email})${p.date_of_birth ? ` — born ${p.date_of_birth}` : ""}${p.height ? ` — ${p.height}cm` : ""}${p.weight ? ` — ${p.weight}kg` : ""} — theme:${p.theme}, language:${p.language}`,
+    );
+  }
 
   lines.push(
     "",
-    "This is the ONLY data retrieved for this request — the user's own account, fetched live. Nothing else exists. Never invent, assume, or fabricate any appointments, medications, tasks, goals, habits, expenses, records, or statistics. Never mix in data from any other user or from examples. If the requested information is not in this data, say exactly: \"I couldn't find any data related to this in your account.\"",
+    "This is the COMPLETE live snapshot of the user's ENTIRE account — every module fetched fresh just now. The assistant now knows ALL information inside the app for this user. Nothing else exists. Never invent, assume, or fabricate any appointments, medications, tasks, goals, habits, expenses, records, or statistics. Never mix in data from any other user or from examples. If the requested information is not in this data, say exactly: \"I couldn't find any data related to this in your account.\"",
   );
   return lines.join("\n");
 }

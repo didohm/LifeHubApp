@@ -295,10 +295,10 @@ function DocumentsPage() {
         <div className="flex items-start justify-between gap-3">
           <div>
             <div className="flex items-center gap-2">
-              <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-500/20 text-emerald-400 px-3 py-0.5 text-[10px] font-black uppercase tracking-wider border border-emerald-500/30">
+              <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-500/20 text-emerald-400 px-3 py-0.5 text-[11px] font-black uppercase tracking-wider border border-emerald-500/30">
                 <Shield className="size-3" /> Encrypted Vault
               </span>
-              <span className="text-[10px] text-white/60 font-semibold">10MB Cloud Storage</span>
+              <span className="text-[11px] text-white/60 font-semibold">10MB Cloud Storage</span>
             </div>
 
             <h2 className="mt-2.5 text-2xl font-black text-white tracking-tight leading-tight">
@@ -316,7 +316,7 @@ function DocumentsPage() {
 
         {/* Category Distribution Pills */}
         <div className="mt-4 pt-3.5 border-t border-white/10 flex items-center gap-2 overflow-x-auto pb-1 [scrollbar-width:none]">
-          <span className="text-[10px] font-black uppercase tracking-wider text-white/50 shrink-0">
+          <span className="text-[11px] font-black uppercase tracking-wider text-white/50 shrink-0">
             Breakdown:
           </span>
           {DOCUMENT_CATEGORIES.map((cat) => {
@@ -325,7 +325,7 @@ function DocumentsPage() {
             return (
               <span
                 key={cat}
-                className="rounded-lg bg-white/10 px-2 py-0.5 text-[10px] font-bold text-white/90 whitespace-nowrap"
+                className="rounded-lg bg-white/10 px-2 py-0.5 text-[11px] font-bold text-white/90 whitespace-nowrap"
               >
                 {cat}: {count}
               </span>
@@ -345,20 +345,21 @@ function DocumentsPage() {
             placeholder="Search documents by name or category..."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
-            className="w-full rounded-2xl border border-border/70 bg-white py-2.5 pl-10 pr-4 text-xs font-semibold text-foreground outline-none shadow-2xs focus:border-[#7C5CFC] transition-all"
+            className="w-full rounded-2xl border border-border/70 bg-white min-h-[44px] py-3 pl-10 pr-4 text-[16px] sm:text-sm font-semibold text-foreground outline-none shadow-2xs focus:border-[#7C5CFC] transition-all"
           />
           {searchTerm && (
             <button
               onClick={() => setSearchTerm("")}
-              className="absolute right-3.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+              aria-label="Clear search"
+              className="tap absolute right-1.5 top-1/2 flex size-10 min-h-[40px] min-w-[40px] -translate-y-1/2 items-center justify-center rounded-full text-muted-foreground hover:text-foreground hover:bg-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400"
             >
-              <X className="size-3.5" />
+              <X className="size-4" />
             </button>
           )}
         </div>
 
         {/* Scrollable Category Filter Pills */}
-        <div className="flex gap-1.5 overflow-x-auto pb-1 [scrollbar-width:none]">
+        <div className="flex gap-2 overflow-x-auto pb-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden -mx-5 px-5">
           {(["all", ...DOCUMENT_CATEGORIES] as DocumentCategory[]).map((cat) => {
             const isSelected = categoryFilter === cat;
             const count = categoryCounts[cat] || 0;
@@ -370,8 +371,7 @@ function DocumentsPage() {
                   sounds.playNavClick();
                   setCategoryFilter(cat);
                 }}
-                className={cn(
-                  "tap flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-black capitalize whitespace-nowrap transition-all shadow-2xs",
+                className={cn("tap flex items-center gap-1.5 rounded-full px-4 py-2 min-h-[36px] text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#12131A] font-black capitalize whitespace-nowrap transition-all shadow-2xs",
                   isSelected
                     ? "bg-[#12131A] text-white shadow-xs"
                     : "bg-white text-muted-foreground border border-border/60 hover:bg-slate-50 hover:text-foreground",
@@ -380,7 +380,7 @@ function DocumentsPage() {
                 <span>{cat === "all" ? "All Documents" : cat}</span>
                 <span
                   className={cn(
-                    "rounded-full px-1.5 py-0.2 text-[9px] font-black",
+                    "rounded-full px-1.5 py-0.2 text-[11px] font-black",
                     isSelected ? "bg-white/20 text-white" : "bg-slate-100 text-muted-foreground",
                   )}
                 >
@@ -444,14 +444,14 @@ function DocumentsPage() {
 
                     <div className="min-w-0">
                       <div className="flex items-center gap-1.5 flex-wrap">
-                        <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[9px] font-black text-slate-700 uppercase tracking-wider">
+                        <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-black text-slate-700 uppercase tracking-wider">
                           {docItem.category || "General"}
                         </span>
-                        <span className="rounded-full bg-slate-100 px-1.5 py-0.5 text-[9px] font-black text-muted-foreground">
+                        <span className="rounded-full bg-slate-100 px-1.5 py-0.5 text-[11px] font-black text-muted-foreground">
                           {badge}
                         </span>
                         {docItem.file_size && (
-                          <span className="text-[10px] font-semibold text-muted-foreground">
+                          <span className="text-[11px] font-semibold text-muted-foreground">
                             · {docItem.file_size}
                           </span>
                         )}
@@ -472,7 +472,7 @@ function DocumentsPage() {
                           setPreviewDoc(docItem);
                         }}
                         title="Preview Document"
-                        className="tap size-8 flex items-center justify-center rounded-full text-slate-600 hover:bg-slate-100 hover:text-[#12131A] transition-colors"
+                        className="tap flex size-11 min-h-[44px] min-w-[44px] items-center justify-center rounded-full text-slate-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400 hover:bg-slate-100 hover:text-[#12131A] transition-colors"
                       >
                         <Eye className="size-4" />
                       </button>
@@ -480,14 +480,14 @@ function DocumentsPage() {
                     <button
                       onClick={() => openEditModal(docItem)}
                       title="Edit Document Info"
-                      className="tap size-8 flex items-center justify-center rounded-full text-slate-500 hover:bg-slate-100 transition-colors"
+                      className="tap flex size-11 min-h-[44px] min-w-[44px] items-center justify-center rounded-full text-slate-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400 hover:bg-slate-100 transition-colors"
                     >
                       <Edit2 className="size-3.5" />
                     </button>
                     <button
                       onClick={() => handleDelete(docItem.id, docItem.name)}
                       title="Delete"
-                      className="tap size-8 flex items-center justify-center rounded-full text-rose-500 hover:bg-rose-50 transition-colors"
+                      className="tap flex size-11 min-h-[44px] min-w-[44px] items-center justify-center rounded-full text-rose-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-400 hover:bg-rose-50 transition-colors"
                     >
                       <Trash2 className="size-3.5" />
                     </button>
@@ -523,7 +523,7 @@ function DocumentsPage() {
           </div>
           <button
             onClick={() => setUploadModalOpen(false)}
-            className="size-7 flex items-center justify-center rounded-full bg-black/5 text-muted-foreground hover:text-foreground"
+            className="tap flex size-11 min-h-[44px] min-w-[44px] items-center justify-center rounded-full bg-black/5 text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400 hover:text-foreground"
           >
             <X className="size-4" />
           </button>
@@ -610,7 +610,7 @@ function DocumentsPage() {
                       <p className="text-xs font-black text-[#12131A] truncate max-w-[200px]">
                         {selectedFile.name}
                       </p>
-                      <p className="text-[10px] font-bold text-muted-foreground">
+                      <p className="text-[11px] font-bold text-muted-foreground">
                         {formatFileSize(selectedFile.size)} · Click to change file
                       </p>
                     </div>
@@ -621,7 +621,7 @@ function DocumentsPage() {
                     <p className="text-xs font-black text-[#12131A]">
                       Drop file here or click to browse
                     </p>
-                    <p className="text-[10px] text-muted-foreground">
+                    <p className="text-[11px] text-muted-foreground">
                       Supports PDF, PNG, JPG, WEBP up to 10MB
                     </p>
                   </div>
@@ -673,13 +673,13 @@ function DocumentsPage() {
           <div className="flex items-center justify-between border-b border-black/5 pb-3">
             <div className="min-w-0 pr-2">
               <h2 className="text-base font-black text-[#12131A] truncate">{previewDoc.name}</h2>
-              <span className="text-[10px] font-bold text-muted-foreground">
+              <span className="text-[11px] font-bold text-muted-foreground">
                 Category: {previewDoc.category} · {previewDoc.file_size || "Standard"}
               </span>
             </div>
             <button
               onClick={() => setPreviewDoc(null)}
-              className="size-7 flex items-center justify-center rounded-full bg-black/5 text-muted-foreground hover:text-foreground shrink-0"
+              className="tap flex size-11 min-h-[44px] min-w-[44px] items-center justify-center rounded-full bg-black/5 text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400 hover:text-foreground shrink-0"
             >
               <X className="size-4" />
             </button>

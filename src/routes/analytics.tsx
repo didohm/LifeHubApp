@@ -480,7 +480,7 @@ function AnalyticsPage() {
                 setTimeFilter(f);
               }}
               className={cn(
-                "tap relative flex-1 py-1.5 px-2 rounded-xl text-xs font-extrabold text-center transition-colors",
+                "tap relative flex-1 py-2 min-h-[36px] px-3 rounded-xl text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#12131A] font-extrabold text-center transition-colors",
                 active ? "text-[#12131A]" : "text-muted-foreground hover:text-foreground",
               )}
             >
@@ -507,7 +507,7 @@ function AnalyticsPage() {
       >
         <div className="flex items-center justify-between">
           <div>
-            <span className="inline-flex items-center gap-1 rounded-full bg-white/90 px-2.5 py-0.5 text-[10px] font-black text-[#7C5CFC] shadow-2xs">
+            <span className="inline-flex items-center gap-1 rounded-full bg-white/90 px-2.5 py-0.5 text-[11px] font-black text-[#7C5CFC] shadow-2xs">
               <Activity className="size-3" /> Health & Routine Score
             </span>
             <div className="mt-2 flex items-baseline gap-2">
@@ -531,15 +531,15 @@ function AnalyticsPage() {
         {/* Breakdown Progress Bars */}
         <div className="mt-4 pt-3 border-t border-[#7C5CFC]/15 grid grid-cols-3 gap-2 text-center">
           <div>
-            <span className="text-[10px] font-bold text-muted-foreground uppercase">Doses</span>
+            <span className="text-[11px] font-bold text-muted-foreground uppercase">Doses</span>
             <p className="text-sm font-black text-[#12131A]">{stats.adherencePct}%</p>
           </div>
           <div>
-            <span className="text-[10px] font-bold text-muted-foreground uppercase">Tasks</span>
+            <span className="text-[11px] font-bold text-muted-foreground uppercase">Tasks</span>
             <p className="text-sm font-black text-[#12131A]">{stats.taskPct}%</p>
           </div>
           <div>
-            <span className="text-[10px] font-bold text-muted-foreground uppercase">Fitness</span>
+            <span className="text-[11px] font-bold text-muted-foreground uppercase">Fitness</span>
             <p className="text-sm font-black text-[#12131A]">
               {stats.workoutsDone + stats.walksDone} ses
             </p>
@@ -590,7 +590,7 @@ function AnalyticsPage() {
                 />
               </div>
             )}
-            <div className="flex items-center justify-between text-[10px] font-bold text-muted-foreground">
+            <div className="flex items-center justify-between text-[11px] font-bold text-muted-foreground">
               <span>View Meds</span>
               <ChevronRight className="size-3 text-pink-500 group-hover:translate-x-0.5 transition-transform" />
             </div>
@@ -624,7 +624,7 @@ function AnalyticsPage() {
                 }}
               />
             </div>
-            <div className="flex items-center justify-between text-[10px] font-bold text-muted-foreground">
+            <div className="flex items-center justify-between text-[11px] font-bold text-muted-foreground">
               <span>Log Water</span>
               <ChevronRight className="size-3 text-sky-500 group-hover:translate-x-0.5 transition-transform" />
             </div>
@@ -649,7 +649,7 @@ function AnalyticsPage() {
               {stats.workoutsDone} workouts · {stats.walksDone} walks
             </p>
           </div>
-          <div className="mt-2.5 flex items-center justify-between text-[10px] font-bold text-muted-foreground">
+          <div className="mt-2.5 flex items-center justify-between text-[11px] font-bold text-muted-foreground">
             <span>Open Map & Fitness</span>
             <ChevronRight className="size-3 text-orange-500 group-hover:translate-x-0.5 transition-transform" />
           </div>
@@ -684,7 +684,7 @@ function AnalyticsPage() {
                 />
               </div>
             )}
-            <div className="flex items-center justify-between text-[10px] font-bold text-muted-foreground">
+            <div className="flex items-center justify-between text-[11px] font-bold text-muted-foreground">
               <span>View Tasks</span>
               <ChevronRight className="size-3 text-emerald-500 group-hover:translate-x-0.5 transition-transform" />
             </div>
@@ -709,7 +709,7 @@ function AnalyticsPage() {
               {stats.paymentsCount} paid in {timeFilter}
             </p>
           </div>
-          <div className="mt-2.5 flex items-center justify-between text-[10px] font-black text-amber-900/80">
+          <div className="mt-2.5 flex items-center justify-between text-[11px] font-black text-amber-900/80">
             <span>Manage Bills</span>
             <ChevronRight className="size-3 text-amber-950 group-hover:translate-x-0.5 transition-transform" />
           </div>
@@ -733,7 +733,7 @@ function AnalyticsPage() {
               {stats.sessionsCompleted} completed
             </p>
           </div>
-          <div className="mt-2.5 flex items-center justify-between text-[10px] font-bold text-muted-foreground">
+          <div className="mt-2.5 flex items-center justify-between text-[11px] font-bold text-muted-foreground">
             <span>Appointments</span>
             <ChevronRight className="size-3 text-purple-500 group-hover:translate-x-0.5 transition-transform" />
           </div>
@@ -748,7 +748,7 @@ function AnalyticsPage() {
           <h3 className="text-sm font-extrabold text-[#12131A] flex items-center gap-1.5">
             <Activity className="size-4 text-[#7C5CFC]" /> Activity Breakdown
           </h3>
-          <span className="text-[10px] font-bold text-muted-foreground bg-slate-100 px-2.5 py-0.5 rounded-full">
+          <span className="text-[11px] font-bold text-muted-foreground bg-slate-100 px-2.5 py-0.5 rounded-full">
             {timeFilter}
           </span>
         </div>

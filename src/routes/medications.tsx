@@ -194,14 +194,15 @@ function MedicationsPage() {
                 sounds.playActionClick();
                 setLogsModalOpen(true);
               }}
-              className="tap flex size-9 items-center justify-center rounded-full bg-white text-[#12131A] shadow-xs border border-border/60 hover:bg-slate-50"
+              className="tap flex size-11 min-h-[44px] min-w-[44px] items-center justify-center rounded-full bg-white text-[#12131A] shadow-xs border border-border/60 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#7C5CFC]"
+              aria-label="Dose logs"
               title="Dose logs"
             >
               <History className="size-4" />
             </button>
             <button
               onClick={openAddModal}
-              className="tap flex items-center gap-1 rounded-full bg-[#12131A] px-3.5 py-1.5 text-xs font-bold text-white shadow-xs hover:bg-[#12131A]/90 transition-transform active:scale-95"
+              className="tap flex items-center gap-1 rounded-full bg-[#12131A] px-4 py-2.5 min-h-[44px] text-xs font-bold text-white shadow-xs hover:bg-[#12131A]/90 transition-transform active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#12131A]"
             >
               <Plus className="size-3.5" /> Add Med
             </button>
@@ -221,7 +222,7 @@ function MedicationsPage() {
           <span className="flex items-center gap-1">
             <Droplets className="size-4 text-sky-600" /> Daily Hydration
           </span>
-          <span className="text-[10px] text-sky-700 font-bold bg-white/90 px-2.5 py-0.5 rounded-full shadow-2xs">
+          <span className="text-[11px] text-sky-700 font-bold bg-white/90 px-2.5 py-0.5 rounded-full shadow-2xs">
             Goal: {waterGoal} glasses
           </span>
         </div>
@@ -254,7 +255,7 @@ function MedicationsPage() {
               {waterGlasses}
             </span>
             <span className="text-[11px] font-bold text-sky-900/80">/ {waterGoal} glasses</span>
-            <span className="text-[10px] font-extrabold text-sky-600">{waterPct}%</span>
+            <span className="text-[11px] font-extrabold text-sky-600">{waterPct}%</span>
           </div>
         </div>
 
@@ -263,7 +264,7 @@ function MedicationsPage() {
           <button
             onClick={handleRemoveWater}
             disabled={waterBusy || waterGlasses <= 0}
-            className="tap rounded-2xl bg-white p-3 text-[#12131A] shadow-2xs border border-sky-200/60 hover:bg-sky-50 disabled:opacity-30 transition-transform active:scale-95"
+            className="tap rounded-2xl bg-white p-3 min-h-[44px] min-w-[44px] flex items-center justify-center text-[#12131A] shadow-2xs border border-sky-200/60 hover:bg-sky-50 disabled:opacity-30 transition-transform active:scale-95"
             title="Remove glass"
           >
             <Minus className="size-4" />
@@ -322,14 +323,14 @@ function MedicationsPage() {
             >
               <div className="min-w-0 flex-1 pr-3">
                 <div className="flex items-center gap-2">
-                  <span className="rounded-md bg-slate-100 px-2 py-0.5 text-[10px] font-black text-slate-700 flex items-center gap-1">
+                  <span className="rounded-md bg-slate-100 px-2 py-0.5 text-[11px] font-black text-slate-700 flex items-center gap-1">
                     <Clock className="size-3" /> {med.scheduled_time}
                   </span>
                   <span className="text-[11px] text-muted-foreground font-semibold">
                     {med.frequency}
                   </span>
                   {med.priority === "high" && (
-                    <span className="rounded-full bg-rose-50 px-2 py-0.2 text-[9.5px] font-black text-rose-600">
+                    <span className="rounded-full bg-rose-50 px-2 py-0.2 text-[11px] font-black text-rose-600">
                       High Priority
                     </span>
                   )}
@@ -345,7 +346,7 @@ function MedicationsPage() {
                 </h3>
                 <p className="text-xs font-medium text-muted-foreground truncate">{med.dosage}</p>
                 {med.notes && (
-                  <p className="mt-0.5 text-[10.5px] text-muted-foreground/80 italic truncate">
+                  <p className="mt-0.5 text-[11px] text-muted-foreground/80 italic truncate">
                     {med.notes}
                   </p>
                 )}
@@ -370,14 +371,14 @@ function MedicationsPage() {
                 </button>
                 <button
                   onClick={() => openEditModal(med)}
-                  className="size-8 flex items-center justify-center rounded-xl text-muted-foreground hover:bg-slate-100"
+                  className="tap flex size-10 min-h-[44px] min-w-[44px] items-center justify-center rounded-xl text-muted-foreground hover:bg-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400"
                   title="Edit"
                 >
                   <Edit2 className="size-3.5" />
                 </button>
                 <button
                   onClick={() => handleDelete(med.id)}
-                  className="size-8 flex items-center justify-center rounded-xl text-rose-500 hover:bg-rose-50"
+                  className="tap flex size-10 min-h-[44px] min-w-[44px] items-center justify-center rounded-xl text-rose-500 hover:bg-rose-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-400"
                   title="Delete"
                 >
                   <Trash2 className="size-3.5" />
@@ -402,7 +403,7 @@ function MedicationsPage() {
           </h3>
           <button
             onClick={() => setModalOpen(false)}
-            className="size-8 flex items-center justify-center rounded-full text-muted-foreground hover:bg-slate-100"
+            className="tap flex size-11 min-h-[44px] min-w-[44px] items-center justify-center rounded-full text-muted-foreground hover:bg-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400"
           >
             <X className="size-4" />
           </button>
@@ -419,7 +420,7 @@ function MedicationsPage() {
               placeholder="e.g. Vitamin D3, Omega-3, Metformin"
               value={name}
               onChange={(e) => setName(e.target.value)}
-              className="mt-1 w-full rounded-xl border border-border bg-slate-50 p-2.5 text-xs font-semibold text-foreground outline-none focus:border-[#7C5CFC] focus:bg-white"
+              className="mt-1 w-full rounded-xl border border-border bg-slate-50 p-3 text-[16px] sm:text-sm font-semibold text-foreground outline-none focus:border-[#7C5CFC] focus:bg-white min-h-[44px]"
             />
           </div>
 
@@ -432,7 +433,7 @@ function MedicationsPage() {
                 placeholder="1 Tablet / 10mg"
                 value={dosage}
                 onChange={(e) => setDosage(e.target.value)}
-                className="mt-1 w-full rounded-xl border border-border bg-slate-50 p-2.5 text-xs font-semibold text-foreground outline-none focus:border-[#7C5CFC] focus:bg-white"
+                className="mt-1 w-full rounded-xl border border-border bg-slate-50 p-3 text-[16px] sm:text-sm font-semibold text-foreground outline-none focus:border-[#7C5CFC] focus:bg-white min-h-[44px]"
               />
             </div>
             <div>
@@ -442,7 +443,7 @@ function MedicationsPage() {
                 required
                 value={scheduledTime}
                 onChange={(e) => setScheduledTime(e.target.value)}
-                className="mt-1 w-full rounded-xl border border-border bg-slate-50 p-2.5 text-xs font-semibold text-foreground outline-none focus:border-[#7C5CFC] focus:bg-white"
+                className="mt-1 w-full rounded-xl border border-border bg-slate-50 p-3 text-[16px] sm:text-sm font-semibold text-foreground outline-none focus:border-[#7C5CFC] focus:bg-white min-h-[44px]"
               />
             </div>
           </div>
@@ -453,7 +454,7 @@ function MedicationsPage() {
               <select
                 value={frequency}
                 onChange={(e) => setFrequency(e.target.value)}
-                className="mt-1 w-full rounded-xl border border-border bg-slate-50 p-2.5 text-xs font-semibold text-foreground outline-none"
+                className="mt-1 w-full rounded-xl border border-border bg-slate-50 p-3 text-[16px] sm:text-sm font-semibold text-foreground outline-none min-h-[44px]"
               >
                 <option value="Daily">Daily</option>
                 <option value="Twice daily">Twice daily</option>
@@ -466,7 +467,7 @@ function MedicationsPage() {
               <select
                 value={priority}
                 onChange={(e) => setPriority(e.target.value as "high" | "medium" | "light")}
-                className="mt-1 w-full rounded-xl border border-border bg-slate-50 p-2.5 text-xs font-semibold text-foreground outline-none"
+                className="mt-1 w-full rounded-xl border border-border bg-slate-50 p-3 text-[16px] sm:text-sm font-semibold text-foreground outline-none min-h-[44px]"
               >
                 <option value="high">High Priority</option>
                 <option value="medium">Regular</option>
@@ -484,7 +485,7 @@ function MedicationsPage() {
               placeholder="e.g. Take with breakfast / after meal"
               value={notes}
               onChange={(e) => setNotes(e.target.value)}
-              className="mt-1 w-full rounded-xl border border-border bg-slate-50 p-2.5 text-xs font-semibold text-foreground outline-none focus:border-[#7C5CFC] focus:bg-white"
+              className="mt-1 w-full rounded-xl border border-border bg-slate-50 p-3 text-[16px] sm:text-sm font-semibold text-foreground outline-none focus:border-[#7C5CFC] focus:bg-white min-h-[44px]"
             />
           </div>
 
@@ -521,7 +522,7 @@ function MedicationsPage() {
           </h3>
           <button
             onClick={() => setLogsModalOpen(false)}
-            className="size-8 flex items-center justify-center rounded-full text-muted-foreground hover:bg-slate-100"
+            className="tap flex size-11 min-h-[44px] min-w-[44px] items-center justify-center rounded-full text-muted-foreground hover:bg-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400"
           >
             <X className="size-4" />
           </button>
@@ -538,7 +539,7 @@ function MedicationsPage() {
                 className="flex items-center justify-between rounded-xl bg-slate-50 p-3 text-xs border border-border/60"
               >
                 <span className="font-bold text-foreground">Dose marked taken</span>
-                <span className="text-[10px] text-muted-foreground font-semibold">
+                <span className="text-[11px] text-muted-foreground font-semibold">
                   {l.taken_at
                     ? new Date(l.taken_at).toLocaleTimeString([], {
                         hour: "2-digit",

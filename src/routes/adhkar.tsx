@@ -241,7 +241,7 @@ function Browse({
           placeholder="Search supplication or category (e.g. سفر, نوم, صباح)..."
           value={query}
           onChange={(e) => onQuery(e.target.value)}
-          className="w-full rounded-2xl border border-border/70 bg-white py-2.5 pl-10 pr-4 text-xs font-semibold text-foreground outline-none shadow-2xs focus:border-[#7C5CFC] transition-all"
+          className="w-full rounded-2xl border border-border/70 bg-white min-h-[44px] py-3 pl-10 pr-4 text-[16px] sm:text-sm font-semibold text-foreground outline-none shadow-2xs focus:border-[#7C5CFC] transition-all"
         />
       </div>
 
@@ -299,7 +299,7 @@ function Browse({
                   {doneInCat > 0 && (
                     <span
                       className={cn(
-                        "flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-black",
+                        "flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-black",
                         isCatComplete
                           ? "bg-emerald-500 text-white"
                           : "bg-emerald-500/15 text-emerald-700",
@@ -426,7 +426,7 @@ function Reader({
             onBack();
           }}
           aria-label="Back to categories"
-          className="tap flex size-9 shrink-0 items-center justify-center rounded-full border border-border/60 bg-white text-foreground shadow-2xs hover:bg-slate-50"
+          className="tap flex size-11 min-h-[44px] min-w-[44px] shrink-0 items-center justify-center rounded-full border border-border/60 bg-white text-foreground shadow-2xs hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#7C5CFC]"
         >
           <ChevronLeft className="size-5" />
         </button>
@@ -453,8 +453,7 @@ function Reader({
                 sounds.playNavClick();
                 onChangeFontSize(size);
               }}
-              className={cn(
-                "size-7 rounded-full text-xs font-black transition-all",
+              className={cn("size-8 min-h-[32px] min-w-[32px] rounded-full text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#12131A] font-black transition-all",
                 fontSize === size
                   ? "bg-[#12131A] text-white"
                   : "text-muted-foreground hover:text-foreground",
@@ -506,7 +505,7 @@ function Reader({
             <button
               type="button"
               onClick={handleCopy}
-              className="tap flex items-center gap-1 text-[11px] font-bold text-muted-foreground hover:text-foreground"
+              className="tap flex items-center gap-1 text-[11px] font-bold text-muted-foreground hover:text-foreground min-h-[44px] min-w-[44px] flex items-center justify-center rounded-full hover:bg-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400"
               title="Copy text"
             >
               <Copy className="size-3.5" /> Copy
@@ -575,7 +574,7 @@ function Reader({
                     <span className="text-3xl font-black text-[#12131A] tracking-tight">
                       {remaining}
                     </span>
-                    <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">
+                    <span className="text-[11px] font-bold text-muted-foreground uppercase tracking-wider">
                       {remaining === 1 ? "tap left" : "taps left"}
                     </span>
                   </>
@@ -611,7 +610,7 @@ function Reader({
                   sounds.playClick();
                   azkar.resetZekr(catIdx, zekrIdx);
                 }}
-                className="mt-2.5 inline-flex items-center gap-1 text-[11px] font-bold text-muted-foreground hover:text-foreground"
+                className="mt-2.5 inline-flex items-center gap-1 text-[11px] font-bold text-muted-foreground hover:text-foreground min-h-[44px] min-w-[44px] flex items-center justify-center rounded-full hover:bg-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400"
               >
                 <RotateCcw className="size-3" /> Reset count
               </button>
@@ -631,7 +630,7 @@ function Reader({
             goToPrev();
           }}
           disabled={zekrIdx === 0}
-          className="tap flex-1 flex items-center justify-center gap-1 rounded-2xl bg-white py-3 text-xs font-bold text-foreground border border-border/60 shadow-2xs hover:bg-slate-50 disabled:opacity-30"
+          className="tap flex-1 flex items-center justify-center gap-1 rounded-2xl bg-white py-3 min-h-[44px] text-xs font-bold text-foreground border focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400 border-border/60 shadow-2xs hover:bg-slate-50 disabled:opacity-30"
         >
           <ChevronLeft className="size-4" /> Previous
         </button>
@@ -655,7 +654,7 @@ function Reader({
               goToNext();
             }}
             disabled={isLast}
-            className="tap flex-1 flex items-center justify-center gap-1 rounded-2xl bg-[#12131A] py-3 text-xs font-bold text-white shadow-xs hover:bg-[#12131A]/90 disabled:opacity-30"
+            className="tap flex-1 flex items-center justify-center gap-1 rounded-2xl bg-[#12131A] py-3 min-h-[44px] text-xs font-bold text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#12131A] shadow-xs hover:bg-[#12131A]/90 disabled:opacity-30"
           >
             Next <ChevronRight className="size-4" />
           </button>

@@ -84,15 +84,22 @@ function AuthPage() {
       // sign-in, which keeps the two flows consistent.
     } catch (err: any) {
       const message = (err?.message || "").toLowerCase();
+      const code = (err?.code || "").toLowerCase();
       const cancelled =
-        err?.code === "auth/popup-closed-by-user" ||
-        err?.code === "canceled" ||
-        err?.code === "sign_in_cancelled" ||
-        err?.code === "auth/redirect-cancelled-by-user" ||
+        code === "auth/popup-closed-by-user" ||
+        code === "auth/cancelled-popup-request" ||
+        code === "canceled" ||
+        code === "sign_in_cancelled" ||
+        code === "auth/redirect-cancelled-by-user" ||
         message.includes("canceled") ||
-        message.includes("cancelled");
+        message.includes("cancelled") ||
+        message.includes("authorization canceled");
       if (cancelled) {
         setError("Sign-in was cancelled. Please try again.");
+      } else if (message.includes("credential manager") || message.includes("no credential") || message.includes("provider is disabled")) {
+        // Defensive: should have been handled silently inside useAuth fallback.
+        // If we still see it here, both Credential Manager and legacy failed.
+        setError("Google Sign-In failed. Please update Google Play Services and try again.");
       } else {
         setError(err.message || "Google sign-in failed. Please try again.");
       }
@@ -172,11 +179,16 @@ function AuthPage() {
             className="tap flex h-14 w-full items-center justify-center gap-3 rounded-2xl bg-[#1E1E1E] px-6 text-white shadow-lg shadow-black/15 transition-all hover:bg-black hover:shadow-xl active:scale-[0.98] disabled:opacity-60 disabled:active:scale-100"
           >
             {submitting ? (
-              <Loader2 className="size-5 animate-spin" />
+              <>
+                <Loader2 className="size-5 animate-spin" />
+                <span className="text-base font-semibold">Signing in...</span>
+              </>
             ) : (
-              <FcGoogle className="size-5" />
+              <>
+                <FcGoogle className="size-5" />
+                <span className="text-base font-semibold">Get Started with Google</span>
+              </>
             )}
-            <span className="text-base font-semibold">Get Started with Google</span>
           </button>
         </div>
       </div>

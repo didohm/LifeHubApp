@@ -153,7 +153,7 @@ export default function PersonalStats({ userId, walkSessions }: PersonalStatsPro
             </Bar>
           </BarChart>
         </ResponsiveContainer>
-        <p className="text-[10px] font-bold text-[#64748B] text-center mt-2">Daily distance (km)</p>
+        <p className="text-[11px] font-bold text-[#64748B] text-center mt-2">Daily distance (km)</p>
       </div>
     </div>
   );

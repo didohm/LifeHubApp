@@ -346,7 +346,7 @@ function AppointmentsPage() {
         {nextAppointment ? (
           <div>
             <div className="flex items-center justify-between gap-2 border-b border-white/10 pb-2.5">
-              <span className="text-[10px] font-black uppercase tracking-wider text-emerald-400 flex items-center gap-1.5">
+              <span className="text-[11px] font-black uppercase tracking-wider text-emerald-400 flex items-center gap-1.5">
                 <span className="size-2 rounded-full bg-emerald-400 animate-pulse" />
                 Next Upcoming Consultation
               </span>
@@ -443,7 +443,7 @@ function AppointmentsPage() {
       {/* ══════════════════════════════════════════════════════════════
           FILTER TABS ROW
           ══════════════════════════════════════════════════════════════ */}
-      <div className="flex items-center gap-1.5 overflow-x-auto pb-1 mb-4 [scrollbar-width:none]">
+      <div className="flex items-center gap-2 overflow-x-auto pb-2 mb-4 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden -mx-5 px-5">
         {(
           [
             { id: "Upcoming", label: "Upcoming", count: stats.upcomingCount },
@@ -462,7 +462,7 @@ function AppointmentsPage() {
                 setActiveFilter(tab.id as FilterTab);
               }}
               className={cn(
-                "tap flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-xs font-black whitespace-nowrap transition-all shadow-2xs",
+                "tap flex items-center gap-1.5 rounded-full px-4 py-2 min-h-[36px] text-xs font-black whitespace-nowrap transition-all shadow-2xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#12131A]",
                 isActive
                   ? "bg-[#12131A] text-white shadow-xs"
                   : "bg-white text-muted-foreground border border-black/5 hover:bg-slate-50 hover:text-foreground",
@@ -471,7 +471,7 @@ function AppointmentsPage() {
               <span>{tab.label}</span>
               <span
                 className={cn(
-                  "rounded-full px-1.5 py-0.2 text-[9px] font-black",
+                  "rounded-full px-1.5 py-0.5 text-[11px] font-black",
                   isActive ? "bg-white/20 text-white" : "bg-slate-100 text-muted-foreground",
                 )}
               >
@@ -602,14 +602,14 @@ function AppointmentsPage() {
               <div className="flex items-center gap-2">
                 <span
                   className={cn(
-                    "inline-block rounded-full px-2.5 py-0.5 text-[10px] font-black uppercase border",
+                    "inline-block rounded-full px-2.5 py-0.5 text-[11px] font-black uppercase border",
                     PRIORITY_CONFIG[selectedPlan.priority]?.badge ?? "bg-slate-100 text-slate-700",
                   )}
                 >
                   {PRIORITY_CONFIG[selectedPlan.priority]?.label}
                 </span>
                 {selectedPlan.status === "completed" && (
-                  <span className="inline-block rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 px-2.5 py-0.5 text-[10px] font-black uppercase">
+                  <span className="inline-block rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 px-2.5 py-0.5 text-[11px] font-black uppercase">
                     Completed
                   </span>
                 )}
@@ -626,7 +626,7 @@ function AppointmentsPage() {
             <button
               onClick={() => setSelectedPlan(null)}
               aria-label="Close details"
-              className="size-7 flex items-center justify-center rounded-full bg-black/5 text-muted-foreground hover:text-foreground"
+              className="tap flex size-11 min-h-[44px] min-w-[44px] items-center justify-center rounded-full bg-black/5 text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400"
             >
               <X className="size-4" />
             </button>
@@ -640,7 +640,7 @@ function AppointmentsPage() {
                   <Stethoscope className="size-5" />
                 </div>
                 <div className="min-w-0 flex-1">
-                  <span className="block text-[10px] font-black text-muted-foreground uppercase tracking-wider">
+                  <span className="block text-[11px] font-black text-muted-foreground uppercase tracking-wider">
                     Doctor / Specialist
                   </span>
                   <span className="text-xs font-black text-[#12131A] truncate block">
@@ -654,7 +654,7 @@ function AppointmentsPage() {
             <div className="grid grid-cols-2 gap-2">
               {selectedPlan.location && (
                 <div className="rounded-2xl bg-slate-50 p-3 border border-black/5">
-                  <span className="flex items-center gap-1 text-[10px] font-black text-muted-foreground uppercase tracking-wider mb-0.5">
+                  <span className="flex items-center gap-1 text-[11px] font-black text-muted-foreground uppercase tracking-wider mb-0.5">
                     <MapPin className="size-3 text-cyan-600" /> Location
                   </span>
                   <span className="text-xs font-bold text-[#12131A] block truncate">
@@ -664,7 +664,7 @@ function AppointmentsPage() {
               )}
 
               <div className="rounded-2xl bg-slate-50 p-3 border border-black/5">
-                <span className="flex items-center gap-1 text-[10px] font-black text-muted-foreground uppercase tracking-wider mb-0.5">
+                <span className="flex items-center gap-1 text-[11px] font-black text-muted-foreground uppercase tracking-wider mb-0.5">
                   <Bell className="size-3 text-amber-600" /> Reminder
                 </span>
                 <span className="text-xs font-bold text-[#12131A] block">
@@ -678,7 +678,7 @@ function AppointmentsPage() {
             {/* Notes */}
             {selectedPlan.notes && (
               <div className="rounded-2xl bg-slate-50 p-3.5 border border-black/5">
-                <span className="block text-[10px] font-black text-muted-foreground uppercase tracking-wider mb-1">
+                <span className="block text-[11px] font-black text-muted-foreground uppercase tracking-wider mb-1">
                   Session Notes
                 </span>
                 <p className="text-xs text-slate-700 leading-relaxed font-medium">
@@ -754,7 +754,7 @@ function AppointmentsPage() {
           <button
             onClick={() => setModalOpen(false)}
             aria-label="Close form"
-            className="size-7 flex items-center justify-center rounded-full bg-black/5 text-muted-foreground hover:text-foreground"
+            className="tap flex size-11 min-h-[44px] min-w-[44px] items-center justify-center rounded-full bg-black/5 text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400"
           >
             <X className="size-4" />
           </button>
@@ -763,18 +763,18 @@ function AppointmentsPage() {
         {/* Quick Type Presets */}
         {!editingApp && (
           <div className="mt-3.5">
-            <span className="text-[10px] font-black text-muted-foreground uppercase tracking-wider block mb-1.5">
+            <span className="text-[11px] font-black text-muted-foreground uppercase tracking-wider block mb-1.5">
               Quick Suggestions
             </span>
-            <div className="flex items-center gap-1.5 overflow-x-auto pb-1 [scrollbar-width:none]">
+            <div className="flex items-center gap-2 overflow-x-auto pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden -mx-1 px-1">
               {QUICK_PRESETS.map((preset) => (
                 <button
                   key={preset.title}
                   type="button"
                   onClick={() => applyPreset(preset)}
-                  className="tap rounded-xl bg-slate-50 hover:bg-slate-100 border border-black/5 px-3 py-1.5 text-[11px] font-bold text-slate-800 whitespace-nowrap transition-colors flex items-center gap-1.5 shrink-0"
+                  className="tap rounded-xl bg-slate-50 hover:bg-slate-100 border border-black/5 px-3 py-2 min-h-[36px] text-[11px] font-bold text-slate-800 whitespace-nowrap transition-colors flex items-center gap-1.5 shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-300"
                 >
-                  <span>{preset.icon}</span>
+                  <span aria-hidden>{preset.icon}</span>
                   <span>{preset.title}</span>
                 </button>
               ))}
@@ -791,7 +791,7 @@ function AppointmentsPage() {
               placeholder="e.g. Dental Checkup / Cardiology Consultation"
               value={title}
               onChange={(e) => setTitle(e.target.value)}
-              className="w-full rounded-xl border border-black/10 bg-[#F9F9FD] px-3 py-2.5 text-xs font-bold outline-none focus:border-[#7C5CFC] focus:bg-white transition-all"
+              className="w-full rounded-xl border border-black/10 bg-[#F9F9FD] px-3 py-3 text-[16px] sm:text-sm font-bold outline-none focus:border-[#7C5CFC] focus:bg-white transition-all min-h-[44px]"
             />
           </div>
 
@@ -806,7 +806,7 @@ function AppointmentsPage() {
                 placeholder="Dr. Sarah Smith"
                 value={doctorName}
                 onChange={(e) => setDoctorName(e.target.value)}
-                className="w-full rounded-xl border border-black/10 bg-[#F9F9FD] px-3 py-2.5 text-xs font-bold outline-none focus:border-[#7C5CFC] focus:bg-white transition-all"
+                className="w-full rounded-xl border border-black/10 bg-[#F9F9FD] px-3 py-3 text-[16px] sm:text-sm font-bold outline-none focus:border-[#7C5CFC] focus:bg-white transition-all min-h-[44px]"
               />
             </div>
             <div>
@@ -818,7 +818,7 @@ function AppointmentsPage() {
                 placeholder="City Health Center / Room 302"
                 value={location}
                 onChange={(e) => setLocation(e.target.value)}
-                className="w-full rounded-xl border border-black/10 bg-[#F9F9FD] px-3 py-2.5 text-xs font-bold outline-none focus:border-[#7C5CFC] focus:bg-white transition-all"
+                className="w-full rounded-xl border border-black/10 bg-[#F9F9FD] px-3 py-3 text-[16px] sm:text-sm font-bold outline-none focus:border-[#7C5CFC] focus:bg-white transition-all min-h-[44px]"
               />
             </div>
           </div>
@@ -831,7 +831,7 @@ function AppointmentsPage() {
                 required
                 value={appointmentDate}
                 onChange={(e) => setAppointmentDate(e.target.value)}
-                className="w-full rounded-xl border border-black/10 bg-[#F9F9FD] px-3 py-2.5 text-xs font-bold outline-none focus:border-[#7C5CFC] focus:bg-white transition-all"
+                className="w-full rounded-xl border border-black/10 bg-[#F9F9FD] px-3 py-3 text-[16px] sm:text-sm font-bold outline-none focus:border-[#7C5CFC] focus:bg-white transition-all min-h-[44px]"
               />
             </div>
             <div>
@@ -841,7 +841,7 @@ function AppointmentsPage() {
                 required
                 value={startTime}
                 onChange={(e) => setStartTime(e.target.value)}
-                className="w-full rounded-xl border border-black/10 bg-[#F9F9FD] px-3 py-2.5 text-xs font-bold outline-none focus:border-[#7C5CFC] focus:bg-white transition-all"
+                className="w-full rounded-xl border border-black/10 bg-[#F9F9FD] px-3 py-3 text-[16px] sm:text-sm font-bold outline-none focus:border-[#7C5CFC] focus:bg-white transition-all min-h-[44px]"
               />
             </div>
           </div>
@@ -852,7 +852,7 @@ function AppointmentsPage() {
               <select
                 value={priority}
                 onChange={(e) => setPriority(e.target.value as "high" | "medium" | "light")}
-                className="w-full rounded-xl border border-black/10 bg-[#F9F9FD] px-3 py-2.5 text-xs font-bold outline-none focus:border-[#7C5CFC] focus:bg-white transition-all"
+                className="w-full rounded-xl border border-black/10 bg-[#F9F9FD] px-3 py-3 text-[16px] sm:text-sm font-bold outline-none focus:border-[#7C5CFC] focus:bg-white transition-all min-h-[44px]"
               >
                 <option value="high">High Priority</option>
                 <option value="medium">Medium Priority</option>
@@ -864,7 +864,7 @@ function AppointmentsPage() {
               <select
                 value={reminderOffsetMinutes}
                 onChange={(e) => setReminderOffsetMinutes(Number(e.target.value))}
-                className="w-full rounded-xl border border-black/10 bg-[#F9F9FD] px-3 py-2.5 text-xs font-bold outline-none focus:border-[#7C5CFC] focus:bg-white transition-all"
+                className="w-full rounded-xl border border-black/10 bg-[#F9F9FD] px-3 py-3 text-[16px] sm:text-sm font-bold outline-none focus:border-[#7C5CFC] focus:bg-white transition-all min-h-[44px]"
               >
                 <option value={15}>15 minutes before</option>
                 <option value={30}>30 minutes before</option>
@@ -883,7 +883,7 @@ function AppointmentsPage() {
               placeholder="Fasting required, bring medical insurance card, lab results..."
               value={notes}
               onChange={(e) => setNotes(e.target.value)}
-              className="w-full rounded-xl border border-black/10 bg-[#F9F9FD] px-3 py-2 text-xs font-medium outline-none focus:border-[#7C5CFC] focus:bg-white transition-all resize-none"
+              className="w-full rounded-xl border border-black/10 bg-[#F9F9FD] px-3 py-3 text-[16px] sm:text-sm font-medium outline-none focus:border-[#7C5CFC] focus:bg-white transition-all resize-none min-h-[44px]"
             />
           </div>
 
@@ -945,7 +945,7 @@ function AppointmentCard({
         disabled={joiningId === app.id}
         aria-label={`Mark appointment ${app.title} as completed`}
         className={cn(
-          "tap flex size-6 shrink-0 items-center justify-center rounded-full border transition-all",
+          "tap flex size-10 min-h-[44px] min-w-[44px] shrink-0 items-center justify-center rounded-full border transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500",
           isCompleted
             ? "bg-emerald-500 border-emerald-500 text-white"
             : "border-slate-300 hover:border-slate-400 bg-white",
@@ -963,7 +963,7 @@ function AppointmentCard({
         <div className="flex items-center gap-1.5 flex-wrap">
           <span
             className={cn(
-              "rounded-full px-2 py-0.5 text-[9px] font-black uppercase tracking-wider",
+              "rounded-full px-2 py-0.5 text-[11px] font-black uppercase tracking-wider",
               dateInfo.isTodayDate
                 ? "bg-emerald-100 text-emerald-800"
                 : "bg-slate-100 text-slate-700",
@@ -974,7 +974,7 @@ function AppointmentCard({
 
           <span
             className={cn(
-              "rounded-full px-1.5 py-0.5 text-[9px] font-black uppercase",
+              "rounded-full px-1.5 py-0.5 text-[11px] font-black uppercase",
               PRIORITY_CONFIG[app.priority]?.badge ?? "bg-slate-100 text-slate-700",
             )}
           >
@@ -1012,7 +1012,7 @@ function AppointmentCard({
         <DropdownMenuTrigger asChild>
           <button
             type="button"
-            className="tap size-8 flex items-center justify-center rounded-full text-muted-foreground hover:bg-slate-100 hover:text-foreground shrink-0"
+            className="tap flex size-10 min-h-[44px] min-w-[44px] items-center justify-center rounded-full text-muted-foreground hover:bg-slate-100 hover:text-foreground shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400"
             aria-label="Appointment Options"
           >
             <MoreHorizontal className="size-4" />

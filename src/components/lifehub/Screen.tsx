@@ -47,8 +47,11 @@ export function Screen({
       <div
         className={cn(
           "mx-auto w-full max-w-md px-5 page-fade-enter",
-          fullHeight ? "flex-1 flex flex-col min-h-0 pt-4" : "pt-6",
-          !noBottomPadding && (showBottomNav ? "pb-32" : "pb-8"),
+          fullHeight
+            ? "flex-1 flex flex-col min-h-0 pt-[calc(1rem+env(safe-area-inset-top))] pb-[env(safe-area-inset-bottom)]"
+            : "pt-[calc(1.5rem+env(safe-area-inset-top))] ",
+          !noBottomPadding &&
+            (showBottomNav ? "pb-[calc(8rem+env(safe-area-inset-bottom))]" : "pb-[calc(2rem+env(safe-area-inset-bottom))]"),
           contentClassName,
         )}
       >
@@ -84,23 +87,23 @@ export function ScreenHeader({
   };
 
   return (
-    <header className="mb-5 flex items-center justify-between gap-3">
-      <div className="flex items-center gap-3">
+    <header className="mb-5 flex items-center justify-between gap-3 gap-x-3">
+      <div className="flex items-center gap-3 min-w-0 flex-1">
         {showBack && (
           <button
             onClick={handleBack}
-            className="tap flex size-9 items-center justify-center rounded-full bg-white text-[#12131A] shadow-xs border border-black/5 hover:bg-black/5"
+            className="tap flex size-11 min-h-[44px] min-w-[44px] shrink-0 items-center justify-center rounded-full bg-white text-[#12131A] shadow-xs border border-black/5 hover:bg-black/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#7C5CFC] focus-visible:ring-offset-2"
             aria-label="Go Back"
           >
             <ChevronLeft className="size-5" />
           </button>
         )}
-        <div>
-          <h1 className="text-xl font-extrabold text-[#12131A] tracking-tight">{title}</h1>
-          {subtitle ? <p className="text-xs text-[#6B7280] font-medium">{subtitle}</p> : null}
+        <div className="min-w-0 flex-1">
+          <h1 className="text-xl font-extrabold text-[#12131A] tracking-tight truncate">{title}</h1>
+          {subtitle ? <p className="text-xs text-[#6B7280] font-medium truncate">{subtitle}</p> : null}
         </div>
       </div>
-      {action}
+      {action && <div className="shrink-0">{action}</div>}
     </header>
   );
 }

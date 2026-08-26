@@ -92,7 +92,8 @@ export function GlobalSearchModal({ isOpen, onClose, userId }: GlobalSearchModal
         />
         <button
           onClick={onClose}
-          className="flex size-8 items-center justify-center rounded-full bg-muted text-muted-foreground hover:bg-accent"
+          aria-label="Close search"
+          className="tap flex size-11 min-h-[44px] min-w-[44px] items-center justify-center rounded-full bg-muted text-muted-foreground hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400"
         >
           <X className="size-4" />
         </button>
@@ -107,13 +108,13 @@ export function GlobalSearchModal({ isOpen, onClose, userId }: GlobalSearchModal
         )}
 
         {results.map((res) => (
-          <div
+          <button
             key={res.id}
             onClick={() => handleSelect(res.url)}
-            className="flex items-center justify-between rounded-xl p-3 transition-colors hover:bg-accent/60 cursor-pointer"
+            className="tap flex w-full items-center justify-between rounded-xl p-3 min-h-[56px] text-left transition-colors hover:bg-accent/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#7C5CFC] focus-visible:ring-inset"
           >
             <div className="flex items-center gap-3">
-              <div className="flex size-9 items-center justify-center rounded-lg bg-muted">
+              <div className="flex size-10 min-h-[40px] min-w-[40px] items-center justify-center rounded-lg bg-muted shrink-0">
                 {getIcon(res.type)}
               </div>
               <div>
@@ -121,8 +122,8 @@ export function GlobalSearchModal({ isOpen, onClose, userId }: GlobalSearchModal
                 <p className="text-xs text-muted-foreground">{res.subtitle}</p>
               </div>
             </div>
-            <ArrowRight className="size-4 text-muted-foreground" />
-          </div>
+            <ArrowRight className="size-4 text-muted-foreground shrink-0" />
+          </button>
         ))}
       </div>
     </Modal>

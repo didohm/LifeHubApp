@@ -205,7 +205,7 @@ function Services() {
           <button
             type="button"
             onClick={() => setSearchOpen(true)}
-            className="tap flex size-11 sm:size-10 items-center justify-center rounded-full border border-black/[0.04] bg-white text-[#12131A] shadow-sm hover:bg-slate-50"
+            className="tap flex size-11 min-h-[44px] min-w-[44px] items-center justify-center rounded-full border border-black/[0.04] bg-white text-[#12131A] shadow-sm hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#7C5CFC]"
             aria-label="Search services and items"
             title="Search"
           >
@@ -254,7 +254,7 @@ function Services() {
                     {count && (
                       <span
                         className={cn(
-                          "rounded-full px-2 py-1 text-[9px] font-extrabold uppercase tracking-wide shadow-2xs truncate max-w-[84px] sm:max-w-[96px] sm:px-2.5 sm:text-[10px] lg:max-w-[110px]",
+                          "rounded-full px-2 py-1 text-[11px] font-extrabold uppercase tracking-wide shadow-2xs truncate max-w-[84px] sm:max-w-[96px] sm:px-2.5 sm:text-[11px] lg:max-w-[110px]",
                           service.badgeColor,
                         )}
                       >

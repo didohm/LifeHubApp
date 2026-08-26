@@ -122,7 +122,7 @@ function OnboardingPage() {
                   setDob(e.target.value);
                   setError("");
                 }}
-                className="mt-1 w-full rounded-xl border border-black/10 bg-[#F9F9FD] p-2.5 text-xs outline-none focus:border-[#7C5CFC]"
+                className="mt-1 w-full rounded-xl border border-black/10 bg-[#F9F9FD] p-3 text-[16px] sm:text-sm min-h-[44px] outline-none focus:border-[#7C5CFC]"
               />
               {dob !== "" && (isFuture || isTooOld) && (
                 <p className="mt-1.5 text-[11px] font-bold text-rose-500">
@@ -134,7 +134,7 @@ function OnboardingPage() {
               {isValid && (
                 <p className="mt-1.5 flex items-center gap-1 text-[11px] font-bold text-[#6B7280]">
                   Age:{" "}
-                  <span className="rounded-full bg-[#7C5CFC]/10 px-2 py-0.5 text-[10px] font-extrabold text-[#7C5CFC]">
+                  <span className="rounded-full bg-[#7C5CFC]/10 px-2 py-0.5 text-[11px] font-extrabold text-[#7C5CFC]">
                     {age} {age === 1 ? "year" : "years"}
                   </span>
                 </p>
@@ -160,7 +160,7 @@ function OnboardingPage() {
                       setHeight(e.target.value);
                       setError("");
                     }}
-                    className="w-full rounded-xl border border-black/10 bg-[#F9F9FD] py-2.5 pl-9 pr-3 text-xs outline-none focus:border-[#7C5CFC] placeholder:text-[#9CA3AF]"
+                    className="w-full rounded-xl border border-black/10 bg-[#F9F9FD] py-3 pl-10 pr-3 text-[16px] sm:text-sm min-h-[44px] outline-none focus:border-[#7C5CFC] placeholder:text-[#9CA3AF]"
                   />
                 </div>
                 {height !== "" && !heightValid && (
@@ -189,7 +189,7 @@ function OnboardingPage() {
                       setWeight(e.target.value);
                       setError("");
                     }}
-                    className="w-full rounded-xl border border-black/10 bg-[#F9F9FD] py-2.5 pl-9 pr-3 text-xs outline-none focus:border-[#7C5CFC] placeholder:text-[#9CA3AF]"
+                    className="w-full rounded-xl border border-black/10 bg-[#F9F9FD] py-3 pl-10 pr-3 text-[16px] sm:text-sm min-h-[44px] outline-none focus:border-[#7C5CFC] placeholder:text-[#9CA3AF]"
                   />
                 </div>
                 {weight !== "" && !weightValid && (

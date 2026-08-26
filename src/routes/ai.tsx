@@ -158,7 +158,7 @@ function MarkdownContent({ content }: { content: string }) {
       const currentIdx = codeBlockIndex++;
       elements.push(
         <div key={key} className="relative my-2 rounded-xl bg-slate-900 text-slate-100 p-3 text-xs">
-          <div className="flex items-center justify-between pb-2 mb-2 border-b border-slate-800 text-[10px] text-slate-400">
+          <div className="flex items-center justify-between pb-2 mb-2 border-b border-slate-800 text-[11px] text-slate-400">
             <span>Code</span>
             <button
               onClick={() => handleCopyCode(codeText, currentIdx)}
@@ -367,38 +367,39 @@ function renderInline(text: string): React.ReactNode {
 function TypingIndicator({ onStop }: { onStop?: () => void }) {
   return (
     <motion.div
-      initial={{ opacity: 0, y: 6 }}
-      animate={{ opacity: 1, y: 0 }}
-      exit={{ opacity: 0, y: 6 }}
-      className="flex items-start gap-2.5 my-1"
+      initial={{ opacity: 0, y: 8, scale: 0.98 }}
+      animate={{ opacity: 1, y: 0, scale: 1 }}
+      exit={{ opacity: 0, y: 8, scale: 0.98 }}
+      transition={{ duration: 0.2, ease: "easeOut" }}
+      className="flex items-start gap-2.5"
     >
-      <div className="flex size-7 shrink-0 items-center justify-center rounded-full bg-[#7C5CFC]/15 text-[#7C5CFC] shadow-xs">
-        <Bot className="size-4" />
+      <div className="flex size-7 sm:size-8 shrink-0 items-center justify-center rounded-full bg-[#7C5CFC]/12 text-[#7C5CFC] border border-[#7C5CFC]/15 shadow-2xs">
+        <Bot className="size-3.5 sm:size-4" />
       </div>
-      <div className="flex items-center gap-3 rounded-2xl rounded-tl-sm bg-[#F5F3FF] border border-[#7C5CFC]/20 px-3.5 py-2.5 shadow-xs">
+      <div className="flex items-center gap-2.5 rounded-[18px] rounded-tl-[6px] bg-white border border-[#7C5CFC]/15 px-4 py-3 shadow-sm">
         <div className="flex gap-1 items-center">
           <span
-            className="size-2 animate-bounce rounded-full bg-[#7C5CFC]"
-            style={{ animationDelay: "0ms" }}
+            className="size-1.5 sm:size-2 animate-bounce rounded-full bg-[#7C5CFC]"
+            style={{ animationDelay: "0ms", animationDuration: "0.9s" }}
           />
           <span
-            className="size-2 animate-bounce rounded-full bg-[#7C5CFC]"
-            style={{ animationDelay: "150ms" }}
+            className="size-1.5 sm:size-2 animate-bounce rounded-full bg-[#7C5CFC]/70"
+            style={{ animationDelay: "150ms", animationDuration: "0.9s" }}
           />
           <span
-            className="size-2 animate-bounce rounded-full bg-[#7C5CFC]"
-            style={{ animationDelay: "300ms" }}
+            className="size-1.5 sm:size-2 animate-bounce rounded-full bg-[#7C5CFC]/50"
+            style={{ animationDelay: "300ms", animationDuration: "0.9s" }}
           />
         </div>
-        <span className="text-xs font-semibold text-muted-foreground">
+        <span className="text-[12.5px] font-semibold tracking-tight text-[#6B7280]">
           Analyzing your health data...
         </span>
         {onStop && (
           <button
             onClick={onStop}
-            className="ml-2 flex items-center gap-1 rounded-md bg-white px-2 py-0.5 text-[11px] font-bold text-slate-700 shadow-xs border border-slate-200 hover:bg-slate-50 transition-colors"
+            className="ml-1 sm:ml-2 flex items-center gap-1.5 rounded-full bg-slate-900 px-2.5 py-1 text-[11px] font-bold text-white shadow-sm hover:bg-slate-800 active:scale-95 transition-all"
           >
-            <Square className="size-2.5 fill-current" />
+            <Square className="size-2.5 fill-white" />
             Stop
           </button>
         )}
@@ -705,7 +706,7 @@ function AiPage() {
             onClick={handleBack}
             aria-label="Go back"
             title="Back to Services"
-            className="tap flex size-9 shrink-0 items-center justify-center rounded-full bg-white text-[#12131A] shadow-xs border border-black/5 hover:bg-black/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#7C5CFC] focus-visible:ring-offset-2"
+            className="tap flex size-11 min-h-[44px] min-w-[44px] shrink-0 items-center justify-center rounded-full bg-white text-[#12131A] shadow-xs border border-black/5 hover:bg-black/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#7C5CFC] focus-visible:ring-offset-2"
           >
             <ChevronLeft className="size-5" />
           </button>
@@ -722,7 +723,7 @@ function AiPage() {
                 <span className="text-sm sm:text-base font-extrabold text-foreground tracking-tight truncate">
                   AI Assistant
                 </span>
-                <span className="flex items-center gap-1 rounded-full bg-emerald-500/10 px-2 py-0.5 text-[10px] font-bold text-emerald-600 shrink-0">
+                <span className="flex items-center gap-1 rounded-full bg-emerald-500/10 px-2 py-0.5 text-[11px] font-bold text-emerald-600 shrink-0">
                   <span className="size-1.5 rounded-full bg-emerald-500 animate-pulse" />
                   Live
                 </span>
@@ -743,7 +744,7 @@ function AiPage() {
             }}
             aria-label="Search"
             title="Global Search"
-            className="tap flex size-10 sm:size-9 items-center justify-center rounded-full bg-white shadow-xs border border-border/60 hover:bg-accent active:scale-95 text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#7C5CFC]"
+            className="tap flex size-11 min-h-[44px] min-w-[44px] items-center justify-center rounded-full bg-white shadow-xs border border-border/60 hover:bg-accent active:scale-95 text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#7C5CFC]"
           >
             <Search className="size-4" />
           </button>
@@ -756,11 +757,11 @@ function AiPage() {
             }}
             aria-label="Conversation History"
             title="Chat History"
-            className="tap relative flex size-10 sm:size-9 items-center justify-center rounded-full bg-white shadow-xs border border-border/60 hover:bg-accent active:scale-95 text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#7C5CFC]"
+            className="tap relative flex size-11 min-h-[44px] min-w-[44px] items-center justify-center rounded-full bg-white shadow-xs border border-border/60 hover:bg-accent active:scale-95 text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#7C5CFC]"
           >
             <History className="size-4" />
             {conversations.length > 1 && (
-              <span className="absolute -top-1 -right-1 flex size-4 items-center justify-center rounded-full bg-[#7C5CFC] text-[9px] font-bold text-white shadow-xs">
+              <span className="absolute -top-1 -right-1 flex size-4 items-center justify-center rounded-full bg-[#7C5CFC] text-[11px] font-bold text-white shadow-xs">
                 {conversations.length}
               </span>
             )}
@@ -775,7 +776,7 @@ function AiPage() {
             aria-label="New Conversation"
             title="New Chat"
             disabled={loading}
-            className="tap flex size-10 sm:size-9 items-center justify-center rounded-full bg-gradient-to-br from-[#7C5CFC] to-[#906FFA] shadow-sm text-white hover:opacity-95 active:scale-95 disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#7C5CFC]"
+            className="tap flex size-11 min-h-[44px] min-w-[44px] items-center justify-center rounded-full bg-gradient-to-br from-[#7C5CFC] to-[#906FFA] shadow-sm text-white hover:opacity-95 active:scale-95 disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#7C5CFC]"
           >
             <Plus className="size-4" />
           </button>
@@ -788,7 +789,7 @@ function AiPage() {
       <div
         ref={scrollContainerRef}
         onScroll={handleScroll}
-        className="flex-1 min-h-0 overflow-y-auto overscroll-contain py-3 sm:py-4 px-0.5 sm:px-1 space-y-3.5 scroll-smooth"
+        className="flex-1 min-h-0 overflow-y-auto overscroll-contain py-4 sm:py-5 px-1 sm:px-2 space-y-4 scroll-smooth [scrollbar-width:thin]"
         role="log"
         aria-label="Chat conversation"
         aria-live="polite"
@@ -829,7 +830,7 @@ function AiPage() {
                 <p className="text-[11px] font-bold text-muted-foreground uppercase tracking-wider">
                   Suggested Actions
                 </p>
-                <span className="text-[10px] text-muted-foreground/80 font-medium">Tap to ask</span>
+                <span className="text-[11px] text-muted-foreground/80 font-medium">Tap to ask</span>
               </div>
 
               <div className="grid grid-cols-2 gap-3 sm:gap-4 md:grid-cols-4">
@@ -880,7 +881,7 @@ function AiPage() {
               <p className="text-[11px] font-bold text-muted-foreground uppercase tracking-wider mb-2 px-1">
                 Quick Questions
               </p>
-              <div className="flex flex-wrap gap-1.5">
+              <div className="flex flex-wrap gap-2">
                 {suggestedPrompts.map((prompt) => (
                   <button
                     key={prompt.label}
@@ -898,84 +899,111 @@ function AiPage() {
             </div>
           </div>
         ) : (
-          /* Active Messages Thread */
-          <div className="space-y-3.5 pb-2">
+          /* Active Messages Thread — fixed: no empty bubble, typing indicator only before streaming */
+          <div className="space-y-4 pb-2">
             <AnimatePresence initial={false}>
-              {messages.map((m) => (
-                <motion.div
-                  key={m.id}
-                  initial={{ opacity: 0, y: 8 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ duration: 0.18 }}
-                  className={cn(
-                    "flex items-start gap-2",
-                    m.role === "user" ? "flex-row-reverse" : "",
-                  )}
-                >
-                  {/* Avatar */}
-                  <div
+              {messages.map((m) => {
+                // FIX: never render an empty pending bubble — it was showing as a
+                // white empty card with just the footer (`LifeHub Clinical AI | Copy`)
+                // while the typing indicator was also visible underneath.
+                const isPendingEmpty = m.id.startsWith("pending-") && !m.content.trim();
+                if (isPendingEmpty) return null;
+                const isStreaming = loading && m.id.startsWith("pending-") && m.content.length > 0;
+                return (
+                  <motion.div
+                    key={m.id}
+                    initial={{ opacity: 0, y: 10, scale: 0.98 }}
+                    animate={{ opacity: 1, y: 0, scale: 1 }}
+                    transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
                     className={cn(
-                      "flex size-7 sm:size-8 shrink-0 items-center justify-center rounded-full text-xs font-bold shadow-xs",
-                      m.role === "user"
-                        ? "bg-slate-900 text-white"
-                        : "bg-[#7C5CFC]/15 text-[#7C5CFC]",
+                      "flex items-start gap-2 sm:gap-2.5",
+                      m.role === "user" ? "flex-row-reverse" : "",
                     )}
                   >
-                    {m.role === "user" ? (
-                      <UserIcon className="size-3.5 sm:size-4" />
-                    ) : (
-                      <Bot className="size-3.5 sm:size-4" />
-                    )}
-                  </div>
+                    {/* Avatar — sticky so tall bubbles keep avatar at top */}
+                    <div
+                      className={cn(
+                        "flex size-7 sm:size-8 shrink-0 items-center justify-center rounded-full text-xs font-bold shadow-sm border",
+                        m.role === "user"
+                          ? "bg-slate-900 text-white border-slate-800 mt-1"
+                          : "bg-[#7C5CFC]/10 text-[#7C5CFC] border-[#7C5CFC]/15 mt-1",
+                      )}
+                    >
+                      {m.role === "user" ? (
+                        <UserIcon className="size-3.5 sm:size-4" />
+                      ) : (
+                        <Bot className="size-3.5 sm:size-4" />
+                      )}
+                    </div>
 
-                  {/* Message Bubble — line-length 35–60ch mobile, 60–75ch desktop (ux:line-length-control) */}
-                  <div
-                    className={cn(
-                      "relative max-w-[86%] sm:max-w-[78%] lg:max-w-[68%] xl:max-w-[60ch] px-3.5 py-2.5 sm:px-4 sm:py-3 text-[13.5px] sm:text-[14px] leading-relaxed shadow-xs break-words",
-                      m.role === "user"
-                        ? "bg-slate-900 text-white rounded-3xl rounded-tr-sm"
-                        : "bg-white border border-[#7C5CFC]/20 text-foreground rounded-3xl rounded-tl-sm",
-                    )}
-                  >
-                    {m.role === "assistant" ? (
-                      <div>
-                        <MarkdownContent content={m.content} />
-                        {loading && m.id.startsWith("pending-") && m.content.length > 0 && (
-                          <span className="ml-0.5 inline-block h-3.5 w-[2px] animate-pulse rounded-full bg-[#7C5CFC] align-middle" />
-                        )}
+                    {/* Message Bubble — tighter max-width + better word-wrap to avoid clipping */}
+                    <div
+                      className={cn(
+                        "relative max-w-[82%] sm:max-w-[74%] lg:max-w-[60ch] px-3.5 py-2.5 sm:px-4 sm:py-3 text-[13.5px] sm:text-[14px] leading-[1.6] shadow-sm break-words hyphens-auto",
+                        m.role === "user"
+                          ? "bg-slate-900 text-white rounded-[20px] rounded-tr-[6px]"
+                          : "bg-white border border-[#7C5CFC]/12 text-foreground rounded-[20px] rounded-tl-[6px]",
+                      )}
+                    >
+                      {m.role === "assistant" ? (
+                        <div className="min-w-0">
+                          {m.content.trim() ? (
+                            <MarkdownContent content={m.content} />
+                          ) : null}
+                          {isStreaming && (
+                            <span
+                              className="ml-0.5 inline-block h-3.5 w-[2px] animate-pulse rounded-full bg-[#7C5CFC] align-middle"
+                              aria-hidden
+                            />
+                          )}
 
-                        {/* Copy & Status Bar */}
-                        <div className="mt-2.5 pt-2 flex items-center justify-between border-t border-border/40 text-[10.5px] text-muted-foreground">
-                          <span className="font-semibold text-[#7C5CFC]">LifeHub Clinical AI</span>
-                          <button
-                            onClick={() => handleCopy(m.content, m.id)}
-                            className="flex items-center gap-1 rounded-md px-2 py-0.5 font-semibold text-[#7C5CFC] hover:bg-[#7C5CFC]/10 transition-colors"
-                            aria-label="Copy message"
-                          >
-                            {copiedMessageId === m.id ? (
-                              <>
-                                <Check className="size-3 text-emerald-500" />
-                                <span className="text-emerald-500">Copied</span>
-                              </>
-                            ) : (
-                              <>
-                                <Copy className="size-3" />
-                                <span>Copy</span>
-                              </>
-                            )}
-                          </button>
+                          {/* Footer — only when there is real content, not while empty */}
+                          {m.content.trim() && (
+                            <div className="mt-3 pt-2.5 flex items-center justify-between gap-3 border-t border-slate-100 text-[11px]">
+                              <span className="inline-flex items-center gap-1.5 font-bold tracking-tight text-[#7C5CFC]">
+                                <span className="hidden sm:inline">LifeHub Clinical AI</span>
+                                <span className="sm:hidden">Clinical AI</span>
+                                {isStreaming && (
+                                  <span className="size-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                                )}
+                              </span>
+                              <button
+                                onClick={() => handleCopy(m.content, m.id)}
+                                disabled={!m.content.trim()}
+                                className="tap inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-semibold text-[#7C5CFC] hover:bg-[#7C5CFC]/10 active:scale-95 transition-colors disabled:opacity-40"
+                                aria-label="Copy message"
+                              >
+                                {copiedMessageId === m.id ? (
+                                  <>
+                                    <Check className="size-3 text-emerald-500" />
+                                    <span className="text-emerald-500">Copied</span>
+                                  </>
+                                ) : (
+                                  <>
+                                    <Copy className="size-3" />
+                                    <span>Copy</span>
+                                  </>
+                                )}
+                              </button>
+                            </div>
+                          )}
                         </div>
-                      </div>
-                    ) : (
-                      <p className="whitespace-pre-line leading-relaxed">{m.content}</p>
-                    )}
-                  </div>
-                </motion.div>
-              ))}
+                      ) : (
+                        <p className="whitespace-pre-wrap break-words leading-relaxed">{m.content}</p>
+                      )}
+                    </div>
+                  </motion.div>
+                );
+              })}
             </AnimatePresence>
 
-            {/* Typing indicator */}
-            <AnimatePresence>{loading && <TypingIndicator onStop={handleStop} />}</AnimatePresence>
+            {/* Typing indicator — only BEFORE first token, not during streaming (fixes duplicate UI) */}
+            <AnimatePresence>
+              {loading &&
+                !messages.some((m) => m.id.startsWith("pending-") && m.content.trim().length > 0) && (
+                  <TypingIndicator onStop={handleStop} />
+                )}
+            </AnimatePresence>
 
             {/* Follow-up Suggestion Chips (after last assistant reply when not loading) */}
             {!loading &&
@@ -984,7 +1012,7 @@ function AiPage() {
                 <motion.div
                   initial={{ opacity: 0, y: 6 }}
                   animate={{ opacity: 1, y: 0 }}
-                  className="pt-1.5 pl-8 sm:pl-10 flex flex-wrap gap-1.5"
+                  className="pt-1.5 pl-8 sm:pl-10 flex flex-wrap gap-2"
                 >
                   {defaultFollowUps.map((prompt) => (
                     <button
@@ -1033,10 +1061,10 @@ function AiPage() {
       <div
         className={cn(
           "w-full shrink-0 transition-all duration-200",
-          isTyping ? "pb-2 pt-1" : "pb-[calc(6rem+env(safe-area-inset-bottom))] sm:pb-24 pt-2",
+          isTyping ? "pb-2 pt-2" : "pb-[calc(5.5rem+env(safe-area-inset-bottom))] sm:pb-24 pt-3",
         )}
       >
-        <div className="flex items-end gap-2 rounded-3xl border border-border/80 bg-white px-3.5 sm:px-4 py-2 sm:py-2.5 shadow-[0_8px_24px_-8px_rgba(18,19,26,0.12)] focus-within:border-[#7C5CFC] focus-within:ring-2 focus-within:ring-[#7C5CFC]/20 transition-all duration-200">
+        <div className="flex items-end gap-2.5 rounded-[28px] border border-slate-200/80 bg-white px-3.5 sm:px-4 py-2.5 sm:py-3 shadow-[0_8px_28px_-10px_rgba(18,19,26,0.16),0_1px_4px_rgba(18,19,26,0.06)] focus-within:border-[#7C5CFC]/50 focus-within:ring-[3px] focus-within:ring-[#7C5CFC]/12 focus-within:shadow-[0_8px_28px_-10px_rgba(124,92,252,0.2)] transition-all duration-200">
           <textarea
             ref={textareaRef}
             value={inputPrompt}
@@ -1061,7 +1089,7 @@ function AiPage() {
                   textareaRef.current.focus();
                 }
               }}
-              className="tap flex size-8 shrink-0 items-center justify-center rounded-full text-muted-foreground hover:text-foreground hover:bg-slate-100 mb-0.5"
+              className="tap flex size-10 min-h-[44px] min-w-[44px] shrink-0 items-center justify-center rounded-full text-muted-foreground hover:text-foreground hover:bg-slate-100 mb-0.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400"
               aria-label="Clear input"
             >
               <X className="size-4" />
@@ -1208,10 +1236,10 @@ function AiPage() {
                     setDeleteConfirmId(conv.id);
                   }}
                   disabled={loading}
-                  className="tap flex size-8 items-center justify-center rounded-full text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
+                  className="tap flex size-11 min-h-[44px] min-w-[44px] items-center justify-center rounded-full text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-400"
                   aria-label="Delete conversation"
                 >
-                  <Trash2 className="size-3.5" />
+                  <Trash2 className="size-4" />
                 </button>
               </div>
             );

@@ -54,7 +54,8 @@ export function BottomNav() {
           animate={{ opacity: 1, y: 0, scale: 1 }}
           exit={{ opacity: 0, y: 20, scale: 0.95 }}
           transition={{ duration: 0.18, ease: "easeOut" }}
-          className="fixed inset-x-0 bottom-3 z-50 flex justify-center pointer-events-none"
+          className="fixed inset-x-0 z-50 flex justify-center pointer-events-none px-4"
+          style={{ bottom: "calc(0.75rem + env(safe-area-inset-bottom))" }}
         >
           <div className="pointer-events-auto flex items-center gap-2 rounded-full bg-slate-900/85 px-4 py-3 shadow-2xl border border-white/10 backdrop-blur-md">
             {items.map(({ to, label, Icon }) => {
@@ -70,7 +71,7 @@ export function BottomNav() {
                   aria-current={active ? "page" : undefined}
                   title={label}
                   onClick={() => sounds.playNavClick()}
-                  className="relative flex size-12 items-center justify-center rounded-full transition-all duration-200"
+                  className="relative flex size-12 min-h-[44px] min-w-[44px] items-center justify-center rounded-full transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-900"
                 >
                   {active && (
                     <motion.div

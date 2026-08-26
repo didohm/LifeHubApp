@@ -43,11 +43,13 @@ import type {
   Bill,
   Birthday,
   Workout,
+  WorkoutProgram,
   WalkSession,
   WaterLog,
   ActivityLog,
   DocumentItem,
   User,
+  Payment,
 } from "./types";
 import type { ProfileStats } from "./api";
 
@@ -76,13 +78,14 @@ export const MEDICAL_DISCLAIMER =
 
 const SYSTEM_INTRO = `You are the official AI Assistant of this application — NOT a generic AI chatbot.
 
-You are an ORCHESTRATOR, not a database. You never hold or remember user data; every answer about the user's personal life is built from data freshly retrieved from the application database via tools, at request time.
+You are an ORCHESTRATOR with FULL KNOWLEDGE of all user information inside the app. You never hold stale data; every answer about the user's personal life is built from data freshly retrieved from the application database via tools, at request time. You CAN access every module: tasks, appointments, medications, bills, payments, documents, birthdays, workouts, workout programs, walks, water/hydration, activity history, profile & stats — the entire account.
 
 ## TOOL RULES
 - Never answer a personal question without first retrieving the required data.
-- If a tool exists for the requested information, always call it.
+- If a tool exists for the requested information, always call it. For broad "know everything / all my information" questions, use getUserContext which returns the COMPLETE snapshot of every module.
 - Never rely on previously injected context when fresh data can be retrieved.
 - Application APIs are the source of truth. The model is responsible only for reasoning and formatting the response; the backend is responsible for storing and retrieving user data.
+- You KNOW all information inside the app for the current user — fetched live via getUserContext / queryUserData. When the user says "know my info", "show everything", "all my data", return a comprehensive summary from the live snapshot.
 
 ## AVAILABLE TOOLS
 ${AI_TOOLS.map((t) => `- ${t.name}: ${t.description}`).join("\n")}
@@ -94,7 +97,7 @@ ${AI_TOOLS.map((t) => `- ${t.name}: ${t.description}`).join("\n")}
 - Never answer using examples as if they were real data.
 - Only the data blocks supplied in this conversation may be referenced — nothing from any other user, and nothing assumed.
 
-You give clear, encouraging, well-structured answers, and you keep replies concise and skimmable with short sections and bullet points.`;
+You give clear, encouraging, well-structured answers, and you keep replies concise and skimmable with short sections and bullet points. When summarizing ALL information, organize it into clear sections: Tasks, Appointments, Medications, Bills & Payments, Documents, Workouts & Programs, Walks, Hydration, Birthdays, Profile/Stats.`;
 
 // ─────────────────────────────────────────────────────────────────────────
 //  Intent detection — the router that decides which tools to call
@@ -108,11 +111,13 @@ type IntentKind =
   | "bills"
   | "birthdays"
   | "workouts"
+  | "workout_programs"
   | "walks"
   | "water"
   | "activity"
   | "documents"
   | "profile"
+  | "payments"
   | "help"
   | "general";
 
@@ -125,6 +130,32 @@ interface IntentPlan {
 function detectIntent(prompt: string): IntentPlan {
   const q = prompt.toLowerCase().trim();
   const has = (re: RegExp) => re.test(q);
+
+  // COMPREHENSIVE KNOWLEDGE — user wants assistant to know ALL information inside the app
+  // This must be checked FIRST — highest priority. Covers: "know all my information", "all my data", etc.
+  if (
+    has(/\b(all my (information|info|data))\b/) ||
+    has(/\b(know (all|everything))\b/) ||
+    has(/\b(everything about me|show everything|my entire account|complete overview|full summary|all information inside)\b/) ||
+    has(/\b(all information|entire information|whole account|full account|complete data)\b/) ||
+    q.includes("know all my information") ||
+    q.includes("all my information inside") ||
+    q === "know everything" ||
+    q.includes("you know my") ||
+    q.includes("know my information")
+  ) {
+    return { kind: "overview", modules: ["overview"], filters: {} };
+  }
+
+  // Payments / transaction history — check before bills to capture "payment history"
+  if (has(/\b(payment history|paid bills|transactions?|payment method|how much.*paid)\b/)) {
+    return { kind: "payments", modules: ["payments"], filters: { limit: 30 } };
+  }
+
+  // Workout programs — dedicated training plans
+  if (has(/\b(workout program|training program|weekly plan|training days|my program)\b/)) {
+    return { kind: "workout_programs", modules: ["workout_programs"], filters: { limit: 20 } };
+  }
 
   // Medications (check before overview: "what meds do I have today" → meds)
   if (
@@ -429,6 +460,16 @@ function buildBuiltInReply(prompt: string, data: FetchedData): string {
       return replyWorkouts(
         data.results.find((r) => r.module === "workouts")?.items as Workout[] | undefined,
       );
+    case "workout_programs":
+      return replyWorkoutPrograms(
+        data.results.find((r) => r.module === "workout_programs")?.items as
+          | WorkoutProgram[]
+          | undefined,
+      );
+    case "payments":
+      return replyPayments(
+        data.results.find((r) => r.module === "payments")?.items as Payment[] | undefined,
+      );
     case "walks":
       return replyWalks(
         data.results.find((r) => r.module === "walks")?.items as WalkSession[] | undefined,
@@ -437,7 +478,8 @@ function buildBuiltInReply(prompt: string, data: FetchedData): string {
       return replyWater(
         data.results.find((r) => r.module === "water")?.items as WaterLog[] | undefined,
         data.results.find((r) => r.module === "water")?.extra?.today as
-          { glasses: number; goal: number; goal_reached: boolean } | undefined,
+          | { glasses: number; goal: number; goal_reached: boolean }
+          | undefined,
       );
     case "activity":
       return replyActivity(
@@ -457,21 +499,24 @@ function replyHelp(): string {
   const items = [
     "💊 **Medications** — explain your schedule, dose times, and adherence",
     "🗓️ **Appointments** — review upcoming visits and prepare questions",
-    "💳 **Bills** — see what's due and plan payments",
+    "💳 **Bills & Payments** — see what's due, paid, and payment history",
     "✅ **Tasks** — prioritise your day and clear your list",
-    "🏋️ **Workouts & Walks** — today's sessions, distance, and steps",
+    "🏋️ **Workouts & Programs** — sessions, training plans, and weekly splits",
+    "🚶 **Walks** — distance, steps, calories, and history",
     "💧 **Hydration** — glasses vs your daily goal",
-    '☀️ **Day overview** — ask "What should I do today?" for a live snapshot',
+    "📄 **Documents** — your Vault files, reports, prescriptions",
+    "🎂 **Birthdays** — upcoming celebrations",
+    '☀️ **Day overview** — ask "What should I do today?" or "Know all my information" for a COMPLETE live snapshot of EVERYTHING',
   ];
   return [
     "Hi! I'm your LifeHub Assistant 👋",
     "",
-    "I answer from your real account data — fetched live every time you ask.",
+    "I know **ALL your information inside the app** — fetched LIVE from your account every time you ask. Nothing is stale, nothing is invented.",
     "",
     "Here's how I can help right now:",
     ...items.map((i) => `- ${i}`),
     "",
-    "Ask me anything, or tap one of the quick actions above.",
+    'Try: *"Know all my information"*, *"Summarize everything"*, or *"Show my entire account"* for a full overview.',
     "",
     `_${MEDICAL_DISCLAIMER}_`,
   ].join("\n");
@@ -492,9 +537,20 @@ function replyOverview(snapshot: UserContextSnapshot | null): string {
     snapshot.upcoming.appointments.length ||
     snapshot.upcoming.bills.length ||
     snapshot.upcoming.birthdays.length ||
-    snapshot.recentActivity.length;
+    snapshot.recentActivity.length ||
+    snapshot.documents.length ||
+    snapshot.workoutPrograms.length ||
+    snapshot.payments.length ||
+    snapshot.medicationLogs.length;
 
-  const lines: string[] = [`☀️ **Your day at a glance** — ${todayKey()}`, ""];
+  const lines: string[] = [
+    `☀️ **Your complete account overview — I know ALL your information** — ${todayKey()}`,
+    "",
+    snapshot.profile
+      ? `👤 **${snapshot.profile.full_name}**${snapshot.profile.email ? ` · ${snapshot.profile.email}` : ""}${snapshot.profile.date_of_birth ? ` · born ${snapshot.profile.date_of_birth}` : ""}`
+      : "",
+    "",
+  ];
 
   if (!hasAnything) {
     lines.push(NO_DATA_PHRASE);
@@ -558,6 +614,32 @@ function replyOverview(snapshot: UserContextSnapshot | null): string {
   if (snapshot.upcoming.birthdays.length) {
     lines.push(
       `- 🎂 Birthdays soon: ${snapshot.upcoming.birthdays.map((b) => b.full_name).join(", ")}`,
+    );
+  }
+  // NEW: Vault completeness — proves assistant knows ALL information
+  if (snapshot.documents.length) {
+    lines.push(
+      `- 📄 Documents in Vault: **${snapshot.documents.length}** — ${snapshot.documents.slice(0, 3).map((d) => d.name).join(", ")}${snapshot.documents.length > 3 ? " …" : ""}`,
+    );
+  }
+  if (snapshot.workoutPrograms.length) {
+    const active = snapshot.workoutPrograms.find((p) => p.is_active);
+    lines.push(
+      `- 🏋️ Workout Programs: **${snapshot.workoutPrograms.length}**${active ? ` (active: ${active.name})` : ""} — ${snapshot.workoutPrograms.map((p) => p.name).join(", ")}`,
+    );
+  }
+  if (snapshot.payments.length) {
+    const totalPaid = snapshot.payments.reduce((s, p) => s + Number(p.amount), 0);
+    lines.push(
+      `- 💰 Payments: **${snapshot.payments.length}** totalling **$${totalPaid.toFixed(2)}** (latest: ${snapshot.payments[0]?.payment_method || "—"})`,
+    );
+  }
+  if (snapshot.medicationLogs.length) {
+    lines.push(`- 💊 Medication intake log: **${snapshot.medicationLogs.length}** entries`);
+  }
+  if (snapshot.stats) {
+    lines.push(
+      `- 📊 Stats: **${snapshot.stats.tasksCompleted}/${snapshot.stats.tasksTotal}** tasks done (${snapshot.stats.avgTaskCompletion}%) · **${snapshot.stats.totalWorkoutsCompleted}** workouts · **${(snapshot.stats.totalWalkingDistanceMeters / 1000).toFixed(1)} km** walked · streak **${snapshot.stats.waterGoalStreak}d** · level **${snapshot.stats.currentAchievementLevel}**`,
     );
   }
 
@@ -778,6 +860,57 @@ function replyWorkouts(workouts: Workout[] | undefined): string {
     lines.push(`Next up: **${scheduled[0].session_name}** on ${scheduled[0].scheduled_date}.`);
   }
   return lines.join("\n");
+}
+
+function replyWorkoutPrograms(programs: WorkoutProgram[] | undefined): string {
+  const items = programs || [];
+  if (items.length === 0) {
+    return [
+      "🏋️ **Workout Programs**",
+      "",
+      NO_DATA_PHRASE,
+      "",
+      "Create a program on the **Workout Programs** tab and I'll track your weekly plan, training days, and active program.",
+    ].join("\n");
+  }
+  const lines = [
+    "🏋️ **Your workout programs**",
+    "",
+    ...items.map(
+      (p) =>
+        `- **${p.name}** (${p.workout_type || "Custom"}${p.is_active ? " — ACTIVE ⭐" : ""}) — ${p.training_days?.join(", ") || "no training days"}${p.weekly_plan?.length ? ` | plan: ${p.weekly_plan.map((d) => `${d.day}:${d.focus}`).join(", ")}` : ""}`,
+    ),
+  ];
+  const active = items.find((p) => p.is_active);
+  if (active) {
+    lines.push("");
+    lines.push(`Active program: **${active.name}** — focus on ${active.training_days?.join(", ") || "your scheduled days"}.`);
+  }
+  return lines.join("\n");
+}
+
+function replyPayments(payments: Payment[] | undefined): string {
+  const items = payments || [];
+  if (items.length === 0) {
+    return [
+      "💰 **Payment History**",
+      "",
+      NO_DATA_PHRASE,
+      "",
+      "Pay a bill on the **Bills** tab and your payment history will appear here.",
+    ].join("\n");
+  }
+  const total = items.reduce((s, p) => s + Number(p.amount), 0);
+  return [
+    "💰 **Your payment history**",
+    "",
+    ...items.slice(0, 15).map(
+      (p) =>
+        `- **$${Number(p.amount).toFixed(2)}** via ${p.payment_method} on ${new Date(p.payment_date).toLocaleDateString()}${p.reference ? ` (${p.reference})` : ""}`,
+    ),
+    "",
+    `**Total paid (shown): $${total.toFixed(2)}** across ${items.length} payments.`,
+  ].join("\n");
 }
 
 function replyWalks(walks: WalkSession[] | undefined): string {

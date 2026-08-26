@@ -218,7 +218,7 @@ function BirthdaysPage() {
               onClick={handleBack}
               aria-label="Go back to Services"
               title="Back to Services"
-              className="tap flex size-9 shrink-0 items-center justify-center rounded-full bg-white text-[#12131A] shadow-xs border border-black/5 hover:bg-black/5"
+              className="tap flex size-11 min-h-[44px] min-w-[44px] shrink-0 items-center justify-center rounded-full bg-white text-[#12131A] shadow-xs border border-black/5 hover:bg-black/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#7C5CFC]"
             >
               <ChevronLeft className="size-5" />
             </button>
@@ -269,7 +269,7 @@ function BirthdaysPage() {
         </div>
         <button
           onClick={openAddModal}
-          className="tap flex shrink-0 items-center gap-1 rounded-full bg-ink px-4 py-2 text-xs font-bold text-card shadow-md transition-transform active:scale-95 hover:opacity-90"
+          className="tap flex shrink-0 items-center gap-1 rounded-full bg-ink px-4 py-2.5 min-h-[44px] text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ink font-bold text-card shadow-md transition-transform active:scale-95 hover:opacity-90"
         >
           <Plus className="size-4" />{" "}
           <span className="hidden xs:inline sm:inline">Add Birthday</span>
@@ -434,12 +434,12 @@ function BirthdaysPage() {
                       <div className="flex items-center gap-2">
                         <h3 className="text-base font-extrabold truncate">{birthday.full_name}</h3>
                         {today && (
-                          <span className="inline-flex items-center gap-0.5 rounded-full bg-card px-2 py-0.5 text-[10px] font-bold text-ink">
+                          <span className="inline-flex items-center gap-0.5 rounded-full bg-card px-2 py-0.5 text-[11px] font-bold text-ink">
                             <Gift className="size-2.5" /> Today!
                           </span>
                         )}
                         {upcomingSoon && days <= 7 && (
-                          <span className="inline-flex items-center gap-0.5 rounded-full bg-card/70 px-2 py-0.5 text-[10px] font-bold text-ink">
+                          <span className="inline-flex items-center gap-0.5 rounded-full bg-card/70 px-2 py-0.5 text-[11px] font-bold text-ink">
                             <PartyPopper className="size-2.5" />{" "}
                             {days === 0 ? "Today!" : `${days}d`}
                           </span>
@@ -474,15 +474,15 @@ function BirthdaysPage() {
                     )}
                     <button
                       onClick={() => openEditModal(birthday)}
-                      title="Edit"
-                      className="flex size-8 items-center justify-center rounded-full text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
+                      aria-label="Edit birthday" title="Edit"
+                      className="tap flex size-11 min-h-[44px] min-w-[44px] items-center justify-center rounded-full text-muted-foreground hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400 hover:text-foreground transition-colors"
                     >
                       <Edit2 className="size-4" />
                     </button>
                     <button
                       onClick={() => handleDelete(birthday.id)}
-                      title="Delete"
-                      className="flex size-8 items-center justify-center rounded-full text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
+                      aria-label="Delete birthday" title="Delete"
+                      className="tap flex size-11 min-h-[44px] min-w-[44px] items-center justify-center rounded-full text-muted-foreground hover:text-destructive focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-400 hover:bg-destructive/10 transition-colors"
                     >
                       <Trash2 className="size-4" />
                     </button>
@@ -502,7 +502,7 @@ function BirthdaysPage() {
           </h2>
           <button
             onClick={closeModal}
-            className="size-8 flex items-center justify-center rounded-full bg-muted text-muted-foreground"
+            className="tap flex size-11 min-h-[44px] min-w-[44px] items-center justify-center rounded-full bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400 text-muted-foreground"
           >
             <X className="size-4" />
           </button>
@@ -521,14 +521,14 @@ function BirthdaysPage() {
                 placeholder="e.g. Jane Doe"
                 value={fullName}
                 onChange={(e) => setFullName(e.target.value)}
-                className="w-full rounded-xl border border-input bg-muted/30 p-2.5 pl-10 text-sm outline-none focus:border-ring transition-colors"
+                className="w-full rounded-xl border border-input bg-muted/30 p-3 pl-10 text-[16px] sm:text-sm min-h-[44px] outline-none focus:border-ring transition-colors"
               />
             </div>
           </div>
 
           <div>
             <label className="text-xs font-bold text-foreground">Phone Number</label>
-            <span className="ml-1 text-[10px] text-muted-foreground">(optional)</span>
+            <span className="ml-1 text-[11px] text-muted-foreground">(optional)</span>
             <div className="relative mt-1">
               <Phone className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-muted-foreground" />
               <input
@@ -536,7 +536,7 @@ function BirthdaysPage() {
                 placeholder="e.g. +1 555-0123"
                 value={phoneNumber}
                 onChange={(e) => setPhoneNumber(e.target.value)}
-                className="w-full rounded-xl border border-input bg-muted/30 p-2.5 pl-10 text-sm outline-none focus:border-ring transition-colors"
+                className="w-full rounded-xl border border-input bg-muted/30 p-3 pl-10 text-[16px] sm:text-sm min-h-[44px] outline-none focus:border-ring transition-colors"
               />
             </div>
           </div>
@@ -552,7 +552,7 @@ function BirthdaysPage() {
                 required
                 value={birthdayDate}
                 onChange={(e) => setBirthdayDate(e.target.value)}
-                className="w-full rounded-xl border border-input bg-muted/30 p-2.5 pl-10 text-sm outline-none focus:border-ring transition-colors"
+                className="w-full rounded-xl border border-input bg-muted/30 p-3 pl-10 text-[16px] sm:text-sm min-h-[44px] outline-none focus:border-ring transition-colors"
               />
             </div>
           </div>

@@ -457,14 +457,14 @@ function WorkoutProgramsPage() {
                     <button
                       onClick={() => openEditModal(program)}
                       title="Edit Program"
-                      className="size-8 flex items-center justify-center rounded-full text-[#6B7280] hover:bg-black/5 transition-colors"
+                      className="tap flex size-11 min-h-[44px] min-w-[44px] items-center justify-center rounded-full text-[#6B7280] hover:bg-black/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400 transition-colors"
                     >
                       <Edit2 className="size-3.5" />
                     </button>
                     <button
                       onClick={() => handleDelete(program.id)}
                       title="Delete Program"
-                      className="size-8 flex items-center justify-center rounded-full text-rose-500 hover:bg-rose-50 transition-colors"
+                      className="tap flex size-11 min-h-[44px] min-w-[44px] items-center justify-center rounded-full text-rose-500 hover:bg-rose-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-400 transition-colors"
                     >
                       <Trash2 className="size-3.5" />
                     </button>
@@ -514,7 +514,7 @@ function WorkoutProgramsPage() {
           </div>
           <button
             onClick={() => setModalOpen(false)}
-            className="size-7 flex items-center justify-center rounded-full bg-black/5 text-muted-foreground hover:text-foreground"
+            className="tap flex size-11 min-h-[44px] min-w-[44px] items-center justify-center rounded-full bg-black/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400 text-muted-foreground hover:text-foreground"
           >
             <X className="size-4" />
           </button>

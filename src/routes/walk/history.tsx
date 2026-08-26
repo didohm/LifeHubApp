@@ -78,14 +78,14 @@ function WalkHistoryPage() {
     <Screen>
       <ScreenHeader title="Walk History" showBack />
 
-      <div className="px-4 py-4 space-y-4">
+      <div className="py-4 space-y-4">
         {/* Filter tabs */}
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 overflow-x-auto pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
           <button
             onClick={() => setFilter("all")}
-            className={`px-4 py-2 rounded-lg text-sm font-bold transition-all ${
+            className={`tap px-4 py-2.5 min-h-[44px] rounded-xl text-sm font-bold transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#7C5CFC] ${
               filter === "all"
-                ? "bg-[#7C5CFC] text-white"
+                ? "bg-[#7C5CFC] text-white shadow-sm"
                 : "bg-white text-[#64748B] border border-slate-200 hover:bg-slate-50"
             }`}
           >
@@ -93,9 +93,9 @@ function WalkHistoryPage() {
           </button>
           <button
             onClick={() => setFilter("week")}
-            className={`px-4 py-2 rounded-lg text-sm font-bold transition-all ${
+            className={`tap px-4 py-2.5 min-h-[44px] rounded-xl text-sm font-bold transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#7C5CFC] ${
               filter === "week"
-                ? "bg-[#7C5CFC] text-white"
+                ? "bg-[#7C5CFC] text-white shadow-sm"
                 : "bg-white text-[#64748B] border border-slate-200 hover:bg-slate-50"
             }`}
           >
@@ -103,9 +103,9 @@ function WalkHistoryPage() {
           </button>
           <button
             onClick={() => setFilter("month")}
-            className={`px-4 py-2 rounded-lg text-sm font-bold transition-all ${
+            className={`tap px-4 py-2.5 min-h-[44px] rounded-xl text-sm font-bold transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#7C5CFC] ${
               filter === "month"
-                ? "bg-[#7C5CFC] text-white"
+                ? "bg-[#7C5CFC] text-white shadow-sm"
                 : "bg-white text-[#64748B] border border-slate-200 hover:bg-slate-50"
             }`}
           >
@@ -176,7 +176,7 @@ function WalkHistoryCard({ session, onClick }: { session: WalkSession; onClick: 
   return (
     <button
       onClick={onClick}
-      className="w-full text-left rounded-xl bg-white border border-slate-200 overflow-hidden hover:border-[#7C5CFC] hover:shadow-lg transition-all active:scale-[0.98]"
+      className="tap w-full text-left rounded-xl bg-white border border-slate-200 overflow-hidden hover:border-[#7C5CFC] hover:shadow-lg transition-all active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#7C5CFC] focus-visible:ring-offset-2"
     >
       {/* Thumbnail map */}
       {hasRoute && first && last ? (
@@ -224,7 +224,7 @@ function WalkHistoryCard({ session, onClick }: { session: WalkSession; onClick: 
             </span>
           </div>
           {session.vehicle && (
-            <span className="inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-[9px] font-black text-amber-800">
+            <span className="inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-black text-amber-800">
               Vehicle
             </span>
           )}
@@ -243,7 +243,7 @@ function WalkHistoryCard({ session, onClick }: { session: WalkSession; onClick: 
           <div className="flex items-center gap-1.5">
             <Clock className="size-3.5 text-[#7C5CFC]" />
             <div>
-              <p className="text-[10px] font-bold uppercase text-[#64748B]">Time</p>
+              <p className="text-[11px] font-bold uppercase text-[#64748B]">Time</p>
               <p className="text-xs font-black tabular-nums text-[#0A0E27]">
                 {formatDuration(session.duration || 0)}
               </p>
@@ -253,7 +253,7 @@ function WalkHistoryCard({ session, onClick }: { session: WalkSession; onClick: 
           <div className="flex items-center gap-1.5">
             <Filter className="size-3.5 text-[#22C55E]" />
             <div>
-              <p className="text-[10px] font-bold uppercase text-[#64748B]">Pace</p>
+              <p className="text-[11px] font-bold uppercase text-[#64748B]">Pace</p>
               <p className="text-xs font-black tabular-nums text-[#0A0E27]">
                 {avgPace ? formatPace(avgPace) : "--:--"}
               </p>
@@ -263,7 +263,7 @@ function WalkHistoryCard({ session, onClick }: { session: WalkSession; onClick: 
           <div className="flex items-center gap-1.5">
             <Footprints className="size-3.5 text-[#F97316]" />
             <div>
-              <p className="text-[10px] font-bold uppercase text-[#64748B]">Steps</p>
+              <p className="text-[11px] font-bold uppercase text-[#64748B]">Steps</p>
               <p className="text-xs font-black tabular-nums text-[#0A0E27]">
                 {(session.steps || 0).toLocaleString()}
               </p>

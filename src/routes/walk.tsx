@@ -357,7 +357,7 @@ function WalkPage() {
           <button
             type="button"
             onClick={() => navigate({ to: "/walk/history" })}
-            className="tap flex items-center gap-1 text-xs font-black text-[#12131A] bg-white border border-border/60 px-3.5 py-1.5 rounded-full shadow-2xs hover:bg-slate-50 transition-transform active:scale-95"
+            className="tap flex items-center gap-1 text-xs font-black text-[#12131A] bg-white border border-border/60 px-4 py-2 min-h-[44px] rounded-full shadow-2xs hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#7C5CFC] transition-transform active:scale-95"
           >
             <History className="size-3.5 text-[#7C5CFC]" /> History
           </button>
@@ -420,7 +420,7 @@ function WalkPage() {
                   : "Acquiring Fix"
               : "GPS Ready"}
             {vehicleFlagged && (
-              <span className="ml-1 inline-flex items-center gap-1 rounded-full bg-amber-500/20 px-2 py-0.5 text-[9px] font-black text-amber-300">
+              <span className="ml-1 inline-flex items-center gap-1 rounded-full bg-amber-500/20 px-2 py-0.5 text-[11px] font-black text-amber-300">
                 <Car className="size-2.5" /> Vehicle
               </span>
             )}
@@ -440,14 +440,14 @@ function WalkPage() {
         {/* Live Telemetry Grid (Pace, Duration, Calories, Steps) */}
         <div className="relative z-10 grid grid-cols-4 gap-1.5 rounded-2xl bg-white/10 p-3 backdrop-blur-md border border-white/10 text-center">
           <div>
-            <div className="flex items-center justify-center gap-1 text-white/70 text-[10px] font-black uppercase tracking-wider mb-0.5">
+            <div className="flex items-center justify-center gap-1 text-white/70 text-[11px] font-black uppercase tracking-wider mb-0.5">
               <Gauge className="size-3 text-cyan-400" /> Pace
             </div>
             <span className="text-xs sm:text-sm font-black text-white">{currentPaceStr}</span>
           </div>
 
           <div className="border-l border-white/10">
-            <div className="flex items-center justify-center gap-1 text-white/70 text-[10px] font-black uppercase tracking-wider mb-0.5">
+            <div className="flex items-center justify-center gap-1 text-white/70 text-[11px] font-black uppercase tracking-wider mb-0.5">
               <Clock className="size-3 text-[#7C5CFC]" /> Time
             </div>
             <span className="text-xs sm:text-sm font-black text-white">
@@ -456,14 +456,14 @@ function WalkPage() {
           </div>
 
           <div className="border-l border-white/10">
-            <div className="flex items-center justify-center gap-1 text-white/70 text-[10px] font-black uppercase tracking-wider mb-0.5">
+            <div className="flex items-center justify-center gap-1 text-white/70 text-[11px] font-black uppercase tracking-wider mb-0.5">
               <Flame className="size-3 text-orange-400" /> Burn
             </div>
             <span className="text-xs sm:text-sm font-black text-white">{calories} kcal</span>
           </div>
 
           <div className="border-l border-white/10">
-            <div className="flex items-center justify-center gap-1 text-white/70 text-[10px] font-black uppercase tracking-wider mb-0.5">
+            <div className="flex items-center justify-center gap-1 text-white/70 text-[11px] font-black uppercase tracking-wider mb-0.5">
               <Footprints className="size-3 text-emerald-400" /> Steps
             </div>
             <span className="text-xs sm:text-sm font-black text-white">
@@ -479,7 +479,7 @@ function WalkPage() {
               type="button"
               onClick={handleStartClick}
               disabled={loading}
-              className="tap flex items-center justify-center gap-2 rounded-2xl bg-emerald-500 px-8 py-3.5 text-sm font-black text-white shadow-lg hover:bg-emerald-600 active:scale-95 transition-all w-full max-w-xs"
+              className="tap flex items-center justify-center gap-2 rounded-2xl bg-emerald-500 px-8 py-3.5 min-h-[44px] text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 font-black text-white shadow-lg hover:bg-emerald-600 active:scale-95 transition-all w-full max-w-xs"
             >
               <Play className="size-4.5 fill-white" /> Start New Walk
             </button>
@@ -490,7 +490,7 @@ function WalkPage() {
               <button
                 type="button"
                 onClick={handlePause}
-                className="tap flex-1 flex items-center justify-center gap-1.5 rounded-2xl bg-amber-500 py-3.5 text-xs font-black text-white shadow-md hover:bg-amber-600 active:scale-95 transition-all"
+                className="tap flex-1 flex items-center justify-center gap-1.5 rounded-2xl bg-amber-500 py-3.5 min-h-[44px] text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500 font-black text-white shadow-md hover:bg-amber-600 active:scale-95 transition-all"
               >
                 <Pause className="size-4 fill-white" /> Pause
               </button>
@@ -498,7 +498,7 @@ function WalkPage() {
                 type="button"
                 onClick={handleFinish}
                 disabled={loading}
-                className="tap flex-1 flex items-center justify-center gap-1.5 rounded-2xl bg-rose-500 py-3.5 text-xs font-black text-white shadow-md hover:bg-rose-600 active:scale-95 transition-all"
+                className="tap flex-1 flex items-center justify-center gap-1.5 rounded-2xl bg-rose-500 py-3.5 min-h-[44px] text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-500 font-black text-white shadow-md hover:bg-rose-600 active:scale-95 transition-all"
               >
                 <Square className="size-4 fill-white" /> Finish Walk
               </button>
@@ -510,7 +510,7 @@ function WalkPage() {
               <button
                 type="button"
                 onClick={handleResume}
-                className="tap flex-1 flex items-center justify-center gap-1.5 rounded-2xl bg-emerald-500 py-3.5 text-xs font-black text-white shadow-md hover:bg-emerald-600 active:scale-95 transition-all"
+                className="tap flex-1 flex items-center justify-center gap-1.5 rounded-2xl bg-emerald-500 py-3.5 min-h-[44px] text-xs font-black text-white shadow-md hover:bg-emerald-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-600 active:scale-95 transition-all"
               >
                 <Play className="size-4 fill-white" /> Resume
               </button>
@@ -518,7 +518,7 @@ function WalkPage() {
                 type="button"
                 onClick={handleFinish}
                 disabled={loading}
-                className="tap flex-1 flex items-center justify-center gap-1.5 rounded-2xl bg-rose-500 py-3.5 text-xs font-black text-white shadow-md hover:bg-rose-600 active:scale-95 transition-all"
+                className="tap flex-1 flex items-center justify-center gap-1.5 rounded-2xl bg-rose-500 py-3.5 min-h-[44px] text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-500 font-black text-white shadow-md hover:bg-rose-600 active:scale-95 transition-all"
               >
                 <Square className="size-4 fill-white" /> Finish
               </button>
@@ -570,8 +570,7 @@ function WalkPage() {
                 sounds.playNavClick();
                 setStatsPeriod(period);
               }}
-              className={cn(
-                "px-3 py-1 rounded-full capitalize transition-all",
+              className={cn("px-3 py-2 min-h-[36px] rounded-full capitalize focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#12131A] transition-all",
                 statsPeriod === period
                   ? "bg-white text-[#12131A] shadow-xs"
                   : "text-muted-foreground",
@@ -681,7 +680,7 @@ function WalkPage() {
                         {formatKm(s.distance)} km Walk
                       </span>
                       {pace !== "--" && (
-                        <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[9px] font-black text-slate-700">
+                        <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-black text-slate-700">
                           {pace}/km
                         </span>
                       )}
@@ -699,7 +698,7 @@ function WalkPage() {
                 </div>
 
                 <div className="flex flex-col items-end gap-1 shrink-0 ml-2">
-                  <span className="text-[10px] font-black text-muted-foreground bg-slate-100 rounded-full px-2 py-0.5">
+                  <span className="text-[11px] font-black text-muted-foreground bg-slate-100 rounded-full px-2 py-0.5">
                     {new Date(s.finished_at || s.started_at).toLocaleTimeString([], {
                       hour: "2-digit",
                       minute: "2-digit",
@@ -707,7 +706,7 @@ function WalkPage() {
                   </span>
                   <span
                     className={cn(
-                      "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[9px] font-black",
+                      "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-black",
                       hasRoute
                         ? "bg-emerald-50 text-emerald-700 border border-emerald-200/50"
                         : "bg-slate-100 text-slate-400",

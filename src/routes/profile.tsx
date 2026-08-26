@@ -81,7 +81,7 @@ const StatCard = memo(function StatCard({
         </span>
         <span className="block text-[11px] font-bold text-muted-foreground truncate">{label}</span>
         {sublabel && (
-          <span className="block text-[10px] text-muted-foreground/80 truncate">{sublabel}</span>
+          <span className="block text-[11px] text-muted-foreground/80 truncate">{sublabel}</span>
         )}
       </div>
     </div>
@@ -131,7 +131,7 @@ const MenuRow = memo(function MenuRow({
           <div className="flex items-center gap-2">
             <span className="text-xs sm:text-sm font-extrabold">{label}</span>
             {badge && (
-              <span className="rounded-full bg-[#7C5CFC]/15 px-2 py-0.2 text-[10px] font-bold text-[#7C5CFC]">
+              <span className="rounded-full bg-[#7C5CFC]/15 px-2 py-0.2 text-[11px] font-bold text-[#7C5CFC]">
                 {badge}
               </span>
             )}
@@ -339,7 +339,7 @@ function ProfilePage() {
         action={
           <button
             onClick={openSettings}
-            className="tap flex size-9 items-center justify-center rounded-full bg-white text-[#12131A] shadow-xs border border-border/60 hover:bg-accent"
+            className="tap flex size-11 min-h-[44px] min-w-[44px] items-center justify-center rounded-full bg-white text-[#12131A] shadow-xs border border-border/60 hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#7C5CFC]"
             title="Settings"
           >
             <SettingsIcon className="size-4.5" />
@@ -365,7 +365,7 @@ function ProfilePage() {
           />
           <button
             onClick={openEdit}
-            className="tap absolute bottom-0 right-0 flex size-7 items-center justify-center rounded-full bg-[#7C5CFC] text-white shadow-md hover:scale-105 active:scale-95 transition-transform"
+            className="tap absolute bottom-0 right-0 flex size-9 min-h-[36px] min-w-[36px] items-center justify-center rounded-full bg-[#7C5CFC] text-white shadow-md hover:scale-105 active:scale-95 transition-transform focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#7C5CFC]"
             title="Change photo"
           >
             <Camera className="size-3.5" />
@@ -527,7 +527,7 @@ function ProfilePage() {
           </div>
           <button
             onClick={() => setSettingsModalOpen(false)}
-            className="size-8 flex items-center justify-center rounded-full text-muted-foreground hover:bg-slate-100"
+            className="tap flex size-11 min-h-[44px] min-w-[44px] items-center justify-center rounded-full text-muted-foreground hover:bg-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400"
             aria-label="Close"
           >
             <X className="size-4" />
@@ -656,7 +656,7 @@ function ProfilePage() {
             <button
               type="button"
               onClick={() => setEditModalOpen(false)}
-              className="size-8 flex items-center justify-center rounded-full text-muted-foreground hover:bg-slate-100"
+              className="tap flex size-11 min-h-[44px] min-w-[44px] items-center justify-center rounded-full text-muted-foreground hover:bg-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400"
             >
               <X className="size-4" />
             </button>
@@ -674,10 +674,11 @@ function ProfilePage() {
               <button
                 type="button"
                 onClick={() => fileInputRef.current?.click()}
+                aria-label="Change photo"
                 title="Change photo"
-                className="tap absolute -bottom-1 -right-1 flex size-8 items-center justify-center rounded-full bg-[#7C5CFC] text-white shadow-md hover:scale-105"
+                className="tap absolute -bottom-1 -right-1 flex size-10 min-h-[40px] min-w-[40px] items-center justify-center rounded-full bg-[#7C5CFC] text-white shadow-md hover:scale-105 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#7C5CFC] focus-visible:ring-offset-2"
               >
-                <Camera className="size-3.5" />
+                <Camera className="size-4" />
               </button>
             </div>
 
@@ -732,7 +733,7 @@ function ProfilePage() {
               value={fullName}
               onChange={(e) => setFullName(e.target.value)}
               placeholder="Enter your name"
-              className="mt-1 w-full rounded-xl border border-border bg-slate-50 px-3.5 py-2 text-xs font-semibold text-foreground outline-none focus:border-[#7C5CFC] focus:bg-white"
+              className="mt-1 w-full rounded-xl border border-border bg-slate-50 px-3.5 py-3 text-[16px] sm:text-sm min-h-[44px] font-semibold text-foreground outline-none focus:border-[#7C5CFC] focus:bg-white"
             />
           </div>
 
@@ -783,7 +784,7 @@ function ProfilePage() {
           <h3 className="text-base font-extrabold text-foreground">Help & Support</h3>
           <button
             onClick={() => setHelpModalOpen(false)}
-            className="size-8 flex items-center justify-center rounded-full text-muted-foreground hover:bg-slate-100"
+            className="tap flex size-11 min-h-[44px] min-w-[44px] items-center justify-center rounded-full text-muted-foreground hover:bg-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400"
           >
             <X className="size-4" />
           </button>

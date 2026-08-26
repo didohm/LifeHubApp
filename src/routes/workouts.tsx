@@ -478,7 +478,7 @@ function WorkoutsPage() {
                   setStopwatchRunning(!stopwatchRunning);
                 }}
                 className={cn(
-                  "tap flex size-8 items-center justify-center rounded-full text-white shadow-xs transition-colors",
+                  "tap flex size-11 min-h-[44px] min-w-[44px] items-center justify-center rounded-full text-white shadow-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 transition-colors",
                   stopwatchRunning
                     ? "bg-amber-600 hover:bg-amber-700"
                     : "bg-emerald-600 hover:bg-emerald-700",
@@ -498,7 +498,7 @@ function WorkoutsPage() {
                   setElapsedSeconds(0);
                 }}
                 title="Reset duration"
-                className="tap flex size-8 items-center justify-center rounded-full bg-slate-200 text-slate-600 hover:bg-slate-300"
+                className="tap flex size-11 min-h-[44px] min-w-[44px] items-center justify-center rounded-full bg-slate-200 text-slate-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400 hover:bg-slate-300"
               >
                 <RotateCcw className="size-3.5" />
               </button>
@@ -524,7 +524,7 @@ function WorkoutsPage() {
                   type="button"
                   onClick={() => startRestTimer(secs)}
                   className={cn(
-                    "tap py-2 rounded-xl text-xs font-black transition-all",
+                    "tap py-2.5 min-h-[44px] rounded-xl text-xs font-black transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#7C5CFC]",
                     restActive && initialRest === secs
                       ? "bg-[#7C5CFC] text-white shadow-md ring-2 ring-[#7C5CFC]/20"
                       : "bg-slate-100 text-slate-700 hover:bg-slate-200",

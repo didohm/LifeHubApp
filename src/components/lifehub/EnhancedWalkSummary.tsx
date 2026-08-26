@@ -219,11 +219,11 @@ export default function EnhancedWalkSummary({
         {/* Header Bar */}
         <div className="flex items-center justify-between px-5 pt-4 pb-3 border-b border-slate-800 bg-slate-900/90 backdrop-blur-md shrink-0">
           <div className="flex items-center gap-2">
-            <span className="inline-flex items-center gap-1.5 rounded-full bg-[#FC5200]/20 px-2.5 py-0.5 text-[10px] font-black uppercase tracking-wider text-[#FC5200] border border-[#FC5200]/30">
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-[#FC5200]/20 px-2.5 py-0.5 text-[11px] font-black uppercase tracking-wider text-[#FC5200] border border-[#FC5200]/30">
               <Activity className="size-3" /> LifeHub Activity
             </span>
             {isVehicle && (
-              <span className="inline-flex items-center gap-1 rounded-full bg-amber-500/20 px-2 py-0.5 text-[10px] font-black text-amber-400 border border-amber-500/30">
+              <span className="inline-flex items-center gap-1 rounded-full bg-amber-500/20 px-2 py-0.5 text-[11px] font-black text-amber-400 border border-amber-500/30">
                 <Car className="size-3" /> Vehicle
               </span>
             )}
@@ -293,7 +293,7 @@ export default function EnhancedWalkSummary({
           <div className="grid grid-cols-3 divide-x divide-slate-800 rounded-2xl bg-slate-900 border border-slate-800 shadow-md">
             {/* Distance */}
             <div className="p-3.5 text-center">
-              <p className="text-[10px] font-black uppercase tracking-wider text-slate-400">
+              <p className="text-[11px] font-black uppercase tracking-wider text-slate-400">
                 Distance
               </p>
               <div className="mt-1 flex items-baseline justify-center gap-0.5">
@@ -306,7 +306,7 @@ export default function EnhancedWalkSummary({
 
             {/* Avg Pace */}
             <div className="p-3.5 text-center">
-              <p className="text-[10px] font-black uppercase tracking-wider text-slate-400">
+              <p className="text-[11px] font-black uppercase tracking-wider text-slate-400">
                 Avg Pace
               </p>
               <div className="mt-1 flex items-baseline justify-center gap-0.5">
@@ -319,7 +319,7 @@ export default function EnhancedWalkSummary({
 
             {/* Time */}
             <div className="p-3.5 text-center">
-              <p className="text-[10px] font-black uppercase tracking-wider text-slate-400">
+              <p className="text-[11px] font-black uppercase tracking-wider text-slate-400">
                 Moving Time
               </p>
               <div className="mt-1">
@@ -338,7 +338,7 @@ export default function EnhancedWalkSummary({
                 <Flame className="size-4.5" />
               </div>
               <div>
-                <p className="text-[10px] font-bold uppercase text-slate-400">Calories</p>
+                <p className="text-[11px] font-bold uppercase text-slate-400">Calories</p>
                 <p className="text-sm font-black text-white tabular-nums">{rawCalories} kcal</p>
               </div>
             </div>
@@ -349,7 +349,7 @@ export default function EnhancedWalkSummary({
                 <Footprints className="size-4.5" />
               </div>
               <div>
-                <p className="text-[10px] font-bold uppercase text-slate-400">Steps</p>
+                <p className="text-[11px] font-bold uppercase text-slate-400">Steps</p>
                 <p className="text-sm font-black text-white tabular-nums">
                   {rawSteps.toLocaleString()}
                 </p>
@@ -362,7 +362,7 @@ export default function EnhancedWalkSummary({
                 <Gauge className="size-4.5" />
               </div>
               <div>
-                <p className="text-[10px] font-bold uppercase text-slate-400">Avg Speed</p>
+                <p className="text-[11px] font-bold uppercase text-slate-400">Avg Speed</p>
                 <p className="text-sm font-black text-white tabular-nums">
                   {avgSpeedKmH ? `${avgSpeedKmH.toFixed(1)} km/h` : "--"}
                 </p>
@@ -375,7 +375,7 @@ export default function EnhancedWalkSummary({
                 <TrendingUp className="size-4.5" />
               </div>
               <div>
-                <p className="text-[10px] font-bold uppercase text-slate-400">Elevation</p>
+                <p className="text-[11px] font-bold uppercase text-slate-400">Elevation</p>
                 <p className="text-sm font-black text-white tabular-nums">
                   {elevationGain ? `+${Math.round(elevationGain)}m` : "--"}
                 </p>
@@ -390,7 +390,7 @@ export default function EnhancedWalkSummary({
                 <h3 className="text-xs font-black uppercase tracking-wider text-slate-300 flex items-center gap-1.5">
                   <span className="size-2 rounded-full bg-[#FC5200]" /> Kilometer Splits
                 </h3>
-                <span className="text-[10px] font-bold text-slate-400">Pace vs Avg</span>
+                <span className="text-[11px] font-bold text-slate-400">Pace vs Avg</span>
               </div>
 
               <div className="space-y-2">

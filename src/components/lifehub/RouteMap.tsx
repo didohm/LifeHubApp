@@ -409,19 +409,19 @@ export default function RouteMap({
         <div className="absolute bottom-3 left-3 z-10 rounded-xl bg-slate-900/85 backdrop-blur-md px-3.5 py-2 text-white shadow-xl border border-white/10 flex items-center gap-3.5">
           {distanceMeters != null && (
             <div>
-              <p className="text-[9px] font-bold text-white/60 uppercase tracking-wide">Distance</p>
+              <p className="text-[11px] font-bold text-white/60 uppercase tracking-wide">Distance</p>
               <p className="text-xs font-black text-white">{formatDistance(distanceMeters)}</p>
             </div>
           )}
           {durationSeconds != null && (
             <div className="border-l border-white/20 pl-3">
-              <p className="text-[9px] font-bold text-white/60 uppercase tracking-wide">Time</p>
+              <p className="text-[11px] font-bold text-white/60 uppercase tracking-wide">Time</p>
               <p className="text-xs font-black text-white">{formatDuration(durationSeconds)}</p>
             </div>
           )}
           {paceSecondsPerKm != null && paceSecondsPerKm > 0 && (
             <div className="border-l border-white/20 pl-3">
-              <p className="text-[9px] font-bold text-white/60 uppercase tracking-wide">Pace</p>
+              <p className="text-[11px] font-bold text-white/60 uppercase tracking-wide">Pace</p>
               <p className="text-xs font-black text-[#FC5200]">{formatPace(paceSecondsPerKm)}/km</p>
             </div>
           )}
@@ -430,7 +430,7 @@ export default function RouteMap({
 
       {/* Route Legend Indicator */}
       {parsedPoints.length >= 2 && (
-        <div className="absolute top-3 left-3 z-10 flex items-center gap-2 rounded-full bg-white/85 backdrop-blur-md px-2.5 py-1 text-[10px] font-black text-[#1E293B] shadow-sm border border-slate-200/60 pointer-events-none">
+        <div className="absolute top-3 left-3 z-10 flex items-center gap-2 rounded-full bg-white/85 backdrop-blur-md px-2.5 py-1 text-[11px] font-black text-[#1E293B] shadow-sm border border-slate-200/60 pointer-events-none">
           <span className="flex items-center gap-1">
             <span className="size-2 rounded-full bg-[#22C55E]" /> Start
           </span>

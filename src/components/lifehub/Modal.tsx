@@ -99,11 +99,11 @@ export function Modal({
   const overlay = (
     <div
       className={cn(
-        "fixed inset-0 h-viewport z-[80] grid bg-black/50 p-3 backdrop-blur-xs transform-gpu will-change-[opacity]",
+        "fixed inset-0 h-viewport z-[80] grid bg-black/50 p-3 pt-[calc(0.75rem+env(safe-area-inset-top))] pb-[calc(0.75rem+env(safe-area-inset-bottom))] backdrop-blur-xs transform-gpu will-change-[opacity] overscroll-contain",
         alignTop
-          ? "items-start justify-center pt-16"
+          ? "items-start justify-center pt-[calc(4rem+env(safe-area-inset-top))]"
           : keyboardOpen
-            ? "items-end justify-center"
+            ? "items-end justify-center pb-[calc(0.5rem+env(safe-area-inset-bottom))]"
             : "items-center justify-center",
         backdropClassName,
       )}
@@ -133,6 +133,8 @@ export function Modal({
           "relative z-[90] w-[92vw] max-w-[420px] min-h-0 max-h-full overflow-y-auto overscroll-contain rounded-3xl bg-white p-6 shadow-2xl",
           "animate-in zoom-in-95 fade-in-0 duration-200 transform-gpu will-change-[transform,opacity]",
           "sm:max-w-[500px] md:max-w-[560px]",
+          // Ensure scrollable content never hides behind safe-area or keyboard
+          "max-h-[calc(100dvh-1.5rem-env(safe-area-inset-top)-env(safe-area-inset-bottom))]",
           className,
         )}
       >

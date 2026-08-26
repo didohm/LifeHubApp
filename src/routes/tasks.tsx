@@ -206,7 +206,7 @@ function TasksPage() {
       >
         <div className="flex items-center justify-between">
           <div>
-            <span className="inline-flex items-center gap-1 rounded-full bg-white/90 px-2.5 py-0.5 text-[10px] font-black text-pink-700 shadow-2xs">
+            <span className="inline-flex items-center gap-1 rounded-full bg-white/90 px-2.5 py-0.5 text-[11px] font-black text-pink-700 shadow-2xs">
               <CheckCircle2 className="size-3" /> Routine Progress
             </span>
             <div className="mt-2 flex items-baseline gap-2">
@@ -247,11 +247,11 @@ function TasksPage() {
             placeholder="Search task title..."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
-            className="w-full rounded-2xl border border-border/70 bg-white py-2 pl-10 pr-4 text-xs font-semibold text-foreground outline-none shadow-2xs focus:border-[#7C5CFC]"
+            className="w-full rounded-2xl border border-border/70 bg-white min-h-[44px] py-3 pl-10 pr-4 text-[16px] sm:text-sm font-semibold text-foreground outline-none shadow-2xs focus:border-[#7C5CFC]"
           />
         </div>
 
-        <div className="flex gap-1.5 overflow-x-auto pb-1 -mx-5 px-5">
+        <div className="flex gap-2 overflow-x-auto pb-1 -mx-5 px-5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
           {CATEGORIES.map((cat) => {
             const active = categoryFilter === cat;
             return (
@@ -262,7 +262,7 @@ function TasksPage() {
                   setCategoryFilter(cat);
                 }}
                 className={cn(
-                  "tap shrink-0 rounded-full px-3.5 py-1 text-xs font-bold capitalize transition-all",
+                  "tap shrink-0 rounded-full px-4 py-2 min-h-[36px] text-xs font-bold capitalize transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#7C5CFC]",
                   active
                     ? "bg-[#12131A] text-white shadow-xs"
                     : "bg-white text-muted-foreground border border-border/60 hover:bg-slate-50",
@@ -312,11 +312,12 @@ function TasksPage() {
                   <button
                     onClick={() => handleToggleComplete(t.id, t.completed)}
                     className={cn(
-                      "tap flex size-7 shrink-0 items-center justify-center rounded-xl border transition-all active:scale-90",
+                      "tap flex size-10 min-h-[44px] min-w-[44px] shrink-0 items-center justify-center rounded-xl border transition-all active:scale-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500",
                       t.completed
                         ? "border-emerald-500 bg-emerald-500 text-white shadow-xs"
                         : "border-slate-300 bg-white hover:border-emerald-500",
                     )}
+                    aria-label={t.completed ? "Mark active" : "Mark completed"}
                     title={t.completed ? "Mark active" : "Mark completed"}
                   >
                     {t.completed && <Check className="size-4 stroke-[3]" />}
@@ -333,13 +334,13 @@ function TasksPage() {
                     </span>
 
                     <div className="mt-1 flex items-center gap-2 flex-wrap">
-                      <span className="rounded-md bg-slate-100 px-2 py-0.2 text-[9.5px] font-bold text-slate-700">
+                      <span className="rounded-md bg-slate-100 px-2 py-0.2 text-[11px] font-bold text-slate-700">
                         {t.category}
                       </span>
                       {t.due_date && (
                         <span
                           className={cn(
-                            "inline-flex items-center gap-1 text-[10px] font-semibold",
+                            "inline-flex items-center gap-1 text-[11px] font-semibold",
                             overdue ? "text-rose-600 font-bold" : "text-muted-foreground",
                           )}
                         >
@@ -347,7 +348,7 @@ function TasksPage() {
                         </span>
                       )}
                       {t.priority === "high" && (
-                        <span className="rounded-full bg-rose-50 px-2 py-0.2 text-[9px] font-black text-rose-600">
+                        <span className="rounded-full bg-rose-50 px-2 py-0.2 text-[11px] font-black text-rose-600">
                           High
                         </span>
                       )}
@@ -355,20 +356,22 @@ function TasksPage() {
                   </div>
                 </div>
 
-                <div className="flex items-center gap-1 shrink-0">
+                <div className="flex items-center gap-1.5 shrink-0">
                   <button
                     onClick={() => openEditModal(t)}
-                    className="size-7 flex items-center justify-center rounded-lg text-muted-foreground hover:bg-slate-100"
+                    className="tap flex size-10 min-h-[44px] min-w-[44px] items-center justify-center rounded-xl text-muted-foreground hover:bg-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400"
+                    aria-label="Edit task"
                     title="Edit task"
                   >
-                    <Edit2 className="size-3.5" />
+                    <Edit2 className="size-4" />
                   </button>
                   <button
                     onClick={() => handleDelete(t.id)}
-                    className="size-7 flex items-center justify-center rounded-lg text-rose-500 hover:bg-rose-50"
+                    className="tap flex size-10 min-h-[44px] min-w-[44px] items-center justify-center rounded-xl text-rose-500 hover:bg-rose-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-400"
+                    aria-label="Delete task"
                     title="Delete task"
                   >
-                    <Trash2 className="size-3.5" />
+                    <Trash2 className="size-4" />
                   </button>
                 </div>
               </motion.div>
@@ -391,7 +394,8 @@ function TasksPage() {
           </h3>
           <button
             onClick={() => setModalOpen(false)}
-            className="size-8 flex items-center justify-center rounded-full text-muted-foreground hover:bg-slate-100"
+            aria-label="Close"
+            className="tap flex size-11 min-h-[44px] min-w-[44px] items-center justify-center rounded-full text-muted-foreground hover:bg-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400"
           >
             <X className="size-4" />
           </button>
@@ -406,7 +410,7 @@ function TasksPage() {
               placeholder="e.g. Schedule eye checkup, Refill vitamins"
               value={title}
               onChange={(e) => setTitle(e.target.value)}
-              className="mt-1 w-full rounded-xl border border-border bg-slate-50 p-2.5 text-xs font-semibold text-foreground outline-none focus:border-[#7C5CFC] focus:bg-white"
+              className="mt-1 w-full rounded-xl border border-border bg-slate-50 p-3 text-[16px] sm:text-sm font-semibold text-foreground outline-none focus:border-[#7C5CFC] focus:bg-white min-h-[44px]"
             />
           </div>
 
@@ -416,7 +420,7 @@ function TasksPage() {
               <select
                 value={category}
                 onChange={(e) => setCategory(e.target.value)}
-                className="mt-1 w-full rounded-xl border border-border bg-slate-50 p-2.5 text-xs font-semibold text-foreground outline-none"
+                className="mt-1 w-full rounded-xl border border-border bg-slate-50 p-3 text-[16px] sm:text-sm font-semibold text-foreground outline-none min-h-[44px]"
               >
                 <option value="Health">Health</option>
                 <option value="Finance">Finance</option>
@@ -429,7 +433,7 @@ function TasksPage() {
               <select
                 value={priority}
                 onChange={(e) => setPriority(e.target.value as "high" | "medium" | "light")}
-                className="mt-1 w-full rounded-xl border border-border bg-slate-50 p-2.5 text-xs font-semibold text-foreground outline-none"
+                className="mt-1 w-full rounded-xl border border-border bg-slate-50 p-3 text-[16px] sm:text-sm font-semibold text-foreground outline-none min-h-[44px]"
               >
                 <option value="high">High</option>
                 <option value="medium">Medium</option>
@@ -445,7 +449,7 @@ function TasksPage() {
               required
               value={dueDate}
               onChange={(e) => setDueDate(e.target.value)}
-              className="mt-1 w-full rounded-xl border border-border bg-slate-50 p-2.5 text-xs font-semibold text-foreground outline-none focus:border-[#7C5CFC] focus:bg-white"
+              className="mt-1 w-full rounded-xl border border-border bg-slate-50 p-3 text-[16px] sm:text-sm font-semibold text-foreground outline-none focus:border-[#7C5CFC] focus:bg-white min-h-[44px]"
             />
           </div>
 

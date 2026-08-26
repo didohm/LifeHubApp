@@ -214,8 +214,9 @@ function BillsPage() {
                 sounds.playActionClick();
                 setHistoryOpen(true);
               }}
+              aria-label="Payment Records"
               title="Payment Records"
-              className="tap flex size-9 items-center justify-center rounded-full bg-white text-[#12131A] shadow-xs border border-black/5 hover:bg-slate-50 transition-colors"
+              className="tap flex size-11 min-h-[44px] min-w-[44px] items-center justify-center rounded-full bg-white text-[#12131A] shadow-xs border border-black/5 hover:bg-slate-50 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#7C5CFC]"
             >
               <History className="size-4" />
             </button>
@@ -240,7 +241,7 @@ function BillsPage() {
       >
         <div className="flex items-center justify-between">
           <div>
-            <span className="inline-flex items-center gap-1 rounded-full bg-white/90 px-2.5 py-0.5 text-[10px] font-black text-amber-950 shadow-2xs">
+            <span className="inline-flex items-center gap-1 rounded-full bg-white/90 px-2.5 py-0.5 text-[11px] font-black text-amber-950 shadow-2xs">
               <Wallet className="size-3" /> Financial Summary
             </span>
             <div className="mt-2 flex items-baseline gap-2">
@@ -271,11 +272,11 @@ function BillsPage() {
             placeholder="Search bills & expenses..."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
-            className="w-full rounded-2xl border border-border/70 bg-white py-2 pl-10 pr-4 text-xs font-semibold text-foreground outline-none shadow-2xs focus:border-[#7C5CFC]"
+            className="w-full rounded-2xl border border-border/70 bg-white min-h-[44px] py-3 pl-10 pr-4 text-[16px] sm:text-sm font-semibold text-foreground outline-none shadow-2xs focus:border-[#7C5CFC]"
           />
         </div>
 
-        <div className="flex gap-1.5 overflow-x-auto pb-1 -mx-5 px-5">
+        <div className="flex gap-2 overflow-x-auto pb-1 -mx-5 px-5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
           {CATEGORIES.map((cat) => {
             const active = categoryFilter === cat;
             return (
@@ -286,7 +287,7 @@ function BillsPage() {
                   setCategoryFilter(cat);
                 }}
                 className={cn(
-                  "tap shrink-0 rounded-full px-3.5 py-1 text-xs font-bold capitalize transition-all",
+                  "tap shrink-0 rounded-full px-4 py-2 min-h-[36px] text-xs font-bold capitalize transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#7C5CFC]",
                   active
                     ? "bg-[#12131A] text-white shadow-xs"
                     : "bg-white text-muted-foreground border border-border/60 hover:bg-slate-50",
@@ -300,8 +301,8 @@ function BillsPage() {
       </div>
 
       {/* ════════════════════════════════════════════════════════════
-          BILLS LIST
-          ════════════════════════════════════════════════════════════ */}
+           BILLS LIST
+           ════════════════════════════════════════════════════════════ */}
       <div className="mt-3 space-y-2.5">
         {billLoading ? (
           <ListSkeleton count={3} />
@@ -339,13 +340,13 @@ function BillsPage() {
                 )}
               >
                 <div className="min-w-0 flex-1 pr-3">
-                  <div className="flex items-center gap-2">
-                    <span className="rounded-md bg-slate-100 px-2 py-0.2 text-[9.5px] font-bold text-slate-700">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="rounded-md bg-slate-100 px-2 py-0.5 text-[11px] font-bold text-slate-700">
                       {b.category}
                     </span>
                     <span
                       className={cn(
-                        "rounded-full px-2 py-0.2 text-[9.5px] font-black uppercase",
+                        "rounded-full px-2 py-0.5 text-[11px] font-black uppercase",
                         isPaid ? "bg-emerald-100 text-emerald-800" : "bg-rose-100 text-rose-800",
                       )}
                     >
@@ -353,30 +354,30 @@ function BillsPage() {
                     </span>
                   </div>
 
-                  <h3 className="mt-1.5 text-sm sm:text-base font-extrabold text-foreground truncate">
+                  <h3 className="mt-1.5 text-sm sm:text-base font-extrabold text-foreground truncate break-words">
                     {b.title}
                   </h3>
 
-                  <div className="mt-1 flex items-center gap-2 text-xs font-semibold text-muted-foreground">
-                    <span className="text-sm font-black text-[#12131A]">
+                  <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs font-semibold text-muted-foreground">
+                    <span className="text-sm font-black tabular-nums text-[#12131A]">
                       {Number(b.amount).toLocaleString()} DZD
                     </span>
                     {b.due_date && (
-                      <span className="flex items-center gap-1 text-[11px]">
-                        <Calendar className="size-3" /> Due {b.due_date}
+                      <span className="inline-flex items-center gap-1 whitespace-nowrap text-[11px] shrink-0">
+                        <Calendar className="size-3 shrink-0" /> Due {b.due_date}
                       </span>
                     )}
                   </div>
                 </div>
 
-                <div className="flex items-center gap-1.5 shrink-0">
+                <div className="flex items-center gap-2 shrink-0">
                   {!isPaid && (
                     <button
                       onClick={() => {
                         sounds.playActionClick();
                         setPayModalBill(b);
                       }}
-                      className="tap rounded-xl bg-emerald-600 px-3 py-1.5 text-xs font-black text-white shadow-xs hover:bg-emerald-700 transition-transform active:scale-95"
+                      className="tap rounded-xl bg-emerald-600 px-4 py-2.5 min-h-[44px] text-xs font-black text-white shadow-xs hover:bg-emerald-700 transition-transform active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-600 whitespace-nowrap"
                     >
                       Pay Now
                     </button>
@@ -384,18 +385,20 @@ function BillsPage() {
                   {!isPaid && (
                     <button
                       onClick={() => openEditModal(b)}
-                      className="size-8 flex items-center justify-center rounded-xl text-muted-foreground hover:bg-slate-100"
+                      className="tap flex size-10 min-h-[44px] min-w-[44px] items-center justify-center rounded-xl text-muted-foreground hover:bg-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400"
+                      aria-label="Edit bill"
                       title="Edit"
                     >
-                      <Edit2 className="size-3.5" />
+                      <Edit2 className="size-4" />
                     </button>
                   )}
                   <button
                     onClick={() => handleDelete(b.id)}
-                    className="size-8 flex items-center justify-center rounded-xl text-rose-500 hover:bg-rose-50"
+                    className="tap flex size-10 min-h-[44px] min-w-[44px] items-center justify-center rounded-xl text-rose-500 hover:bg-rose-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-400"
+                    aria-label="Delete bill"
                     title="Delete"
                   >
-                    <Trash2 className="size-3.5" />
+                    <Trash2 className="size-4" />
                   </button>
                 </div>
               </motion.div>
@@ -418,7 +421,8 @@ function BillsPage() {
           </h3>
           <button
             onClick={() => setModalOpen(false)}
-            className="size-8 flex items-center justify-center rounded-full text-muted-foreground hover:bg-slate-100"
+            aria-label="Close"
+            className="tap flex size-11 min-h-[44px] min-w-[44px] items-center justify-center rounded-full text-muted-foreground hover:bg-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400"
           >
             <X className="size-4" />
           </button>
@@ -433,7 +437,7 @@ function BillsPage() {
               placeholder="e.g. Electric utility, Health insurance"
               value={title}
               onChange={(e) => setTitle(e.target.value)}
-              className="mt-1 w-full rounded-xl border border-border bg-slate-50 p-2.5 text-xs font-semibold text-foreground outline-none focus:border-[#7C5CFC] focus:bg-white"
+              className="mt-1 w-full rounded-xl border border-border bg-slate-50 p-3 text-[16px] sm:text-sm font-semibold text-foreground outline-none focus:border-[#7C5CFC] focus:bg-white min-h-[44px]"
             />
           </div>
 
@@ -447,7 +451,7 @@ function BillsPage() {
                 placeholder="2500"
                 value={amount}
                 onChange={(e) => setAmount(e.target.value)}
-                className="mt-1 w-full rounded-xl border border-border bg-slate-50 p-2.5 text-xs font-semibold text-foreground outline-none focus:border-[#7C5CFC] focus:bg-white"
+                className="mt-1 w-full rounded-xl border border-border bg-slate-50 p-3 text-[16px] sm:text-sm font-semibold text-foreground outline-none focus:border-[#7C5CFC] focus:bg-white min-h-[44px]"
               />
             </div>
             <div>
@@ -455,7 +459,7 @@ function BillsPage() {
               <select
                 value={category}
                 onChange={(e) => setCategory(e.target.value)}
-                className="mt-1 w-full rounded-xl border border-border bg-slate-50 p-2.5 text-xs font-semibold text-foreground outline-none"
+                className="mt-1 w-full rounded-xl border border-border bg-slate-50 p-3 text-[16px] sm:text-sm font-semibold text-foreground outline-none min-h-[44px]"
               >
                 <option value="Health">Health</option>
                 <option value="Utilities">Utilities</option>
@@ -473,7 +477,7 @@ function BillsPage() {
               required
               value={dueDate}
               onChange={(e) => setDueDate(e.target.value)}
-              className="mt-1 w-full rounded-xl border border-border bg-slate-50 p-2.5 text-xs font-semibold text-foreground outline-none focus:border-[#7C5CFC] focus:bg-white"
+              className="mt-1 w-full rounded-xl border border-border bg-slate-50 p-3 text-[16px] sm:text-sm font-semibold text-foreground outline-none focus:border-[#7C5CFC] focus:bg-white min-h-[44px]"
             />
           </div>
 
@@ -510,7 +514,8 @@ function BillsPage() {
           </h3>
           <button
             onClick={() => setPayModalBill(null)}
-            className="size-8 flex items-center justify-center rounded-full text-muted-foreground hover:bg-slate-100"
+            aria-label="Close"
+            className="tap flex size-11 min-h-[44px] min-w-[44px] items-center justify-center rounded-full text-muted-foreground hover:bg-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400"
           >
             <X className="size-4" />
           </button>
@@ -535,7 +540,7 @@ function BillsPage() {
               <select
                 value={paymentMethod}
                 onChange={(e) => setPaymentMethod(e.target.value)}
-                className="mt-1 w-full rounded-xl border border-border bg-slate-50 p-2.5 text-xs font-semibold text-foreground outline-none"
+                className="mt-1 w-full rounded-xl border border-border bg-slate-50 p-3 text-[16px] sm:text-sm font-semibold text-foreground outline-none min-h-[44px]"
               >
                 <option value="Cash (Espèces)">Cash (Espèces)</option>
                 <option value="Edahabia / CIB Card">Edahabia / CIB Card</option>
@@ -584,13 +589,14 @@ function BillsPage() {
           </h3>
           <button
             onClick={() => setHistoryOpen(false)}
-            className="size-8 flex items-center justify-center rounded-full text-muted-foreground hover:bg-slate-100"
+            aria-label="Close"
+            className="tap flex size-11 min-h-[44px] min-w-[44px] items-center justify-center rounded-full text-muted-foreground hover:bg-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400"
           >
             <X className="size-4" />
           </button>
         </div>
 
-        <div className="mt-3 max-h-72 overflow-y-auto space-y-2">
+        <div className="mt-3 max-h-72 overflow-y-auto space-y-2 overscroll-contain">
           {payments.length === 0 ? (
             <p className="p-6 text-center text-xs text-muted-foreground">
               No settled payments yet.
@@ -605,7 +611,7 @@ function BillsPage() {
                   <span className="font-bold text-foreground block">
                     {bills.find((b) => b.id === p.bill_id)?.title || "Bill Payment"}
                   </span>
-                  <span className="text-[10px] text-muted-foreground">
+                  <span className="text-[11px] text-muted-foreground">
                     Via {p.payment_method || "Payment"}
                   </span>
                 </div>
@@ -613,7 +619,7 @@ function BillsPage() {
                   <span className="font-black text-emerald-600 block">
                     {Number(p.amount).toLocaleString()} DZD
                   </span>
-                  <span className="text-[10px] text-muted-foreground">
+                  <span className="text-[11px] text-muted-foreground">
                     {p.payment_date ? new Date(p.payment_date).toLocaleDateString() : "Settled"}
                   </span>
                 </div>

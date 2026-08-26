@@ -72,7 +72,7 @@ export function WeeklySplitGrid({
             <span className="flex items-center justify-center gap-1">
               <span
                 className={cn(
-                  "rounded-full px-2 py-0.5 text-[10px] font-black uppercase tracking-wider",
+                  "rounded-full px-2 py-0.5 text-[11px] font-black uppercase tracking-wider",
                   d.isToday
                     ? "bg-white/20 text-white"
                     : isRest

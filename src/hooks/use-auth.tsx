@@ -276,6 +276,36 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
+  /** True if the user cancelled native sign-in — must never trigger fallback. */
+  const isUserCancelled = (error: any): boolean => {
+    const code = (error?.code || "").toLowerCase();
+    const msg = (error?.message || "").toLowerCase();
+    return (
+      code === "auth/popup-closed-by-user" ||
+      code === "auth/cancelled-popup-request" ||
+      code === "canceled" ||
+      code === "sign_in_cancelled" ||
+      code === "auth/redirect-cancelled-by-user" ||
+      msg.includes("canceled") ||
+      msg.includes("cancelled") ||
+      msg.includes("authorization canceled")
+    );
+  };
+
+  /** True only when Credential Manager is unsupported on this device. */
+  const isCredentialManagerUnsupported = (error: any): boolean => {
+    if (isUserCancelled(error)) return false;
+    const code = (error?.code || "").toLowerCase();
+    const msg = (error?.message || "").toLowerCase();
+    const codeHit = code.includes("credential") || code.includes("unsupported") || code.includes("no_credential");
+    const msgHit =
+      msg.includes("doesn't support credential manager") ||
+      msg.includes("credential manager") ||
+      msg.includes("no credential") ||
+      msg.includes("provider is disabled");
+    return codeHit || msgHit;
+  };
+
   const signInWithGoogle = useCallback(async () => {
     setAuthError(null);
     if (Capacitor.isNativePlatform()) {
@@ -286,11 +316,34 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       try {
         result = await FirebaseAuthentication.signInWithGoogle();
       } catch (nativeError: any) {
-        console.error("[Auth] Native Google Sign-In failed:", nativeError);
-        throw new Error(
-          nativeError?.message ||
-            "Google Sign-In failed. This usually means: (1) SHA-1/SHA-256 fingerprints are not registered in Firebase Console, or (2) google-services.json is outdated.",
-        );
+        // Silent fallback: Credential Manager unsupported -> retry with legacy GoogleSignInClient.
+        // Never retry if user cancelled — avoids double account picker.
+        const unsupported = isCredentialManagerUnsupported(nativeError);
+        if (unsupported) {
+          console.warn("[Auth] Credential Manager unsupported, retrying legacy Google Sign-In", nativeError);
+          try {
+            result = await FirebaseAuthentication.signInWithGoogle({ useCredentialManager: false } as any);
+          } catch (fallbackError: any) {
+            console.error("[Auth] Legacy Google Sign-In also failed:", fallbackError);
+            if (isUserCancelled(fallbackError)) throw fallbackError;
+            const fMsg = (fallbackError?.message || "").toLowerCase();
+            if (fMsg.includes("google play services") || fMsg.includes("service_missing") || fMsg.includes("play services")) {
+              throw new Error("Google Play Services is required. Please install or update Google Play Services and try again.");
+            }
+            throw new Error(fallbackError?.message || "Google Sign-In failed. Please try again.");
+          }
+        } else {
+          if (isUserCancelled(nativeError)) throw nativeError;
+          const nMsg = (nativeError?.message || "").toLowerCase();
+          if (nMsg.includes("google play services") || nMsg.includes("service_missing")) {
+            throw new Error("Google Play Services is required. Please install or update Google Play Services and try again.");
+          }
+          console.error("[Auth] Native Google Sign-In failed:", nativeError);
+          throw new Error(
+            nativeError?.message ||
+              "Google Sign-In failed. This usually means: (1) SHA-1/SHA-256 fingerprints are not registered in Firebase Console, or (2) google-services.json is outdated.",
+          );
+        }
       }
       const idToken = result.credential?.idToken;
       if (!idToken) {

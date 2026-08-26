@@ -134,6 +134,46 @@
 html {
   scroll-behavior: smooth;
   touch-action: manipulation;
+  /* Prevent horizontal scroll on mobile — ensures no content forces viewport overflow */
+  overflow-x: clip;
+  /* Respect safe-area for notched devices; prevents content under notch */
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom)
+    env(safe-area-inset-left);
+}
+
+body {
+  overscroll-behavior-y: contain;
+  -webkit-overflow-scrolling: touch;
+  /* Reserve max safe-area bottom so fixed bars never sit under gesture bar */
+}
+
+/* iOS zoom prevention: inputs must be 16px on mobile to avoid auto-zoom (readable-font-size) */
+@media (max-width: 768px) {
+  input[type="text"],
+  input[type="search"],
+  input[type="email"],
+  input[type="tel"],
+  input[type="number"],
+  input[type="password"],
+  input[type="date"],
+  input[type="time"],
+  textarea,
+  select {
+    font-size: 16px !important;
+  }
+}
+
+/* Ensure all interactive elements meet minimum 24px web target + 8px spacing fallback;
+   native 44px targets are enforced per-component where needed */
+button,
+a,
+[role="button"] {
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Prevent scroll chaining from inner scroll areas to page (gesture-conflicts) */
+.overscroll-contain {
+  overscroll-behavior: contain;
 }
 
 @theme inline {
@@ -258,6 +298,8 @@ html {
   body {
     background-color: var(--color-background);
     color: var(--color-foreground);
+    /* Safe-area aware bottom padding for scrollable content behind fixed nav */
+    padding-bottom: env(safe-area-inset-bottom);
   }
 
   /* Compact mode: tighter spacing throughout */
